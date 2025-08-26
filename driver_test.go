@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	zetasqlite "github.com/goccy/go-zetasqlite"
+	zetasqlite "github.com/Recidiviz/go-zetasqlite"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -302,6 +302,46 @@ CREATE TABLE IF NOT EXISTS Singers (
 		err = stmt.QueryRowContext(ctx, sql.Named("itemID", 123), sql.Named("bool", true)).Scan(&itemID)
 		if err != nil {
 			t.Fatal("expected one row; got error %w", err)
+		}
+	})
+
+	t.Run("updated from", func(t *testing.T) {
+		db, err := sql.Open("zetasqlite", ":memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS Items (ItemId   INT64 NOT NULL)`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT `Items` (`ItemId`) VALUES (123)"); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err = db.Exec("UPDATE `Items` SET `ItemID` = ID FROM (SELECT 456 AS ID) WHERE true"); err != nil {
+			t.Fatal(err)
+		}
+
+		// Would-be ambiguous column referenced by table -- updates value to 789
+		if _, err = db.Exec("UPDATE `Items` SET `ItemID` = joined.ItemID FROM (SELECT 789 AS ItemID) joined WHERE true"); err != nil {
+			t.Fatal(err)
+		}
+
+		// Joined FROM -- updates value to 1578
+		if _, err = db.Exec("UPDATE Items i SET ItemId = i.ItemId + d.ItemId FROM Items d WHERE True"); err != nil {
+			t.Fatal(err)
+		}
+
+		// Unnest -- updates value from 1578 to 123
+		if _, err = db.Exec("UPDATE Items i SET ItemId = d.new__ItemId FROM UNNEST([STRUCT(1578 AS ItemId, 123 AS new__ItemId)]) d WHERE i.ItemId = d.ItemId"); err != nil {
+			t.Fatal(err)
+		}
+
+		rows, err := db.Query("SELECT * FROM Items WHERE ItemId = 123")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !rows.Next() {
+			t.Fatal("expected one row; got no rows")
 		}
 	})
 }

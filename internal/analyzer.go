@@ -76,6 +76,7 @@ func newAnalyzerOptions() (*zetasql.AnalyzerOptions, error) {
 		zetasql.FeatureV11WithOnSubquery,
 		zetasql.FeatureV13Pivot,
 		zetasql.FeatureV13Unpivot,
+		zetasql.FeatureDMLUpdateWithJoin,
 	})
 	langOpt.SetSupportedStatementKinds([]ast.Kind{
 		ast.BeginStmt,
@@ -245,6 +246,9 @@ func (a *Analyzer) context(
 	ctx = withFuncMap(ctx, funcMap)
 	ctx = withAnalyticOrderColumnNames(ctx, &analyticOrderColumnNames{})
 	ctx = withNodeMap(ctx, zetasql.NewNodeMap(stmtNode, stmt))
+	mappings, _ := ExtractScanNodeMappings(stmtNode)
+	ctx = withScanResult(ctx, mappings)
+	ctx = withUseTableNameForColumn(ctx)
 	return ctx
 }
 
@@ -270,12 +274,10 @@ func (a *Analyzer) newStmtAction(ctx context.Context, query string, args []drive
 	case ast.CreateTableStmt:
 		return a.newCreateTableStmtAction(ctx, query, args, node.(*ast.CreateTableStmtNode))
 	case ast.CreateTableAsSelectStmt:
-		ctx = withUseColumnID(ctx)
 		return a.newCreateTableAsSelectStmtAction(ctx, query, args, node.(*ast.CreateTableAsSelectStmtNode))
 	case ast.CreateFunctionStmt:
 		return a.newCreateFunctionStmtAction(ctx, query, args, node.(*ast.CreateFunctionStmtNode))
 	case ast.CreateViewStmt:
-		ctx = withUseColumnID(ctx)
 		return a.newCreateViewStmtAction(ctx, query, args, node.(*ast.CreateViewStmtNode))
 	case ast.DropStmt:
 		return a.newDropStmtAction(ctx, query, args, node.(*ast.DropStmtNode))
@@ -286,17 +288,14 @@ func (a *Analyzer) newStmtAction(ctx context.Context, query string, args []drive
 	case ast.TruncateStmt:
 		return a.newTruncateStmtAction(ctx, query, args, node.(*ast.TruncateStmtNode))
 	case ast.MergeStmt:
-		ctx = withUseColumnID(ctx)
 		return a.newMergeStmtAction(ctx, query, args, node.(*ast.MergeStmtNode))
 	case ast.QueryStmt:
-		ctx = withUseColumnID(ctx)
 		return a.newQueryStmtAction(ctx, query, args, node.(*ast.QueryStmtNode))
 	case ast.BeginStmt:
 		return a.newBeginStmtAction(ctx, query, args, node)
 	case ast.CommitStmt:
 		return a.newCommitStmtAction(ctx, query, args, node)
-	case ast.CreateRowAccessPolicyStmt,
-	ast.DropRowAccessPolicyStmt:
+	case ast.CreateRowAccessPolicyStmt, ast.DropRowAccessPolicyStmt:
 		return a.newNullStmtAction(ctx, query, args, node)
 	}
 	return nil, fmt.Errorf("unsupported stmt %s", node.DebugString())
@@ -538,10 +537,11 @@ func (a *Analyzer) newQueryStmtAction(ctx context.Context, query string, args []
 		}
 	} else {
 		var err error
-		formattedQuery, err = newNode(node).FormatSQL(ctx)
+		fragment, err := NewSQLBuilderVisitor(ctx).VisitQuery(node)
 		if err != nil {
 			return nil, fmt.Errorf("failed to format query %s: %w", query, err)
 		}
+		formattedQuery = fragment.String()
 	}
 	if formattedQuery == "" {
 		return nil, fmt.Errorf("failed to format query %s", query)
@@ -616,8 +616,8 @@ func (a *Analyzer) newMergeStmtAction(ctx context.Context, query string, args []
 		sourceColumn = colB.Column()
 		targetColumn = colA.Column()
 	}
-	mergedTableSourceColumnName := fmt.Sprintf("`%s`", string(uniqueColumnName(ctx, sourceColumn)))
-	mergedTableTargetColumnName := fmt.Sprintf("`%s`", string(uniqueColumnName(ctx, targetColumn)))
+	mergedTableSourceColumnName := uniqueColumnIdentifier(ctx, sourceColumn)
+	mergedTableTargetColumnName := uniqueColumnIdentifier(ctx, targetColumn)
 	mergedTableOutputColumns := []string{
 		mergedTableTargetColumnName,
 		mergedTableSourceColumnName,

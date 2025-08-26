@@ -13,6 +13,7 @@ type (
 	namePathKey                     struct{}
 	nodeMapKey                      struct{}
 	columnRefMapKey                 struct{}
+	scanResultMapKey                struct{}
 	funcMapKey                      struct{}
 	analyticOrderColumnNamesKey     struct{}
 	analyticPartitionColumnNamesKey struct{}
@@ -59,6 +60,15 @@ func nodeMapFromContext(ctx context.Context) *zetasql.NodeMap {
 	return value.(*zetasql.NodeMap)
 }
 
+func withScanResult(ctx context.Context, s *ScanResult) context.Context {
+	return context.WithValue(ctx, scanResultMapKey{}, s)
+}
+
+func scanResultFromContext(ctx context.Context) *ScanResult {
+	value := ctx.Value(scanResultMapKey{})
+	return value.(*ScanResult)
+}
+
 func withColumnRefMap(ctx context.Context, m map[string]string) context.Context {
 	return context.WithValue(ctx, columnRefMapKey{}, m)
 }
@@ -68,7 +78,7 @@ func columnRefMap(ctx context.Context) map[string]string {
 	if value == nil {
 		return nil
 	}
-	return value.(map[string]string)
+	return map[string]string{}
 }
 
 func withFuncMap(ctx context.Context, m map[string]*FunctionSpec) context.Context {
@@ -150,6 +160,10 @@ func unuseColumnID(ctx context.Context) context.Context {
 
 func withoutUseTableNameForColumn(ctx context.Context) context.Context {
 	return context.WithValue(ctx, useTableNameForColumnKey{}, false)
+}
+
+func withUseTableNameForColumn(ctx context.Context) context.Context {
+	return context.WithValue(ctx, useTableNameForColumnKey{}, true)
 }
 
 func useTableNameForColumn(ctx context.Context) bool {

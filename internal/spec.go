@@ -569,10 +569,9 @@ func newTableAsSelectSpec(namePath *NamePath, query string, stmt *ast.CreateTabl
 	for _, column := range stmt.OutputColumnList() {
 		colName := column.Name()
 		refColumnName := column.Column().Name()
-		colID := column.Column().ColumnID()
 		outputColumns = append(
 			outputColumns,
-			fmt.Sprintf("`%s#%d` AS `%s`", refColumnName, colID, colName),
+			fmt.Sprintf("`%s` AS `%s`", refColumnName, colName),
 		)
 	}
 	now := time.Now()
