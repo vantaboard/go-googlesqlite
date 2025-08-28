@@ -1236,11 +1236,6 @@ func (fc *FragmentContext) AddAvailableColumn(column *ast.Column, info *ColumnIn
 	}
 }
 
-func (fc *FragmentContext) GetAvailableColumn(column *ast.Column) (*ColumnInfo, bool) {
-	columnInfo, exists := fc.AvailableColumns[getUniqueColumnName(column)]
-	return columnInfo, exists
-}
-
 func (fc *FragmentContext) GetColumnExpression(column *ast.Column) *SQLExpression {
 	columnID := getUniqueColumnName(column)
 	columnInfo, exists := fc.AvailableColumns[columnID]
@@ -1254,23 +1249,6 @@ func (fc *FragmentContext) GetColumnExpression(column *ast.Column) *SQLExpressio
 	// All columns are expected to be visited before being referenced
 	// Panic when we don't have a reference to this column
 	panic(fmt.Sprintf("column not found in current scope: %s", columnID))
-}
-
-func (fc *FragmentContext) ResolveColumn(name string, tableAlias string) (*ColumnInfo, error) {
-	// Try with table alias first
-	if tableAlias != "" {
-		qualifiedName := fmt.Sprintf("%s.%s", tableAlias, name)
-		if column, exists := fc.AvailableColumns[qualifiedName]; exists {
-			return column, nil
-		}
-	}
-
-	// Try unqualified name
-	if column, exists := fc.AvailableColumns[name]; exists {
-		return column, nil
-	}
-
-	return nil, fmt.Errorf("column %s not found in current scope", name)
 }
 
 func (fc *FragmentContext) AddWithEntryColumnMapping(name string, columns []*ast.Column) {
@@ -1294,17 +1272,6 @@ func (ag *AliasGenerator) GenerateTableAlias() string {
 	return alias
 }
 
-func (ag *AliasGenerator) GenerateColumnAlias() string {
-	ag.columnCounter++
-	alias := fmt.Sprintf("col%d", ag.columnCounter)
-	for ag.usedAliases[alias] {
-		ag.columnCounter++
-		alias = fmt.Sprintf("col%d", ag.columnCounter)
-	}
-	ag.usedAliases[alias] = true
-	return alias
-}
-
 func (ag *AliasGenerator) GenerateSubqueryAlias() string {
 	ag.subqueryCounter++
 	alias := fmt.Sprintf("subquery%d", ag.subqueryCounter)
@@ -1314,12 +1281,4 @@ func (ag *AliasGenerator) GenerateSubqueryAlias() string {
 	}
 	ag.usedAliases[alias] = true
 	return alias
-}
-
-func (ag *AliasGenerator) ReserveAlias(alias string) bool {
-	if ag.usedAliases[alias] {
-		return false
-	}
-	ag.usedAliases[alias] = true
-	return true
 }
