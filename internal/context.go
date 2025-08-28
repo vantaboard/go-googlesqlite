@@ -60,15 +60,6 @@ func nodeMapFromContext(ctx context.Context) *zetasql.NodeMap {
 	return value.(*zetasql.NodeMap)
 }
 
-func withScanResult(ctx context.Context, s *ScanResult) context.Context {
-	return context.WithValue(ctx, scanResultMapKey{}, s)
-}
-
-func scanResultFromContext(ctx context.Context) *ScanResult {
-	value := ctx.Value(scanResultMapKey{})
-	return value.(*ScanResult)
-}
-
 func withColumnRefMap(ctx context.Context, m map[string]string) context.Context {
 	return context.WithValue(ctx, columnRefMapKey{}, m)
 }

@@ -39,7 +39,7 @@ type FunctionSpec struct {
 	Language  string          `json:"language"`
 	Args      []*NameWithType `json:"args"`
 	Return    *Type           `json:"return"`
-	Body      string          `json:"body"`
+	Body      *SQLExpression  `json:"body"`
 	Code      string          `json:"code"`
 	UpdatedAt time.Time       `json:"updatedAt"`
 	CreatedAt time.Time       `json:"createdAt"`
@@ -65,10 +65,10 @@ func (s *FunctionSpec) SQL() string {
 	)
 }
 
-func (s *FunctionSpec) CallSQL(ctx context.Context, callNode *ast.BaseFunctionCallNode, argValues []string) (string, error) {
+func (s *FunctionSpec) CallSQL(ctx context.Context, callNode *ast.BaseFunctionCallNode, argValues []*SQLExpression) (*SQLExpression, error) {
 	args := callNode.ArgumentList()
-	var body string
-	if s.Body == "" {
+	var body *SQLExpression
+	if s.Body == nil {
 		// templated argument func
 		definedArgs := make([]string, 0, len(args))
 		for idx, arg := range args {
@@ -88,7 +88,7 @@ func (s *FunctionSpec) CallSQL(ctx context.Context, callNode *ast.BaseFunctionCa
 		analyzer := analyzerFromContext(ctx)
 		runtimeSpec, err := analyzer.analyzeTemplatedFunctionWithRuntimeArgument(ctx, runtimeDefinedFunc)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		body = runtimeSpec.Body
 	} else {
@@ -97,21 +97,21 @@ func (s *FunctionSpec) CallSQL(ctx context.Context, callNode *ast.BaseFunctionCa
 	for i := 0; i < len(s.Args); i++ {
 		argRef := fmt.Sprintf("@%s", s.Args[i].Name)
 		value := argValues[i]
-		body = strings.Replace(body, argRef, value, -1)
+		body = NewLiteralExpression(strings.Replace(body.String(), argRef, value.String(), -1))
 	}
-	return fmt.Sprintf("( %s )", body), nil
+	return NewLiteralExpression(fmt.Sprintf("( %s )", body.String())), nil
 }
 
 type TableSpec struct {
-	IsTemp     bool           `json:"isTemp"`
-	IsView     bool           `json:"isView"`
-	NamePath   []string       `json:"namePath"`
-	Columns    []*ColumnSpec  `json:"columns"`
-	PrimaryKey []string       `json:"primaryKey"`
-	CreateMode ast.CreateMode `json:"createMode"`
-	Query      string         `json:"query"`
-	UpdatedAt  time.Time      `json:"updatedAt"`
-	CreatedAt  time.Time      `json:"createdAt"`
+	IsTemp     bool             `json:"isTemp"`
+	IsView     bool             `json:"isView"`
+	NamePath   []string         `json:"namePath"`
+	Columns    []*ColumnSpec    `json:"columns"`
+	PrimaryKey []string         `json:"primaryKey"`
+	CreateMode ast.CreateMode   `json:"createMode"`
+	Query      *SelectStatement `json:"query"`
+	UpdatedAt  time.Time        `json:"updatedAt"`
+	CreatedAt  time.Time        `json:"createdAt"`
 }
 
 func (s *TableSpec) Column(name string) *ColumnSpec {
@@ -131,7 +131,7 @@ func (s *TableSpec) SQLiteSchema() string {
 	if s.IsView {
 		return viewSQLiteSchema(s)
 	}
-	if s.Query != "" {
+	if s.Query != nil {
 		return fmt.Sprintf("CREATE TABLE `%s` AS %s", s.TableName(), s.Query)
 	}
 	columns := []string{}
@@ -358,11 +358,11 @@ func newFunctionSpec(ctx context.Context, namePath *NamePath, stmt *ast.CreateFu
 		})
 	}
 
-	var body string
+	var body *SQLExpression
 	language := stmt.Language()
 	switch language {
 	case "js":
-		code, err := EncodeGoValue(types.StringType(), stmt.Code())
+		code, err := NewLiteralFromGoValue(types.StringType(), stmt.Code())
 		if err != nil {
 			return nil, err
 		}
@@ -370,37 +370,48 @@ func newFunctionSpec(ctx context.Context, namePath *NamePath, stmt *ast.CreateFu
 		if err != nil {
 			return nil, err
 		}
-		retType, err := EncodeGoValue(types.StringType(), string(encodedType))
+		retType, err := NewLiteralFromGoValue(types.StringType(), string(encodedType))
 		if err != nil {
 			return nil, err
 		}
-		argParams := make([]string, 0, len(args))
+		argParams := make([]*SQLExpression, 0, len(args))
 		argNames := make([]string, 0, len(args))
 		for _, arg := range args {
-			argParams = append(argParams, fmt.Sprintf("@%s", arg.Name))
-			argNames = append(argNames, arg.Name)
-		}
-		if len(argParams) == 0 {
-			body = fmt.Sprintf("zetasqlite_eval_javascript('%s', '%s')", code, retType)
-		} else {
-			arr, err := EncodeGoValue(types.StringArrayType(), argNames)
+			literal, err := NewLiteralFromGoValue(types.StringType(), fmt.Sprintf("@%s", arg.Name))
 			if err != nil {
 				return nil, err
 			}
-			body = fmt.Sprintf(
-				"zetasqlite_eval_javascript('%s', '%s', '%s', %s)",
-				code, retType, arr,
-				strings.Join(argParams, ","),
+			argParams = append(argParams, literal)
+			argNames = append(argNames, arg.Name)
+		}
+		if len(argParams) == 0 {
+			body = NewFunctionExpression(
+				"zetasqlite_eval_javascript",
+				code,
+				retType,
+			)
+		} else {
+			arr, err := NewLiteralFromGoValue(types.StringArrayType(), argNames)
+			if err != nil {
+				return nil, err
+			}
+
+			varArgs := []*SQLExpression{code, retType, arr}
+			varArgs = append(varArgs, argParams...)
+
+			body = NewFunctionExpression(
+				"zetasqlite_eval_javascript",
+				varArgs...,
 			)
 		}
 	default:
 		funcExpr := stmt.FunctionExpression()
 		if funcExpr != nil {
-			bodyQuery, err := newNode(funcExpr).FormatSQL(ctx)
+			bodyQuery, err := NewSQLBuilderVisitor(ctx).VisitExpression(funcExpr)
 			if err != nil {
 				return nil, fmt.Errorf("failed to format function expression: %w", err)
 			}
-			body = bodyQuery
+			body = bodyQuery.(*SQLExpression)
 		}
 	}
 	now := time.Now()
@@ -463,13 +474,13 @@ func newTemplatedFunctionSpec(ctx context.Context, namePath *NamePath, stmt *ast
 		})
 	}
 	funcExpr := stmt.FunctionExpression()
-	var body string
+	var body *SQLExpression
 	if funcExpr != nil {
-		bodyQuery, err := newNode(funcExpr).FormatSQL(ctx)
+		bodyQuery, err := NewSQLBuilderVisitor(ctx).VisitExpression(funcExpr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to format function expression: %w", err)
 		}
-		body = bodyQuery
+		body = bodyQuery.(*SQLExpression)
 	}
 	now := time.Now()
 	return &FunctionSpec{
@@ -540,17 +551,7 @@ func newTableSpec(namePath *NamePath, stmt *ast.CreateTableStmtNode) *TableSpec 
 	}
 }
 
-func newTableAsViewSpec(namePath *NamePath, query string, stmt *ast.CreateViewStmtNode) *TableSpec {
-	var outputColumns []string
-	for _, column := range stmt.OutputColumnList() {
-		colName := column.Name()
-		refColumnName := column.Column().Name()
-		colID := column.Column().ColumnID()
-		outputColumns = append(
-			outputColumns,
-			fmt.Sprintf("`%s#%d` AS `%s`", refColumnName, colID, colName),
-		)
-	}
+func newTableAsViewSpec(namePath *NamePath, query *SelectStatement, stmt *ast.CreateViewStmtNode) *TableSpec {
 	now := time.Now()
 	return &TableSpec{
 		IsTemp:     stmt.CreateScope() == ast.CreateScopeTemp,
@@ -558,22 +559,13 @@ func newTableAsViewSpec(namePath *NamePath, query string, stmt *ast.CreateViewSt
 		NamePath:   namePath.mergePath(stmt.NamePath()),
 		Columns:    newColumnsFromOutputColumns(stmt.OutputColumnList()),
 		CreateMode: stmt.CreateMode(),
-		Query:      fmt.Sprintf("SELECT %s FROM (%s)", strings.Join(outputColumns, ","), query),
+		Query:      query,
 		UpdatedAt:  now,
 		CreatedAt:  now,
 	}
 }
 
-func newTableAsSelectSpec(namePath *NamePath, query string, stmt *ast.CreateTableAsSelectStmtNode) *TableSpec {
-	var outputColumns []string
-	for _, column := range stmt.OutputColumnList() {
-		colName := column.Name()
-		refColumnName := column.Column().Name()
-		outputColumns = append(
-			outputColumns,
-			fmt.Sprintf("`%s` AS `%s`", refColumnName, colName),
-		)
-	}
+func newTableAsSelectSpec(namePath *NamePath, query *SelectStatement, stmt *ast.CreateTableAsSelectStmtNode) *TableSpec {
 	now := time.Now()
 	return &TableSpec{
 		IsTemp:     stmt.CreateScope() == ast.CreateScopeTemp,
@@ -581,7 +573,7 @@ func newTableAsSelectSpec(namePath *NamePath, query string, stmt *ast.CreateTabl
 		Columns:    newColumnsFromDef(stmt.ColumnDefinitionList()),
 		PrimaryKey: newPrimaryKey(stmt.PrimaryKey()),
 		CreateMode: stmt.CreateMode(),
-		Query:      fmt.Sprintf("SELECT %s FROM (%s)", strings.Join(outputColumns, ","), query),
+		Query:      query,
 		UpdatedAt:  now,
 		CreatedAt:  now,
 	}

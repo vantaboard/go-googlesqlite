@@ -246,8 +246,6 @@ func (a *Analyzer) context(
 	ctx = withFuncMap(ctx, funcMap)
 	ctx = withAnalyticOrderColumnNames(ctx, &analyticOrderColumnNames{})
 	ctx = withNodeMap(ctx, zetasql.NewNodeMap(stmtNode, stmt))
-	mappings, _ := ExtractScanNodeMappings(stmtNode)
-	ctx = withScanResult(ctx, mappings)
 	ctx = withUseTableNameForColumn(ctx)
 	return ctx
 }
@@ -272,7 +270,7 @@ func (a *Analyzer) analyzeTemplatedFunctionWithRuntimeArgument(ctx context.Conte
 func (a *Analyzer) newStmtAction(ctx context.Context, query string, args []driver.NamedValue, node ast.StatementNode) (StmtAction, error) {
 	switch node.Kind() {
 	case ast.CreateTableStmt:
-		return a.newCreateTableStmtAction(ctx, query, args, node.(*ast.CreateTableStmtNode))
+		return a.newCreateTableStmtAction(ctx, args, node.(*ast.CreateTableStmtNode))
 	case ast.CreateTableAsSelectStmt:
 		return a.newCreateTableAsSelectStmtAction(ctx, query, args, node.(*ast.CreateTableAsSelectStmtNode))
 	case ast.CreateFunctionStmt:
@@ -305,7 +303,7 @@ func (a *Analyzer) newNullStmtAction(_ context.Context, query string, args []dri
 	return &NullStmtAction{}, nil
 }
 
-func (a *Analyzer) newCreateTableStmtAction(_ context.Context, query string, args []driver.NamedValue, node *ast.CreateTableStmtNode) (*CreateTableStmtAction, error) {
+func (a *Analyzer) newCreateTableStmtAction(ctx context.Context, args []driver.NamedValue, node *ast.CreateTableStmtNode) (*CreateTableStmtAction, error) {
 	spec := newTableSpec(a.namePath, node)
 	params := getParamsFromNode(node)
 	queryArgs, err := getArgsFromParams(args, params)
@@ -313,7 +311,7 @@ func (a *Analyzer) newCreateTableStmtAction(_ context.Context, query string, arg
 		return nil, err
 	}
 	return &CreateTableStmtAction{
-		query:           query,
+		query:           nil,
 		spec:            spec,
 		args:            queryArgs,
 		catalog:         a.catalog,
@@ -322,10 +320,11 @@ func (a *Analyzer) newCreateTableStmtAction(_ context.Context, query string, arg
 }
 
 func (a *Analyzer) newCreateTableAsSelectStmtAction(ctx context.Context, _ string, args []driver.NamedValue, node *ast.CreateTableAsSelectStmtNode) (*CreateTableStmtAction, error) {
-	query, err := newNode(node.Query()).FormatSQL(ctx)
+	scan, err := NewSQLBuilderVisitor(ctx).VisitScan(node.Query())
 	if err != nil {
 		return nil, err
 	}
+	query := NewSelectStarStatement(scan)
 	spec := newTableAsSelectSpec(a.namePath, query, node)
 	params := getParamsFromNode(node)
 	queryArgs, err := getArgsFromParams(args, params)
@@ -368,10 +367,11 @@ func (a *Analyzer) newCreateFunctionStmtAction(ctx context.Context, query string
 }
 
 func (a *Analyzer) newCreateViewStmtAction(ctx context.Context, _ string, args []driver.NamedValue, node *ast.CreateViewStmtNode) (*CreateViewStmtAction, error) {
-	query, err := newNode(node.Query()).FormatSQL(ctx)
+	scan, err := NewSQLBuilderVisitor(ctx).VisitScan(node.Query())
 	if err != nil {
 		return nil, err
 	}
+	query := NewSelectStarStatement(scan)
 	spec := newTableAsViewSpec(a.namePath, query, node)
 	return &CreateViewStmtAction{
 		query:   query,

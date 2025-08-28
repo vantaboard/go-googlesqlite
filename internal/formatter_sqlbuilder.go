@@ -118,7 +118,7 @@ func (e *SQLExpression) WriteSql(writer *SQLWriter) error {
 	switch e.Type {
 	case ExpressionTypeColumn:
 		if e.TableAlias != "" {
-			writer.Write(fmt.Sprintf("`%s.%s`", e.TableAlias, e.Value))
+			writer.Write(fmt.Sprintf("`%s`.`%s`", e.TableAlias, e.Value))
 		} else {
 			writer.Write("`" + e.Value + "`")
 		}
@@ -168,7 +168,7 @@ func (e *SQLExpression) WriteSql(writer *SQLWriter) error {
 
 func (e *SQLExpression) String() string {
 	writer := NewSQLWriter()
-	writer.useNewlines = false
+	writer.useNewlines = e.Subquery != nil
 	e.WriteSql(writer)
 	return writer.String()
 }
@@ -694,11 +694,6 @@ type SelectStatement struct {
 }
 
 func (s *SelectStatement) WriteSql(writer *SQLWriter) error {
-	// Set operations implement their own writer
-	if s.SetOperation != nil {
-		return s.SetOperation.WriteSql(writer)
-	}
-
 	// WITH clause
 	if len(s.WithClauses) > 0 {
 		writer.Write("WITH ")
@@ -712,43 +707,48 @@ func (s *SelectStatement) WriteSql(writer *SQLWriter) error {
 		writer.WriteLine("")
 	}
 
-	// SELECT clause
-	switch s.SelectType {
-	case SelectTypeDistinct:
-		writer.Write("SELECT DISTINCT")
-	case SelectTypeAll:
-		writer.Write("SELECT ALL")
-	case SelectTypeAsStruct:
-		writer.Write("SELECT AS STRUCT")
-	case SelectTypeAsValue:
-		writer.Write("SELECT AS VALUE")
-	default:
-		writer.Write("SELECT")
-	}
-
-	if s.AsStructType != "" {
-		writer.Write(" AS ")
-		writer.Write(s.AsStructType)
-	}
-
-	if len(s.SelectList) > 0 {
-		writer.WriteLine("")
-		writer.Indent()
-		for i, item := range s.SelectList {
-			if i > 0 {
-				writer.Write(",")
-				writer.WriteLine("")
-			}
-			item.WriteSql(writer)
+	// SetOperations implement their own writer for SELECT (but use WithClauses, GroupBy, OrderBy)
+	if s.SetOperation != nil {
+		s.SetOperation.WriteSql(writer)
+	} else {
+		// SELECT clause
+		switch s.SelectType {
+		case SelectTypeDistinct:
+			writer.Write("SELECT DISTINCT")
+		case SelectTypeAll:
+			writer.Write("SELECT ALL")
+		case SelectTypeAsStruct:
+			writer.Write("SELECT AS STRUCT")
+		case SelectTypeAsValue:
+			writer.Write("SELECT AS VALUE")
+		default:
+			writer.Write("SELECT")
 		}
-		writer.Dedent()
-	}
 
-	// FROM clause
-	if s.FromClause != nil {
-		writer.WriteLine("")
-		writer.Write("FROM ")
-		s.FromClause.WriteSql(writer)
+		if s.AsStructType != "" {
+			writer.Write(" AS ")
+			writer.Write(s.AsStructType)
+		}
+
+		if len(s.SelectList) > 0 {
+			writer.WriteLine("")
+			writer.Indent()
+			for i, item := range s.SelectList {
+				if i > 0 {
+					writer.Write(",")
+					writer.WriteLine("")
+				}
+				item.WriteSql(writer)
+			}
+			writer.Dedent()
+		}
+
+		// FROM clause
+		if s.FromClause != nil {
+			writer.WriteLine("")
+			writer.Write("FROM ")
+			s.FromClause.WriteSql(writer)
+		}
 	}
 
 	// WHERE clause
@@ -819,11 +819,34 @@ func NewSelectStatement() *SelectStatement {
 	}
 }
 
+func NewSelectStarStatement(from *FromItem) *SelectStatement {
+	return &SelectStatement{
+		SelectType: SelectTypeStandard,
+		FromClause: from,
+		SelectList: []*SelectListItem{
+			{
+				Expression: NewStarExpression(),
+			},
+		},
+	}
+}
+
 // NewColumnExpression creates a new column reference expression
 func NewColumnExpression(column string, tableAlias ...string) *SQLExpression {
 	expr := &SQLExpression{
 		Type:  ExpressionTypeColumn,
 		Value: column,
+	}
+	if len(tableAlias) > 0 {
+		expr.TableAlias = tableAlias[0]
+	}
+	return expr
+}
+
+// NewStarExpression creates a new star (*) expression for SELECT *
+func NewStarExpression(tableAlias ...string) *SQLExpression {
+	expr := &SQLExpression{
+		Type: ExpressionTypeStar,
 	}
 	if len(tableAlias) > 0 {
 		expr.TableAlias = tableAlias[0]
@@ -899,17 +922,6 @@ func NewBinaryExpression(left *SQLExpression, operator string, right *SQLExpress
 		Operator: operator,
 		Right:    right,
 	}
-}
-
-// NewStarExpression creates a SELECT * expression
-func NewStarExpression(tableAlias ...string) *SQLExpression {
-	expr := &SQLExpression{
-		Type: ExpressionTypeStar,
-	}
-	if len(tableAlias) > 0 {
-		expr.TableAlias = tableAlias[0]
-	}
-	return expr
 }
 
 // NewCaseExpression creates a new CASE expression (searched case)
@@ -1023,7 +1035,8 @@ type FragmentContext struct {
 	scopeStack []*ScopeInfo
 
 	// AST path tracking for generating stable NodeIDs
-	astPath *ASTPath
+	astPath     *ASTPath
+	WithEntries map[string]map[string]string
 }
 
 // NodeID represents a unique identifier for AST nodes based on path in the AST
@@ -1066,6 +1079,8 @@ type ColumnInfo struct {
 	Name         string
 	Type         string
 	TableAlias   string
+	Expression   *SQLExpression
+	Node         *ast.Column
 	IsAggregated bool
 	Source       NodeID // Which node produced this column
 }
@@ -1126,6 +1141,7 @@ func NewFragmentContext() *FragmentContext {
 	return &FragmentContext{
 		AvailableColumns: make(map[string]*ColumnInfo),
 		TableAliases:     make(map[string]string),
+		WithEntries:      make(map[string]map[string]string),
 		fragments:        make(map[NodeID]SQLFragment),
 		fragmentMetadata: make(map[NodeID]*FragmentMetadata),
 		symbolTable:      NewSymbolTable(),
@@ -1177,7 +1193,7 @@ func (fc *FragmentContext) PushScope(scopeType string) {
 	fc.CurrentScope = newScope
 }
 
-func (fc *FragmentContext) PopScope() *ScopeInfo {
+func (fc *FragmentContext) PopScope(alias string) *ScopeInfo {
 	if len(fc.scopeStack) == 0 {
 		return nil
 	}
@@ -1191,21 +1207,53 @@ func (fc *FragmentContext) PopScope() *ScopeInfo {
 		fc.CurrentScope = nil
 	}
 
+	// Push referenced OutputColumns to the latest scope
+	if currentScope != nil {
+		for columnID, column := range currentScope.OutputColumns {
+			// Once a scope has been finalized, the column is no longer available to be inlined as a direct expression
+			// It must be referenced as a column
+			column.Expression = nil
+
+			// All references must use the generated table alias
+			column.TableAlias = alias
+			column.Name = fmt.Sprintf("col%d", column.Node.ColumnID())
+			fc.AvailableColumns[columnID] = column
+		}
+	}
+
 	return currentScope
 }
 
 // Column management methods
 
-func (fc *FragmentContext) AddAvailableColumn(name string, info *ColumnInfo) {
+func (fc *FragmentContext) AddAvailableColumn(column *ast.Column, info *ColumnInfo) {
+	name := getUniqueColumnName(column)
+	info.Node = column
+	info.Name = fmt.Sprintf("col%d", column.ColumnID())
 	fc.AvailableColumns[name] = info
 	if fc.CurrentScope != nil {
 		fc.CurrentScope.OutputColumns[name] = info
 	}
 }
 
-func (fc *FragmentContext) GetAvailableColumn(name string) (*ColumnInfo, bool) {
-	column, exists := fc.AvailableColumns[name]
-	return column, exists
+func (fc *FragmentContext) GetAvailableColumn(column *ast.Column) (*ColumnInfo, bool) {
+	columnInfo, exists := fc.AvailableColumns[getUniqueColumnName(column)]
+	return columnInfo, exists
+}
+
+func (fc *FragmentContext) GetColumnExpression(column *ast.Column) *SQLExpression {
+	columnID := getUniqueColumnName(column)
+	columnInfo, exists := fc.AvailableColumns[columnID]
+	if exists {
+		if columnInfo.Expression != nil {
+			return columnInfo.Expression
+		}
+
+		return NewColumnExpression(columnInfo.Name, columnInfo.TableAlias)
+	}
+	// All columns are expected to be visited before being referenced
+	// Panic when we don't have a reference to this column
+	panic(fmt.Sprintf("column not found in current scope: %s", columnID))
 }
 
 func (fc *FragmentContext) ResolveColumn(name string, tableAlias string) (*ColumnInfo, error) {
@@ -1223,6 +1271,14 @@ func (fc *FragmentContext) ResolveColumn(name string, tableAlias string) (*Colum
 	}
 
 	return nil, fmt.Errorf("column %s not found in current scope", name)
+}
+
+func (fc *FragmentContext) AddWithEntryColumnMapping(name string, columns []*ast.Column) {
+	mapping := make(map[string]string)
+	for _, column := range columns {
+		mapping[column.Name()] = fmt.Sprintf("col%d", column.ColumnID())
+	}
+	fc.WithEntries[name] = mapping
 }
 
 // Alias generation methods

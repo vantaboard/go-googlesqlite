@@ -6,7 +6,6 @@ import (
 	"github.com/goccy/go-json"
 	ast "github.com/goccy/go-zetasql/resolved_ast"
 	"github.com/goccy/go-zetasql/types"
-	"strings"
 )
 
 // AST Visitor with fragment storage
@@ -26,40 +25,92 @@ func NewSQLBuilderVisitor(ctx context.Context) *SQLBuilderVisitor {
 // Main visitor entry points
 
 func (v *SQLBuilderVisitor) VisitQuery(node *ast.QueryStmtNode) (SQLFragment, error) {
-	return v.VisitScan(node.Query())
+	scan, err := v.VisitScan(node.Query())
+	if err != nil {
+		return nil, fmt.Errorf("failed to visit query: %w", err)
+	}
+
+	selectStatement := NewSelectStatement()
+	selectStatement.FromClause = scan
+
+	for _, column := range node.OutputColumnList() {
+		expr, err := v.VisitExpression(column)
+		if err != nil {
+			return nil, err
+		}
+		item := &SelectListItem{
+			Expression: expr.(*SQLExpression),
+			Alias:      column.Name(),
+		}
+		selectStatement.SelectList = append(selectStatement.SelectList, item)
+	}
+
+	return selectStatement, nil
 }
 
-// VisitScan will always return a SelectStatement (which implements SQLFragment)
-func (v *SQLBuilderVisitor) VisitScan(scan ast.Node) (SQLFragment, error) {
+type ColumnListProvider interface {
+	ColumnList() []*ast.Column
+}
+
+// VisitScan always returns SQLFragment FromItem
+func (v *SQLBuilderVisitor) VisitScan(scan ast.Node) (*FromItem, error) {
+	v.fragmentContext.PushScope(fmt.Sprintf("Scan(%s)", scan.Kind()))
+
+	var fragment SQLFragment
+	var err error
 	switch s := scan.(type) {
 	case *ast.TableScanNode:
-		return v.VisitTableScan(s)
+		fragment, err = v.VisitTableScan(s)
 	case *ast.ProjectScanNode:
-		return v.VisitProjectScan(s)
+		fragment, err = v.VisitProjectScan(s)
 	case *ast.JoinScanNode:
-		return v.VisitJoinScan(s)
+		fragment, err = v.VisitJoinScan(s)
 	case *ast.ArrayScanNode:
-		return v.VisitArrayScan(s)
+		fragment, err = v.VisitArrayScan(s)
 	case *ast.SingleRowScanNode:
-		return v.VisitSingleRowScanNode(s)
+		fragment, err = v.VisitSingleRowScanNode(s)
 	case *ast.WithScanNode:
-		return v.VisitWithScanNode(s)
+		fragment, err = v.VisitWithScanNode(s)
 	case *ast.WithRefScanNode:
-		return v.VisitWithRefScanNode(s)
+		fragment, err = v.VisitWithRefScanNode(s)
 	case *ast.SetOperationScanNode:
-		return v.VisitSetOperationScanNode(s)
+		fragment, err = v.VisitSetOperationScanNode(s)
 	case *ast.FilterScanNode:
-		return v.VisitFilterScanNode(s)
+		fragment, err = v.VisitFilterScanNode(s)
 	case *ast.OrderByScanNode:
-		return v.VisitOrderByScanNode(s)
+		fragment, err = v.VisitOrderByScanNode(s)
 	case *ast.LimitOffsetScanNode:
-		return v.VisitLimitOffsetScanNode(s)
+		fragment, err = v.VisitLimitOffsetScanNode(s)
 	case *ast.AnalyticScanNode:
-		return v.VisitAnalyticScanNode(s)
+		fragment, err = v.VisitAnalyticScanNode(s)
 	case *ast.AggregateScanNode:
-		return v.VisitAggregateScanNode(s)
+		fragment, err = v.VisitAggregateScanNode(s)
 	default:
 		return nil, fmt.Errorf("unsupported scan type: %T", scan)
+	}
+
+	if provider, ok := scan.(ColumnListProvider); ok {
+		for _, col := range provider.ColumnList() {
+			v.fragmentContext.AddAvailableColumn(col, &ColumnInfo{
+				Type: col.Type().Kind().String(),
+			})
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Finalize scope
+	switch s := fragment.(type) {
+	case *SelectStatement, *FromItem, nil:
+		// SingleRowScanNode is the only time we should expect a nil fragment
+		if _, ok := scan.(*ast.SingleRowScanNode); !ok && s == nil {
+			return nil, fmt.Errorf("unexpected scan expression: %T", scan)
+		}
+		return v.finalizeFromItem(s), nil
+	default:
+		return nil, fmt.Errorf("unexpected scan expression: %T", scan)
 	}
 }
 
@@ -81,14 +132,18 @@ func (v *SQLBuilderVisitor) VisitExpression(expr ast.Node) (SQLFragment, error) 
 		return v.VisitColumnRefNode(e)
 	case *ast.SubqueryExprNode:
 		return v.VisitSubqueryExpressionNode(e)
-	case *ast.AnalyticFunctionGroupNode:
-		return v.VisitAnalyticFunctionGroupNode(e)
 	case *ast.AnalyticFunctionCallNode:
 		return v.VisitAnalyticFunctionCallNode(e)
 	case *ast.AggregateFunctionCallNode:
 		return v.VisitAggregateFunctionCallNode(e)
 	case *ast.ComputedColumnNode:
 		return v.VisitComputedColumnNode(e)
+	case *ast.OutputColumnNode:
+		return v.VisitOutputColumnNode(e)
+	case *ast.ParameterNode:
+		return v.VisitParameterNode(e)
+	case *ast.ArgumentRefNode:
+		return v.VisitArgumentRefNode(e)
 
 	default:
 		return nil, fmt.Errorf("unsupported expression type: %T", expr)
@@ -100,11 +155,8 @@ func (v *SQLBuilderVisitor) VisitExpression(expr ast.Node) (SQLFragment, error) 
 func (v *SQLBuilderVisitor) VisitTableScan(node *ast.TableScanNode) (SQLFragment, error) {
 	nodeID := NodeID(fmt.Sprintf("table_%p", node))
 
-	// Create table reference fragment
-	tableAlias := ""
-	if needsAlias(node.Table().Name()) {
-		tableAlias = v.fragmentContext.aliasGenerator.GenerateTableAlias()
-	}
+	// Always generate a table alias to help with column disambiguation
+	tableAlias := v.fragmentContext.aliasGenerator.GenerateTableAlias()
 
 	fromItem := NewTableFromItem(node.Table().Name(), tableAlias)
 
@@ -112,7 +164,6 @@ func (v *SQLBuilderVisitor) VisitTableScan(node *ast.TableScanNode) (SQLFragment
 	outputColumns := make([]*ColumnInfo, 0)
 	for _, col := range node.ColumnList() {
 		columnInfo := &ColumnInfo{
-			Name:       col.Name(),
 			Type:       col.Type().Kind().String(),
 			TableAlias: tableAlias,
 			Source:     nodeID,
@@ -120,11 +171,8 @@ func (v *SQLBuilderVisitor) VisitTableScan(node *ast.TableScanNode) (SQLFragment
 		outputColumns = append(outputColumns, columnInfo)
 
 		// Make columns available in current scope
-		columnKey := col.Name()
-		if tableAlias != "" {
-			columnKey = fmt.Sprintf("%s.%s", tableAlias, col.Name())
-		}
-		v.fragmentContext.AddAvailableColumn(columnKey, columnInfo)
+		// Store by column name for simple lookup
+		v.fragmentContext.AddAvailableColumn(col, columnInfo)
 	}
 
 	// Store fragment with metadata
@@ -139,40 +187,12 @@ func (v *SQLBuilderVisitor) VisitTableScan(node *ast.TableScanNode) (SQLFragment
 }
 
 func (v *SQLBuilderVisitor) VisitProjectScan(node *ast.ProjectScanNode) (SQLFragment, error) {
-	nodeID := NodeID(fmt.Sprintf("project_%p", node))
-
-	// First visit input scan (bottom-up)
-	inputFragment, err := v.VisitScan(node.InputScan())
+	from, err := v.VisitScan(node.InputScan())
 	if err != nil {
 		return nil, fmt.Errorf("failed to visit input scan: %w", err)
 	}
 
-	// Create SELECT statement
-	stmt := NewSelectStatement()
-
-	if inputFragment == nil && node.InputScan().Kind() == ast.SingleRowScan {
-		// SingleRowScans do not produce any from items (i.e. the query `SELECT 2`)
-		stmt.FromClause = nil
-	} else if fromItem, ok := inputFragment.(*FromItem); ok {
-		// Set FROM clause from input
-		stmt.FromClause = fromItem
-	} else {
-		// Input is a complex query, wrap in subquery
-		subquery := inputFragment.(*SelectStatement)
-		subqueryAlias := v.fragmentContext.aliasGenerator.GenerateSubqueryAlias()
-		stmt.FromClause = NewSubqueryFromItem(subquery, subqueryAlias)
-	}
-
-	// Build SELECT list
-	outputColumns := make([]*ColumnInfo, 0)
-	columnMap := map[string]*SelectListItem{}
-	for _, outputColumn := range node.ColumnList() {
-		columnMap[outputColumn.Name()] = &SelectListItem{
-			Expression: NewColumnExpression(outputColumn.Name()),
-			Alias:      outputColumn.Name(),
-		}
-	}
-
+	// Produce expressions before visiting the input scan so they are available in context
 	for i, computedCol := range node.ExprList() {
 		// Visit expression to get fragment
 		exprFragment, err := v.VisitExpression(computedCol.Expr())
@@ -180,66 +200,54 @@ func (v *SQLBuilderVisitor) VisitProjectScan(node *ast.ProjectScanNode) (SQLFrag
 			return nil, fmt.Errorf("failed to visit expression %d: %w", i, err)
 		}
 
-		// Convert to SQLExpression
-		sqlExpr := exprFragment.(*SQLExpression)
-
-		// Determine alias
-		alias := computedCol.Column().Name()
-
-		// Add to SELECT list
-		columnMap[alias] = &SelectListItem{
-			Expression: sqlExpr,
-			Alias:      alias,
-		}
-
-		// Create output column info
-		columnInfo := &ColumnInfo{
-			Name:   alias,
-			Type:   computedCol.Column().Type().Kind().String(),
-			Source: nodeID,
-		}
-		outputColumns = append(outputColumns, columnInfo)
-
-		// Make available for parent scopes
-		v.fragmentContext.AddAvailableColumn(alias, columnInfo)
+		v.fragmentContext.AddAvailableColumn(computedCol.Column(), &ColumnInfo{
+			Expression: exprFragment.(*SQLExpression),
+			Name:       computedCol.Column().Name(),
+		})
 	}
+	// Create SELECT statement
+	stmt := NewSelectStatement()
+	stmt.FromClause = from
 
+	// Build SELECT list
 	for _, col := range node.ColumnList() {
-		stmt.SelectList = append(stmt.SelectList, columnMap[col.Name()])
+		stmt.SelectList = append(stmt.SelectList, &SelectListItem{
+			Expression: v.fragmentContext.GetColumnExpression(col),
+			Alias:      fmt.Sprintf("col%d", col.ColumnID()),
+		})
 	}
 
 	// TODO: Maybe delete fragment metadata approach
 	// Store fragment with metadata
-	metadata := &FragmentMetadata{
-		NodeType:      "ProjectScan",
-		OutputColumns: outputColumns,
-		IsOrdered:     node.IsOrdered(),
-		Dependencies:  []NodeID{NodeID(fmt.Sprintf("%p", node.InputScan()))},
-	}
+	//nodeID := NodeID(fmt.Sprintf("project_%p", node))
+	//metadata := &FragmentMetadata{
+	//	NodeType:      "ProjectScan",
+	//	OutputColumns: outputColumns,
+	//	IsOrdered:     node.IsOrdered(),
+	//	Dependencies:  []NodeID{NodeID(fmt.Sprintf("%p", node.InputScan()))},
+	//}
+	//
+	//v.fragmentContext.StoreFragment(nodeID, stmt, metadata)
 
-	v.fragmentContext.StoreFragment(nodeID, stmt, metadata)
 	return stmt, nil
 }
 
 func (v *SQLBuilderVisitor) VisitJoinScan(node *ast.JoinScanNode) (SQLFragment, error) {
-	//nodeID := NodeID(fmt.Sprintf("join_%p", node))
+	nodeID := NodeID(fmt.Sprintf("join_%p", node))
 
 	// Visit left and right inputs
-	leftFragment, err := v.VisitScan(node.LeftScan())
+	// Push new scope for LeftScan
+	leftFromItem, err := v.VisitScan(node.LeftScan())
 	if err != nil {
 		return nil, fmt.Errorf("failed to visit left scan: %w", err)
 	}
 
-	rightFragment, err := v.VisitScan(node.RightScan())
+	rightFromItem, err := v.VisitScan(node.RightScan())
 	if err != nil {
 		return nil, fmt.Errorf("failed to visit right scan: %w", err)
 	}
 
-	// Convert fragments to FromItems
-	leftFromItem := v.fragmentToFromItem(leftFragment)
-	rightFromItem := v.fragmentToFromItem(rightFragment)
-
-	// Build join condition
+	// Build join condition AFTER visiting left and right scans so column aliases are available
 	var joinCondition *SQLExpression
 	if node.JoinExpr() != nil {
 		conditionFragment, err := v.VisitExpression(node.JoinExpr())
@@ -262,85 +270,80 @@ func (v *SQLBuilderVisitor) VisitJoinScan(node *ast.JoinScanNode) (SQLFragment, 
 		},
 	}
 
-	// Combine output columns from both sides
-	//leftMeta := v.fragmentContext.fragmentMetadata[NodeID(fmt.Sprintf("%p", node.LeftScan()))]
-	//rightMeta := v.fragmentContext.fragmentMetadata[NodeID(fmt.Sprintf("%p", node.RightScan()))]
-	//
-
+	// Build SELECT list with properly qualified column references
+	outputColumns := make([]*ColumnInfo, 0)
 	for _, col := range node.ColumnList() {
 		selectStatement.SelectList = append(selectStatement.SelectList, &SelectListItem{
-			Expression: NewColumnExpression(col.Name()),
-			Alias:      col.Name(),
+			Expression: v.fragmentContext.GetColumnExpression(col),
 		})
+
+		// Create output column info for this join result
+		joinColumnInfo := &ColumnInfo{
+			Type:   col.Type().Kind().String(),
+			Source: nodeID,
+		}
+		outputColumns = append(outputColumns, joinColumnInfo)
+
+		// Make column available for parent scopes (without table alias since it's now from the join)
+		v.fragmentContext.AddAvailableColumn(col, joinColumnInfo)
 	}
 
-	//outputColumns := make([]*ColumnInfo, 0)
-	//outputColumns = append(outputColumns, leftMeta.OutputColumns...)
-	//outputColumns = append(outputColumns, rightMeta.OutputColumns...)
+	// Store fragment metadata
+	metadata := &FragmentMetadata{
+		NodeType:      "JoinScan",
+		OutputColumns: outputColumns,
+		Dependencies: []NodeID{
+			NodeID(fmt.Sprintf("%p", node.LeftScan())),
+			NodeID(fmt.Sprintf("%p", node.RightScan())),
+		},
+	}
 
-	//// Store fragment
-	//metadata := &FragmentMetadata{
-	//	NodeType:      "JoinScan",
-	//	OutputColumns: outputColumns,
-	//	Dependencies: []NodeID{
-	//		NodeID(fmt.Sprintf("%p", node.LeftScan)),
-	//		NodeID(fmt.Sprintf("%p", node.RightScan)),
-	//	},
-	//}
-
-	//v.fragmentContext.StoreFragment(nodeID, joinClause, metadata)
+	v.fragmentContext.StoreFragment(nodeID, selectStatement, metadata)
 	return selectStatement, nil
 }
 
 // Helper methods
 
-func (v *SQLBuilderVisitor) fragmentToFromItem(fragment SQLFragment) *FromItem {
+func (v *SQLBuilderVisitor) finalizeFromItem(fragment SQLFragment) *FromItem {
 	switch f := fragment.(type) {
 	case *FromItem:
+		v.fragmentContext.PopScope(f.Alias)
 		return f
 	case *SelectStatement:
 		// Wrap complex query in subquery
 		alias := v.fragmentContext.aliasGenerator.GenerateSubqueryAlias()
+		v.fragmentContext.PopScope(alias)
 		return NewSubqueryFromItem(f, alias)
+	case nil:
+		v.fragmentContext.PopScope("")
+		return nil
 	default:
 		panic(fmt.Sprintf("unexpected fragment type: %T", fragment))
 	}
 }
 
-func createUnnestSelectStatement(node *ast.ArrayScanNode, arrayExpr *SQLExpression) *SelectStatement {
-	selectStatement := NewSelectStatement()
-	selectStatement.SelectList = []*SelectListItem{
-		{
-			Expression: NewColumnExpression("value"),
-			Alias:      node.ElementColumn().Name(),
-		},
+// Adds ColumnInfo to context and generates alias
+func (v *SQLBuilderVisitor) finalizeSelectStatement(fragment *SelectStatement, columns []*ast.Column) *FromItem {
+	alias := v.fragmentContext.aliasGenerator.GenerateSubqueryAlias()
+	for _, column := range columns {
+		v.fragmentContext.AddAvailableColumn(column, &ColumnInfo{
+			Type:       column.Type().Kind().String(),
+			TableAlias: alias,
+			Source:     NodeID(fmt.Sprintf("%p", fragment)),
+		})
 	}
-
-	if offsetColumn := node.ArrayOffsetColumn(); offsetColumn != nil {
-		selectStatement.SelectList = append(selectStatement.SelectList,
-			&SelectListItem{
-				Expression: NewColumnExpression("key"),
-				Alias:      offsetColumn.Column().Name(),
-			})
-	}
-
-	selectStatement.FromClause = &FromItem{
-		Type: FromItemTypeTableFunction,
-		TableFunction: &TableFunction{
-			Name: "json_each",
-			Arguments: []*SQLExpression{
-				NewFunctionExpression(
-					"zetasqlite_decode_array",
-					arrayExpr,
-				),
-			},
-		},
-	}
-	return selectStatement
+	return NewSubqueryFromItem(fragment, alias)
 }
 
 func (v *SQLBuilderVisitor) VisitArrayScan(node *ast.ArrayScanNode) (SQLFragment, error) {
-	nodeID := NodeID(fmt.Sprintf("array_%p", node))
+	var inputFromItem *FromItem
+	if node.InputScan() != nil {
+		fromItem, err := v.VisitScan(node.InputScan())
+		if err != nil {
+			return nil, fmt.Errorf("failed to visit input scan: %w", err)
+		}
+		inputFromItem = fromItem
+	}
 
 	// Visit the array expression
 	arrayExprFragment, err := v.VisitExpression(node.ArrayExpr())
@@ -348,92 +351,89 @@ func (v *SQLBuilderVisitor) VisitArrayScan(node *ast.ArrayScanNode) (SQLFragment
 		return nil, fmt.Errorf("failed to visit array expression: %w", err)
 	}
 
-	// Generate table alias for the array scan
-	scanAlias := v.fragmentContext.aliasGenerator.GenerateTableAlias()
-
-	// Create output columns
-	outputColumns := make([]*ColumnInfo, 0)
-
-	// Element column (the array value)
-	elementColumnInfo := &ColumnInfo{
-		Name:       node.ElementColumn().Name(),
-		Type:       node.ElementColumn().Type().Kind().String(),
-		TableAlias: scanAlias,
-		Source:     nodeID,
-	}
-	outputColumns = append(outputColumns, elementColumnInfo)
-	v.fragmentContext.AddAvailableColumn(node.ElementColumn().Name(), elementColumnInfo)
-
-	// Array offset column if present
-	if node.ArrayOffsetColumn() != nil {
-		offsetColumnInfo := &ColumnInfo{
-			Name:       node.ArrayOffsetColumn().Column().Name(),
-			Type:       node.ArrayOffsetColumn().Column().Type().Kind().String(),
-			TableAlias: scanAlias,
-			Source:     nodeID,
-		}
-		outputColumns = append(outputColumns, offsetColumnInfo)
-		v.fragmentContext.AddAvailableColumn(node.ArrayOffsetColumn().Column().Name(), offsetColumnInfo)
-	}
-
-	// Store fragment with metadata
-	var dependencies []NodeID
-	if node.InputScan() != nil {
-		dependencies = append(dependencies, NodeID(fmt.Sprintf("%p", node.InputScan())))
-	}
-
-	// Create UNNEST expression for the array
+	// Create UNNEST FromItem for the array
 	unnestExpr := arrayExprFragment.(*SQLExpression)
-	selectStatement := createUnnestSelectStatement(node, unnestExpr)
-	//metadata := &FragmentMetadata{
-	//	NodeType:      "ArrayScan",
-	//	OutputColumns: outputColumns,
-	//	TableAliases:  []string{scanAlias},
-	//	Dependencies:  dependencies,
-	//}
-
-	// Handle input scan if present (for correlated array scans)
-	if node.InputScan() != nil {
-		inputFragment, err := v.VisitScan(node.InputScan())
-		if err != nil {
-			return nil, fmt.Errorf("failed to visit input scan: %w", err)
-		}
-
-		// Convert input to FromItem
-		inputFromItem := v.fragmentToFromItem(inputFragment)
-
-		// Create join based on join expression and outer flag
-		var joinType JoinType
-		if node.IsOuter() {
-			joinType = JoinTypeLeft
-		} else {
-			joinType = JoinTypeInner
-		}
-
-		// Handle join condition if present
-		var joinCondition *SQLExpression
-		if node.JoinExpr() != nil {
-			conditionFragment, err := v.VisitExpression(node.JoinExpr())
-			if err != nil {
-				return nil, fmt.Errorf("failed to visit join expression: %w", err)
-			}
-			joinCondition = conditionFragment.(*SQLExpression)
-		}
-
-		// Create the join
-		selectStatement.FromClause = &FromItem{
-			Type: FromItemTypeJoin,
-			Join: &JoinClause{
-				Type:      joinType,
-				Left:      inputFromItem,
-				Right:     selectStatement.FromClause,
-				Condition: joinCondition,
+	// Create the json_each table function call
+	jsonEachFromItem := &FromItem{
+		Type: FromItemTypeTableFunction,
+		TableFunction: &TableFunction{
+			Name: "json_each",
+			Arguments: []*SQLExpression{
+				NewFunctionExpression(
+					"zetasqlite_decode_array",
+					unnestExpr,
+				),
 			},
-		}
+		},
 	}
 
-	//v.fragmentContext.StoreFragment(nodeID, fromItem, metadata)
-	return selectStatement, nil
+	// Create a subquery that selects the proper column names
+	unnestSelect := NewSelectStatement()
+
+	// Always select 'value' as the element column
+	unnestSelect.SelectList = []*SelectListItem{}
+
+	// Add 'value' as element column to fragment context
+	v.fragmentContext.AddAvailableColumn(node.ElementColumn(), &ColumnInfo{
+		Expression: NewColumnExpression("value"),
+		Name:       fmt.Sprintf("col%d", node.ElementColumn().ColumnID()),
+	})
+
+	// Add 'key' to fragment context as offset column if present
+	if node.ArrayOffsetColumn() != nil {
+		v.fragmentContext.AddAvailableColumn(node.ArrayOffsetColumn().Column(), &ColumnInfo{
+			Expression: NewColumnExpression("key"),
+			Name:       fmt.Sprintf("col%d", node.ArrayOffsetColumn().Column().ColumnID()),
+		})
+	}
+
+	for _, col := range node.ColumnList() {
+		unnestSelect.SelectList = append(unnestSelect.SelectList, &SelectListItem{
+			Expression: v.fragmentContext.GetColumnExpression(col),
+			Alias:      fmt.Sprintf("col%d", col.ColumnID()),
+		})
+	}
+
+	// If there's no InputScan() we can return the select directly
+	if inputFromItem == nil {
+		unnestSelect.FromClause = jsonEachFromItem
+		return unnestSelect, nil
+	}
+	// Otherwise we handle input scan if present (for correlated array scans)
+
+	// Create join based on join expression and outer flag
+	var joinType JoinType
+	if node.IsOuter() {
+		joinType = JoinTypeLeft
+	} else {
+		joinType = JoinTypeInner
+	}
+
+	// Handle join condition if present
+	var joinCondition *SQLExpression
+	if node.JoinExpr() != nil {
+		conditionFragment, err := v.VisitExpression(node.JoinExpr())
+		if err != nil {
+			return nil, fmt.Errorf("failed to visit join expression: %w", err)
+		}
+		joinCondition = conditionFragment.(*SQLExpression)
+	} else {
+		// If there is no join expression use a CROSS JOIN
+		joinType = JoinTypeCross
+	}
+
+	// Return a JOINed query combining input and UNNEST
+	unnestSelect.FromClause = &FromItem{
+		Type: FromItemTypeJoin,
+		Join: &JoinClause{
+			Type:      joinType,
+			Left:      inputFromItem,
+			Right:     jsonEachFromItem,
+			Condition: joinCondition,
+		},
+	}
+
+	return unnestSelect, nil
 }
 
 func (v *SQLBuilderVisitor) VisitSingleRowScanNode(node *ast.SingleRowScanNode) (SQLFragment, error) {
@@ -567,11 +567,10 @@ func (v *SQLBuilderVisitor) VisitFunctionCallNode(node *ast.FunctionCallNode) (S
 		}
 		return NewCaseExpression(whenClauses, elseExpr), nil
 	}
-	// TODO: runtime-defined functions
-	//funcMap := funcMapFromContext(ctx)
-	//if spec, exists := funcMap[funcName]; exists {
-	//	return spec.CallSQL(ctx, node.BaseFunctionCallNode, args)
-	//}
+	funcMap := funcMapFromContext(v.context)
+	if spec, exists := funcMap[funcName]; exists {
+		return spec.CallSQL(v.context, node.BaseFunctionCallNode, args)
+	}
 	return NewFunctionExpression(
 		funcName,
 		args...,
@@ -603,7 +602,7 @@ func (v *SQLBuilderVisitor) VisitCastNode(node *ast.CastNode) (SQLFragment, erro
 }
 
 func (v *SQLBuilderVisitor) VisitColumnRefNode(node *ast.ColumnRefNode) (SQLFragment, error) {
-	return NewColumnExpression(node.Column().Name()), nil
+	return v.fragmentContext.GetColumnExpression(node.Column()), nil
 }
 
 func (v *SQLBuilderVisitor) VisitWithEntryNode(node *ast.WithEntryNode) (SQLFragment, error) {
@@ -611,10 +610,38 @@ func (v *SQLBuilderVisitor) VisitWithEntryNode(node *ast.WithEntryNode) (SQLFrag
 	if err != nil {
 		return nil, err
 	}
+
+	v.fragmentContext.AddWithEntryColumnMapping(
+		node.WithQueryName(),
+		node.WithSubquery().ColumnList(),
+	)
+
 	return &WithClause{
 		Name:  node.WithQueryName(),
-		Query: subquery.(*SelectStatement),
+		Query: NewSelectStarStatement(subquery),
 	}, nil
+}
+
+// WithRefScanNode
+func (v *SQLBuilderVisitor) VisitWithRefScanNode(node *ast.WithRefScanNode) (SQLFragment, error) {
+	selectStatement := NewSelectStatement()
+	selectStatement.FromClause = &FromItem{
+		Type:      FromItemTypeTable,
+		TableName: node.WithQueryName(),
+	}
+	selectStatement.SelectList = []*SelectListItem{}
+
+	mapping := v.fragmentContext.WithEntries[node.WithQueryName()]
+
+	for _, column := range node.ColumnList() {
+		selectStatement.SelectList = append(selectStatement.SelectList,
+			&SelectListItem{
+				Expression: NewColumnExpression(mapping[column.Name()]),
+				Alias:      fmt.Sprintf("col%d", column.ColumnID()),
+			},
+		)
+	}
+	return selectStatement, nil
 }
 
 func (v *SQLBuilderVisitor) VisitWithScanNode(node *ast.WithScanNode) (SQLFragment, error) {
@@ -630,12 +657,12 @@ func (v *SQLBuilderVisitor) VisitWithScanNode(node *ast.WithScanNode) (SQLFragme
 	if err != nil {
 		return nil, err
 	}
-	selectStatement := query.(*SelectStatement)
+	selectStatement := NewSelectStarStatement(query)
 	selectStatement.WithClauses = withClauses
 	return selectStatement, nil
 }
 
-func (v *SQLBuilderVisitor) VisitSetOperationItemNode(node *ast.SetOperationItemNode) (SQLFragment, error) {
+func (v *SQLBuilderVisitor) VisitSetOperationItemNode(node *ast.SetOperationItemNode) (*FromItem, error) {
 	return v.VisitScan(node.Scan())
 }
 
@@ -672,46 +699,29 @@ func (v *SQLBuilderVisitor) VisitSetOperationScanNode(node *ast.SetOperationScan
 		if err != nil {
 			return nil, err
 		}
-		operation.Items = append(operation.Items, query.(*SelectStatement))
+		operation.Items = append(operation.Items, query.Subquery)
 	}
 
 	setStatement := NewSelectStatement()
 	setStatement.SetOperation = operation
 
-	selectStatement := NewSelectStatement()
-	selectStatement.SelectList = []*SelectListItem{}
-	selectStatement.FromClause = &FromItem{
-		Type:     FromItemTypeSubquery,
-		Subquery: setStatement,
-	}
-
-	if len(node.InputItemList()) != 0 {
-		for _, col := range node.InputItemList()[0].OutputColumnList() {
-			column := &SelectListItem{
-				Expression: NewColumnExpression(col.Name()),
-				Alias:      col.Name(),
-			}
-			selectStatement.SelectList = append(selectStatement.SelectList, column)
+	// Move all WITH queries from items to top-level
+	for _, item := range operation.Items {
+		for _, with := range item.WithClauses {
+			setStatement.WithClauses = append(setStatement.WithClauses, with)
 		}
+		item.WithClauses = item.WithClauses[:0]
 	}
 
-	return selectStatement, nil
-}
-
-func (v *SQLBuilderVisitor) VisitWithRefScanNode(node *ast.WithRefScanNode) (SQLFragment, error) {
 	selectStatement := NewSelectStatement()
-	selectStatement.FromClause = &FromItem{
-		Type:      FromItemTypeTable,
-		TableName: node.WithQueryName(),
-	}
-	selectStatement.SelectList = []*SelectListItem{}
-	for _, column := range node.ColumnList() {
-		selectStatement.SelectList = append(selectStatement.SelectList,
-			&SelectListItem{
-				Expression: NewColumnExpression(column.Name()),
-				Alias:      column.Name(),
-			},
-		)
+	selectStatement.FromClause = &FromItem{Type: FromItemTypeSubquery, Subquery: setStatement}
+	for i, col := range node.ColumnList() {
+		v.fragmentContext.AddAvailableColumn(col, &ColumnInfo{})
+		column := &SelectListItem{
+			Expression: NewColumnExpression(fmt.Sprintf("col%d", node.InputItemList()[0].OutputColumnList()[i].ColumnID())),
+			Alias:      fmt.Sprintf("col%d", col.ColumnID()),
+		}
+		selectStatement.SelectList = append(selectStatement.SelectList, column)
 	}
 	return selectStatement, nil
 }
@@ -723,7 +733,7 @@ func (v *SQLBuilderVisitor) VisitSubqueryExpressionNode(node *ast.SubqueryExprNo
 	}
 	expression := &SQLExpression{
 		Type:     ExpressionTypeSubquery,
-		Subquery: subquery.(*SelectStatement),
+		Subquery: NewSelectStarStatement(subquery),
 	}
 	switch node.SubqueryType() {
 	case ast.SubqueryTypeScalar:
@@ -736,16 +746,14 @@ func (v *SQLBuilderVisitor) VisitSubqueryExpressionNode(node *ast.SubqueryExprNo
 			{
 				Expression: NewFunctionExpression(
 					"zetasqlite_array",
-					NewColumnExpression(node.Subquery().ColumnList()[0].Name()),
+					v.fragmentContext.GetColumnExpression(node.Subquery().ColumnList()[0]),
 				),
 			},
 		}
-		selectStatement.FromClause = &FromItem{
-			Type:     FromItemTypeSubquery,
-			Subquery: subquery.(*SelectStatement),
-		}
+		selectStatement.FromClause = subquery
+		expression.Subquery = selectStatement
 	case ast.SubqueryTypeExists:
-		return NewExistsExpression(subquery.(*SelectStatement)), nil
+		return NewExistsExpression(NewSelectStarStatement(subquery)), nil
 	case ast.SubqueryTypeIn:
 		expr, err := v.VisitExpression(node.InExpr())
 		if err != nil {
@@ -773,9 +781,9 @@ func (v *SQLBuilderVisitor) VisitFilterScanNode(node *ast.FilterScanNode) (SQLFr
 	if err != nil {
 		return nil, err
 	}
-
-	selectStatement := input.(*SelectStatement)
+	selectStatement := NewSelectStarStatement(input)
 	selectStatement.WhereClause = filter.(*SQLExpression)
+
 	return selectStatement, nil
 }
 
@@ -785,16 +793,21 @@ func (v *SQLBuilderVisitor) VisitOrderByScanNode(node *ast.OrderByScanNode) (SQL
 		return nil, err
 	}
 
-	orderByItems := make([]*OrderByItem, 0, len(node.OrderByItemList()))
+	orderByItems := make([]*OrderByItem, 0, len(node.OrderByItemList())*2)
 	for _, itemNode := range node.OrderByItemList() {
-		orderByItem, err := v.VisitOrderByItemNode(itemNode)
+		items, err := v.VisitOrderByItemNode(itemNode)
 		if err != nil {
 			return nil, err
 		}
-		orderByItems = append(orderByItems, orderByItem.(*OrderByItem))
+		for _, item := range items {
+			orderByItems = append(orderByItems, item)
+		}
 	}
-	selectStatement := input.(*SelectStatement)
+
+	selectStatement := NewSelectStarStatement(input)
+	// Add ORDER BY clause
 	selectStatement.OrderByList = orderByItems
+
 	return selectStatement, nil
 }
 
@@ -803,7 +816,17 @@ func (v *SQLBuilderVisitor) VisitLimitOffsetScanNode(node *ast.LimitOffsetScanNo
 	if err != nil {
 		return nil, err
 	}
-	selectStatement := input.(*SelectStatement)
+
+	selectStatement := NewSelectStatement()
+	selectStatement.FromClause = input
+
+	for _, col := range node.ColumnList() {
+		selectStatement.SelectList = append(selectStatement.SelectList, &SelectListItem{
+			Expression: NewColumnExpression(fmt.Sprintf("col%d", col.ColumnID())),
+			Alias:      fmt.Sprintf("col%d", col.ColumnID()),
+		})
+	}
+
 	if node.Limit() != nil {
 		limit, err := v.VisitExpression(node.Limit())
 		if err != nil {
@@ -812,11 +835,11 @@ func (v *SQLBuilderVisitor) VisitLimitOffsetScanNode(node *ast.LimitOffsetScanNo
 		selectStatement.LimitClause = limit.(*SQLExpression)
 	}
 	if node.Offset() != nil {
-		limit, err := v.VisitExpression(node.Offset())
+		offset, err := v.VisitExpression(node.Offset())
 		if err != nil {
 			return nil, err
 		}
-		selectStatement.OffsetClause = limit.(*SQLExpression)
+		selectStatement.OffsetClause = offset.(*SQLExpression)
 	}
 
 	return selectStatement, nil
@@ -827,56 +850,71 @@ func (v *SQLBuilderVisitor) VisitAnalyticScanNode(node *ast.AnalyticScanNode) (S
 	if err != nil {
 		return nil, err
 	}
-	selectStatement := input.(*SelectStatement)
 
+	selectStatement := NewSelectStatement()
+	selectStatement.FromClause = input
+
+	// Visit and store analytic function expressions in the fragmentContext
 	for _, group := range node.FunctionGroupList() {
-		fragment, err := v.VisitAnalyticFunctionGroupNode(group)
+		_, err := v.VisitAnalyticFunctionGroupNode(group)
 		if err != nil {
 			return nil, err
 		}
-		expr := fragment.(*SelectStatement)
-		for _, item := range expr.SelectList {
-			selectStatement.SelectList = append(selectStatement.SelectList, item)
-		}
+	}
+
+	for _, col := range node.ColumnList() {
+		selectStatement.SelectList = append(selectStatement.SelectList, &SelectListItem{
+			Expression: v.fragmentContext.GetColumnExpression(col),
+			Alias:      fmt.Sprintf("col%d", col.ColumnID()),
+		})
 	}
 
 	return selectStatement, nil
 }
 
-func (v *SQLBuilderVisitor) VisitOrderByItemNode(node *ast.OrderByItemNode) (SQLFragment, error) {
-	orderByItem := &OrderByItem{}
-	columnIdentifier := node.ColumnRef().Column().Name()
-	switch node.NullOrder() {
-	case ast.NullOrderModeNullsFirst:
-		orderByItem.Expression = NewBinaryExpression(
-			NewColumnExpression(columnIdentifier),
-			"IS",
-			NewLiteralExpression("NULL"),
-		)
-	case ast.NullOrderModeNullsLast:
-		orderByItem.Expression = NewBinaryExpression(
-			NewColumnExpression(columnIdentifier),
+func (v *SQLBuilderVisitor) VisitOrderByItemNode(node *ast.OrderByItemNode) ([]*OrderByItem, error) {
+	// Returns either a column reference, or the underlying expression for the node
+	expr := v.fragmentContext.GetColumnExpression(node.ColumnRef().Column())
+	expr.Collation = "zetasqlite_collate"
+
+	items := make([]*OrderByItem, 0)
+	if node.NullOrder() != ast.NullOrderModeOrderUnspecified {
+		nullExpr := NewBinaryExpression(
+			expr,
 			"IS NOT",
 			NewLiteralExpression("NULL"),
 		)
-	default:
-		orderByItem.Expression = &SQLExpression{
-			Type:      ExpressionTypeColumn,
-			Value:     columnIdentifier,
-			Collation: "zetasqlite_collate",
+		nullExpr.Collation = "zetasqlite_collate"
+
+		switch node.NullOrder() {
+		case ast.NullOrderModeNullsFirst:
+			items = append(items, &OrderByItem{
+				Direction:  "ASC",
+				Expression: nullExpr,
+			})
+		case ast.NullOrderModeNullsLast:
+			items = append(items, &OrderByItem{
+				Direction:  "DESC",
+				Expression: nullExpr,
+			})
 		}
+	}
+	columnItem := &OrderByItem{
+		Expression: expr,
 	}
 
 	if node.IsDescending() {
-		orderByItem.Direction = "DESC"
+		columnItem.Direction = "DESC"
 	} else {
-		orderByItem.Direction = "ASC"
+		columnItem.Direction = "ASC"
 	}
-	return orderByItem, nil
 
+	items = append(items, columnItem)
+
+	return items, nil
 }
 
-func (v *SQLBuilderVisitor) VisitAnalyticFunctionGroupNode(node *ast.AnalyticFunctionGroupNode) (SQLFragment, error) {
+func (v *SQLBuilderVisitor) VisitAnalyticFunctionGroupNode(node *ast.AnalyticFunctionGroupNode) ([]*SelectListItem, error) {
 	specification := &WindowSpecification{
 		OrderBy:     make([]*OrderByItem, 0),
 		PartitionBy: make([]*SQLExpression, 0),
@@ -884,11 +922,13 @@ func (v *SQLBuilderVisitor) VisitAnalyticFunctionGroupNode(node *ast.AnalyticFun
 
 	if orderBy := node.OrderBy(); orderBy != nil {
 		for _, order := range node.OrderBy().OrderByItemList() {
-			item, err := v.VisitOrderByItemNode(order)
+			items, err := v.VisitOrderByItemNode(order)
 			if err != nil {
 				return nil, err
 			}
-			specification.OrderBy = append(specification.OrderBy, item.(*OrderByItem))
+			for _, item := range items {
+				specification.OrderBy = append(specification.OrderBy, item)
+			}
 		}
 	}
 
@@ -904,8 +944,7 @@ func (v *SQLBuilderVisitor) VisitAnalyticFunctionGroupNode(node *ast.AnalyticFun
 		}
 	}
 
-	selectStatement := NewSelectStatement()
-	selectStatement.SelectList = []*SelectListItem{}
+	items := make([]*SelectListItem, 0)
 	for _, call := range node.AnalyticFunctionList() {
 		fragment, err := v.VisitExpression(call)
 		if err != nil {
@@ -920,12 +959,12 @@ func (v *SQLBuilderVisitor) VisitAnalyticFunctionGroupNode(node *ast.AnalyticFun
 			item.Function.WindowSpec.OrderBy = specification.OrderBy
 			item.Function.WindowSpec.PartitionBy = specification.PartitionBy
 		}
-		selectStatement.SelectList = append(selectStatement.SelectList, &SelectListItem{
+
+		v.fragmentContext.AddAvailableColumn(call.Column(), &ColumnInfo{
 			Expression: item,
-			Alias:      item.Alias,
 		})
 	}
-	return selectStatement, nil
+	return items, nil
 }
 
 func getWindowBoundaryType(boundaryType ast.BoundaryType, literal SQLFragment) string {
@@ -1058,6 +1097,12 @@ func (v *SQLBuilderVisitor) VisitAnalyticFunctionCallNode(node *ast.AnalyticFunc
 	specification := &WindowSpecification{}
 	specification.FrameClause = frameClause
 
+	funcMap := funcMapFromContext(v.context)
+
+	if spec, exists := funcMap[funcName]; exists {
+		return spec.CallSQL(v.context, node.BaseFunctionCallNode, args)
+	}
+
 	return &SQLExpression{
 		Type: ExpressionTypeFunction,
 		Function: &FunctionCall{
@@ -1067,17 +1112,10 @@ func (v *SQLBuilderVisitor) VisitAnalyticFunctionCallNode(node *ast.AnalyticFunc
 			WindowSpec: specification,
 		},
 	}, nil
-
-	// TODO: runtime-defined functions
-	//funcMap := funcMapFromContext(ctx)
-
-	//if spec, exists := funcMap[funcName]; exists {
-	//	return spec.CallSQL(ctx, n.node.BaseFunctionCallNode, args)
-	//}
 }
 
 func (v *SQLBuilderVisitor) VisitOutputColumnNode(node *ast.OutputColumnNode) (SQLFragment, error) {
-	return NewColumnExpression(node.Name()), nil
+	return v.fragmentContext.GetColumnExpression(node.Column()), nil
 }
 
 func (v *SQLBuilderVisitor) VisitComputedColumnNode(node *ast.ComputedColumnNode) (SQLFragment, error) {
@@ -1113,17 +1151,19 @@ func (v *SQLBuilderVisitor) VisitAggregateFunctionCallNode(node *ast.AggregateFu
 	if err != nil {
 		return nil, err
 	}
-	// TODO: Runtime defined functions
-	//funcMap := funcMapFromContext(ctx)
-	//if spec, exists := funcMap[funcName]; exists {
-	//	return spec.CallSQL(ctx, node.BaseFunctionCallNode, args)
-	//}
+
+	funcMap := funcMapFromContext(v.context)
+	if spec, exists := funcMap[funcName]; exists {
+		return spec.CallSQL(v.context, node.BaseFunctionCallNode, args)
+	}
+
 	var opts []*SQLExpression
 	for _, item := range node.OrderByItemList() {
 		columnRef := item.ColumnRef()
+
 		opts = append(opts, NewFunctionExpression(
 			"zetasqlite_order_by",
-			NewColumnExpression(columnRef.Column().Name()),
+			v.fragmentContext.GetColumnExpression(columnRef.Column()),
 			NewLiteralExpressionFromGoValue(types.BoolType(), !item.IsDescending()),
 		))
 	}
@@ -1150,6 +1190,11 @@ func (v *SQLBuilderVisitor) VisitAggregateFunctionCallNode(node *ast.AggregateFu
 func (v *SQLBuilderVisitor) VisitAggregateScanNode(node *ast.AggregateScanNode) (SQLFragment, error) {
 	nodeID := NodeID(fmt.Sprintf("aggregate_%p", node))
 
+	inputFromItem, err := v.VisitScan(node.InputScan())
+	if err != nil {
+		return nil, fmt.Errorf("failed to visit input scan: %w", err)
+	}
+
 	// Process aggregate functions and store column mappings
 	aggregateExpressions := map[string]*SQLExpression{}
 	for _, agg := range node.AggregateList() {
@@ -1161,7 +1206,7 @@ func (v *SQLBuilderVisitor) VisitAggregateScanNode(node *ast.AggregateScanNode) 
 
 		// Store column reference mapping for this aggregate
 		colName := agg.Column().Name()
-		v.fragmentContext.AddAvailableColumn(colName, &ColumnInfo{
+		v.fragmentContext.AddAvailableColumn(agg.Column(), &ColumnInfo{
 			Name:   colName,
 			Type:   agg.Column().Type().Kind().String(),
 			Source: nodeID,
@@ -1169,15 +1214,6 @@ func (v *SQLBuilderVisitor) VisitAggregateScanNode(node *ast.AggregateScanNode) 
 
 		aggregateExpressions[colName] = expr
 	}
-
-	// Process input scan
-	inputFragment, err := v.VisitScan(node.InputScan())
-	if err != nil {
-		return nil, fmt.Errorf("failed to visit input scan: %w", err)
-	}
-
-	// Convert input to FromItem
-	inputFromItem := v.fragmentToFromItem(inputFragment)
 
 	// Process GROUP BY columns
 	groupByColumns := map[string]*SQLExpression{}
@@ -1191,6 +1227,10 @@ func (v *SQLBuilderVisitor) VisitAggregateScanNode(node *ast.AggregateScanNode) 
 		colName := col.Column().Name()
 		groupByColumns[colName] = expr
 		groupByColumnMap[colName] = struct{}{}
+		v.fragmentContext.AddAvailableColumn(col.Column(), &ColumnInfo{
+			Expression: expr,
+			Type:       col.Column().Type().Kind().String(),
+		})
 	}
 
 	// Build output columns list
@@ -1215,7 +1255,7 @@ func (v *SQLBuilderVisitor) VisitAggregateScanNode(node *ast.AggregateScanNode) 
 
 		outputColumns = append(outputColumns, &SelectListItem{
 			Expression: expr,
-			Alias:      colName,
+			Alias:      fmt.Sprintf("col%d", col.ColumnID()),
 		})
 	}
 
@@ -1295,7 +1335,7 @@ func (v *SQLBuilderVisitor) buildGroupingSetsQuery(
 
 		// Determine which columns should be NULL
 		nullColumnNameMap := make(map[string]struct{})
-		for colName, _ := range groupByColumnMap {
+		for colName := range groupByColumnMap {
 			if _, exists := groupBySetColumnMap[colName]; !exists {
 				nullColumnNameMap[colName] = struct{}{}
 			}
@@ -1366,13 +1406,20 @@ func (v *SQLBuilderVisitor) buildGroupingSetsQuery(
 	return unionStatement, nil
 }
 
-// Utility functions
-
-func needsAlias(tableName string) bool {
-	// Logic to determine if table needs an alias
-	// For example, if it's a complex table name or conflicts with keywords
-	return strings.Contains(tableName, ".") || strings.Contains(tableName, " ")
+// VisitParameterNode returns a literal expression that is used by the SQLite driver for parameter bindings
+func (v *SQLBuilderVisitor) VisitParameterNode(node *ast.ParameterNode) (SQLFragment, error) {
+	if node.Name() == "" {
+		return NewLiteralExpression("?"), nil
+	}
+	return NewLiteralExpression(fmt.Sprintf("@%s", node.Name())), nil
 }
+
+// VisitArgumentRefNode returns a literal expression that is used by the SQLite driver for parameter bindings
+func (v *SQLBuilderVisitor) VisitArgumentRefNode(node *ast.ArgumentRefNode) (SQLFragment, error) {
+	return NewLiteralExpression(fmt.Sprintf("@%s", node.Name())), nil
+}
+
+// Utility functions
 
 func convertJoinType(joinType ast.JoinType) JoinType {
 	switch joinType {
