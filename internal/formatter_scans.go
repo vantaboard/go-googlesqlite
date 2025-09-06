@@ -61,7 +61,7 @@ func (v *SQLBuilderVisitor) VisitScan(scan ast.Node) (*FromItem, error) {
 	var err error
 	switch s := scan.(type) {
 	case *ast.TableScanNode:
-		fragment, err = v.VisitTableScan(s)
+		fragment, err = v.VisitTableScan(s, false)
 	case *ast.ProjectScanNode:
 		fragment, err = v.VisitProjectScan(s)
 	case *ast.JoinScanNode:
@@ -156,6 +156,7 @@ func (v *SQLBuilderVisitor) VisitWithEntryNode(node *ast.WithEntryNode) (SQLFrag
 //
 // Returns a SelectStatement that references the WITH clause.
 func (v *SQLBuilderVisitor) VisitWithRefScanNode(node *ast.WithRefScanNode) (SQLFragment, error) {
+	//tableAlias := v.fragmentContext.aliasGenerator.GenerateTableAlias()
 	selectStatement := NewSelectStatement()
 	selectStatement.FromClause = &FromItem{
 		Type:      FromItemTypeTable,
@@ -168,10 +169,12 @@ func (v *SQLBuilderVisitor) VisitWithRefScanNode(node *ast.WithRefScanNode) (SQL
 	for _, column := range node.ColumnList() {
 		selectStatement.SelectList = append(selectStatement.SelectList,
 			&SelectListItem{
-				Expression: NewColumnExpression(mapping[column.Name()]),
-				Alias:      fmt.Sprintf("col%d", column.ColumnID()),
+				Expression: NewColumnExpression(mapping[column.Name()], node.WithQueryName()),
 			},
 		)
+		//v.fragmentContext.AddAvailableColumn(column, &ColumnInfo{
+		//	TableAlias: tableAlias,
+		//})
 	}
 	return selectStatement, nil
 }
@@ -274,12 +277,15 @@ func (v *SQLBuilderVisitor) VisitSetOperationScanNode(node *ast.SetOperationScan
 	}
 
 	selectStatement := NewSelectStatement()
-	selectStatement.FromClause = &FromItem{Type: FromItemTypeSubquery, Subquery: setStatement}
-	for i, col := range node.ColumnList() {
+	selectStatement.FromClause = &FromItem{
+		Type:     FromItemTypeSubquery,
+		Subquery: setStatement,
+		Alias:    v.fragmentContext.aliasGenerator.GenerateTableAlias(),
+	}
+	for _, col := range node.ColumnList() {
 		v.fragmentContext.AddAvailableColumn(col, &ColumnInfo{})
 		column := &SelectListItem{
-			Expression: NewColumnExpression(fmt.Sprintf("col%d", node.InputItemList()[0].OutputColumnList()[i].ColumnID())),
-			Alias:      fmt.Sprintf("col%d", col.ColumnID()),
+			Expression: NewColumnExpression(col.Name(), selectStatement.FromClause.Alias),
 		}
 		selectStatement.SelectList = append(selectStatement.SelectList, column)
 	}
@@ -361,18 +367,17 @@ func (v *SQLBuilderVisitor) VisitOrderByScanNode(node *ast.OrderByScanNode) (SQL
 //
 // Returns a SelectStatement with LIMIT/OFFSET clauses.
 func (v *SQLBuilderVisitor) VisitLimitOffsetScanNode(node *ast.LimitOffsetScanNode) (SQLFragment, error) {
-	input, err := v.VisitScan(node.InputScan())
+	scan, err := v.VisitScan(node.InputScan())
 	if err != nil {
 		return nil, err
 	}
 
 	selectStatement := NewSelectStatement()
-	selectStatement.FromClause = input
+	selectStatement.FromClause = scan
 
 	for _, col := range node.ColumnList() {
 		selectStatement.SelectList = append(selectStatement.SelectList, &SelectListItem{
-			Expression: NewColumnExpression(fmt.Sprintf("col%d", col.ColumnID())),
-			Alias:      fmt.Sprintf("col%d", col.ColumnID()),
+			Expression: v.fragmentContext.GetColumnExpression(col),
 		})
 	}
 
@@ -383,6 +388,7 @@ func (v *SQLBuilderVisitor) VisitLimitOffsetScanNode(node *ast.LimitOffsetScanNo
 		}
 		selectStatement.LimitClause = limit.(*SQLExpression)
 	}
+
 	if node.Offset() != nil {
 		offset, err := v.VisitExpression(node.Offset())
 		if err != nil {
@@ -427,7 +433,7 @@ func (v *SQLBuilderVisitor) VisitAnalyticScanNode(node *ast.AnalyticScanNode) (S
 	for _, col := range node.ColumnList() {
 		selectStatement.SelectList = append(selectStatement.SelectList, &SelectListItem{
 			Expression: v.fragmentContext.GetColumnExpression(col),
-			Alias:      fmt.Sprintf("col%d", col.ColumnID()),
+			Alias:      col.Name(),
 		})
 	}
 
@@ -445,38 +451,37 @@ func (v *SQLBuilderVisitor) VisitAnalyticScanNode(node *ast.AnalyticScanNode) (S
 // - Makes columns available in the current scope
 //
 // Returns a TableFromItem fragment representing the table reference.
-func (v *SQLBuilderVisitor) VisitTableScan(node *ast.TableScanNode) (SQLFragment, error) {
-	nodeID := NodeID(fmt.Sprintf("table_%p", node))
-
+func (v *SQLBuilderVisitor) VisitTableScan(node *ast.TableScanNode, fromOnly bool) (SQLFragment, error) {
 	// Always generate a table alias to help with column disambiguation
 	tableAlias := v.fragmentContext.aliasGenerator.GenerateTableAlias()
+	fromItem := NewTableFromItem(
+		namePathFromContext(v.context).format([]string{node.Table().Name()}),
+		tableAlias,
+	)
 
-	fromItem := NewTableFromItem(node.Table().Name(), tableAlias)
+	// TODO HANDLE WILDCARD TABLES
+	selectStatement := NewSelectStatement()
+	selectStatement.FromClause = fromItem
 
-	// Create column information for output
-	outputColumns := make([]*ColumnInfo, 0)
 	for _, col := range node.ColumnList() {
+		selectStatement.SelectList = append(selectStatement.SelectList, &SelectListItem{
+			Expression: NewColumnExpression(col.Name(), tableAlias),
+		})
+
 		columnInfo := &ColumnInfo{
 			Type:       col.Type().Kind().String(),
 			TableAlias: tableAlias,
-			Source:     nodeID,
 		}
-		outputColumns = append(outputColumns, columnInfo)
 
 		// Make columns available in current scope
 		// Store by column name for simple lookup
 		v.fragmentContext.AddAvailableColumn(col, columnInfo)
 	}
 
-	// Store fragment with metadata
-	metadata := &FragmentMetadata{
-		NodeType:      "TableScan",
-		OutputColumns: outputColumns,
-		TableAliases:  []string{tableAlias},
+	if fromOnly {
+		return fromItem, nil
 	}
-
-	v.fragmentContext.StoreFragment(nodeID, fromItem, metadata)
-	return fromItem, nil
+	return selectStatement, nil
 }
 
 // VisitProjectScan handles ZetaSQL projection operations by converting them into
@@ -516,21 +521,9 @@ func (v *SQLBuilderVisitor) VisitProjectScan(node *ast.ProjectScanNode) (SQLFrag
 	for _, col := range node.ColumnList() {
 		stmt.SelectList = append(stmt.SelectList, &SelectListItem{
 			Expression: v.fragmentContext.GetColumnExpression(col),
-			Alias:      fmt.Sprintf("col%d", col.ColumnID()),
+			Alias:      col.Name(),
 		})
 	}
-
-	// TODO: Maybe delete fragment metadata approach
-	// Store fragment with metadata
-	//nodeID := NodeID(fmt.Sprintf("project_%p", node))
-	//metadata := &FragmentMetadata{
-	//	NodeType:      "ProjectScan",
-	//	OutputColumns: outputColumns,
-	//	IsOrdered:     node.IsOrdered(),
-	//	Dependencies:  []NodeID{NodeID(fmt.Sprintf("%p", node.InputScan()))},
-	//}
-	//
-	//v.fragmentContext.StoreFragment(nodeID, stmt, metadata)
 
 	return stmt, nil
 }
@@ -572,6 +565,7 @@ func (v *SQLBuilderVisitor) VisitJoinScan(node *ast.JoinScanNode) (SQLFragment, 
 		joinCondition = conditionFragment.(*SQLExpression)
 	}
 
+	// TODO HANDLE INNER, RIGHT JOIN,FULL JOIN
 	selectStatement := NewSelectStatement()
 	// Create join fragment
 	joinType := convertJoinType(node.JoinType())
@@ -603,17 +597,6 @@ func (v *SQLBuilderVisitor) VisitJoinScan(node *ast.JoinScanNode) (SQLFragment, 
 		v.fragmentContext.AddAvailableColumn(col, joinColumnInfo)
 	}
 
-	// Store fragment metadata
-	metadata := &FragmentMetadata{
-		NodeType:      "JoinScan",
-		OutputColumns: outputColumns,
-		Dependencies: []NodeID{
-			NodeID(fmt.Sprintf("%p", node.LeftScan())),
-			NodeID(fmt.Sprintf("%p", node.RightScan())),
-		},
-	}
-
-	v.fragmentContext.StoreFragment(nodeID, selectStatement, metadata)
 	return selectStatement, nil
 }
 
@@ -716,7 +699,7 @@ func (v *SQLBuilderVisitor) VisitArrayScan(node *ast.ArrayScanNode) (SQLFragment
 	for _, col := range node.ColumnList() {
 		unnestSelect.SelectList = append(unnestSelect.SelectList, &SelectListItem{
 			Expression: v.fragmentContext.GetColumnExpression(col),
-			Alias:      fmt.Sprintf("col%d", col.ColumnID()),
+			Alias:      col.Name(),
 		})
 	}
 

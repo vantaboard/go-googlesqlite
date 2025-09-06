@@ -103,15 +103,15 @@ func (s *FunctionSpec) CallSQL(ctx context.Context, callNode *ast.BaseFunctionCa
 }
 
 type TableSpec struct {
-	IsTemp     bool             `json:"isTemp"`
-	IsView     bool             `json:"isView"`
-	NamePath   []string         `json:"namePath"`
-	Columns    []*ColumnSpec    `json:"columns"`
-	PrimaryKey []string         `json:"primaryKey"`
-	CreateMode ast.CreateMode   `json:"createMode"`
-	Query      *SelectStatement `json:"query"`
-	UpdatedAt  time.Time        `json:"updatedAt"`
-	CreatedAt  time.Time        `json:"createdAt"`
+	IsTemp     bool           `json:"isTemp"`
+	IsView     bool           `json:"isView"`
+	NamePath   []string       `json:"namePath"`
+	Columns    []*ColumnSpec  `json:"columns"`
+	PrimaryKey []string       `json:"primaryKey"`
+	CreateMode ast.CreateMode `json:"createMode"`
+	Query      string         `json:"query"`
+	UpdatedAt  time.Time      `json:"updatedAt"`
+	CreatedAt  time.Time      `json:"createdAt"`
 }
 
 func (s *TableSpec) Column(name string) *ColumnSpec {
@@ -131,7 +131,7 @@ func (s *TableSpec) SQLiteSchema() string {
 	if s.IsView {
 		return viewSQLiteSchema(s)
 	}
-	if s.Query != nil {
+	if s.Query != "" {
 		return fmt.Sprintf("CREATE TABLE `%s` AS %s", s.TableName(), s.Query)
 	}
 	columns := []string{}
@@ -551,7 +551,7 @@ func newTableSpec(namePath *NamePath, stmt *ast.CreateTableStmtNode) *TableSpec 
 	}
 }
 
-func newTableAsViewSpec(namePath *NamePath, query *SelectStatement, stmt *ast.CreateViewStmtNode) *TableSpec {
+func newTableAsViewSpec(namePath *NamePath, query SQLFragment, stmt *ast.CreateViewStmtNode) *TableSpec {
 	now := time.Now()
 	return &TableSpec{
 		IsTemp:     stmt.CreateScope() == ast.CreateScopeTemp,
@@ -559,13 +559,13 @@ func newTableAsViewSpec(namePath *NamePath, query *SelectStatement, stmt *ast.Cr
 		NamePath:   namePath.mergePath(stmt.NamePath()),
 		Columns:    newColumnsFromOutputColumns(stmt.OutputColumnList()),
 		CreateMode: stmt.CreateMode(),
-		Query:      query,
+		Query:      query.String(),
 		UpdatedAt:  now,
 		CreatedAt:  now,
 	}
 }
 
-func newTableAsSelectSpec(namePath *NamePath, query *SelectStatement, stmt *ast.CreateTableAsSelectStmtNode) *TableSpec {
+func newTableAsSelectSpec(namePath *NamePath, query SQLFragment, stmt *ast.CreateTableAsSelectStmtNode) *TableSpec {
 	now := time.Now()
 	return &TableSpec{
 		IsTemp:     stmt.CreateScope() == ast.CreateScopeTemp,
@@ -573,7 +573,7 @@ func newTableAsSelectSpec(namePath *NamePath, query *SelectStatement, stmt *ast.
 		Columns:    newColumnsFromDef(stmt.ColumnDefinitionList()),
 		PrimaryKey: newPrimaryKey(stmt.PrimaryKey()),
 		CreateMode: stmt.CreateMode(),
-		Query:      query,
+		Query:      query.String(),
 		UpdatedAt:  now,
 		CreatedAt:  now,
 	}

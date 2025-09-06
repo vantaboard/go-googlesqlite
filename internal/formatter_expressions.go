@@ -65,6 +65,10 @@ func (v *SQLBuilderVisitor) VisitExpression(expr ast.Node) (SQLFragment, error) 
 		return v.VisitParameterNode(e)
 	case *ast.ArgumentRefNode:
 		return v.VisitArgumentRefNode(e)
+	case *ast.DMLDefaultNode:
+		return v.VisitDMLDefaultNode(e)
+	case *ast.DMLValueNode:
+		return v.VisitDMLValueNode(e)
 
 	default:
 		return nil, fmt.Errorf("unsupported expression type: %T", expr)
@@ -368,13 +372,7 @@ func (v *SQLBuilderVisitor) VisitOutputColumnNode(node *ast.OutputColumnNode) (S
 //
 // Returns the computed expression with the column name set as its alias.
 func (v *SQLBuilderVisitor) VisitComputedColumnNode(node *ast.ComputedColumnNode) (SQLFragment, error) {
-	fragment, err := v.VisitExpression(node.Expr())
-	if err != nil {
-		return nil, err
-	}
-	expr := fragment.(*SQLExpression)
-	expr.Alias = node.Column().Name()
-	return expr, nil
+	return v.VisitExpression(node.Expr())
 }
 
 // VisitOrderByItemNode converts ZetaSQL ORDER BY items into SQLite ORDER BY clauses.
@@ -507,7 +505,7 @@ func (v *SQLBuilderVisitor) VisitAggregateScanNode(node *ast.AggregateScanNode) 
 
 		outputColumns = append(outputColumns, &SelectListItem{
 			Expression: expr,
-			Alias:      fmt.Sprintf("col%d", col.ColumnID()),
+			Alias:      col.Name(),
 		})
 	}
 
@@ -544,13 +542,6 @@ func (v *SQLBuilderVisitor) VisitAggregateScanNode(node *ast.AggregateScanNode) 
 		outputColumnInfos = append(outputColumnInfos, columnInfo)
 	}
 
-	metadata := &FragmentMetadata{
-		NodeType:      "AggregateScan",
-		OutputColumns: outputColumnInfos,
-		Dependencies:  []NodeID{NodeID(fmt.Sprintf("%p", node.InputScan()))},
-	}
-
-	v.fragmentContext.StoreFragment(nodeID, selectStatement, metadata)
 	return selectStatement, nil
 }
 
@@ -662,7 +653,7 @@ func (v *SQLBuilderVisitor) buildGroupingSetsQuery(
 // It handles both named and positional parameters used in prepared statements.
 //
 // Parameter formats:
-// - Named parameters: "@parameter_name" 
+// - Named parameters: "@parameter_name"
 // - Positional parameters: "?"
 //
 // Returns a LiteralExpression containing the parameter placeholder.

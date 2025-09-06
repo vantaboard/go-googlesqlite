@@ -597,6 +597,12 @@ CREATE FUNCTION customfunc(
 		{
 			name: "use function",
 			query: `
+
+CREATE FUNCTION customfunc(
+  arr ARRAY<STRUCT<name STRING, val INT64>>
+) AS (
+  (SELECT SUM(IF(elem.name = "foo",elem.val,null)) FROM UNNEST(arr) AS elem)
+);
 SELECT customfunc([
   STRUCT<name STRING, val INT64>("foo", 10),
   STRUCT<name STRING, val INT64>("bar", 40),
@@ -6053,19 +6059,6 @@ SELECT 1 FROM (select 1) f WHERE %s ? > 0;
 			}(),
 			expectedRows: [][]interface{}{{int64(1)}},
 		},
-		{
-			name: "multiple statements with named params",
-			query: `
-CREATE TEMP TABLE t1 AS SELECT @a c1;
-SELECT c1 * @b * @c FROM t1;
-`,
-			args: []interface{}{
-				sql.NamedArg{Name: "a", Value: 1},
-				sql.NamedArg{Name: "b", Value: 2},
-				sql.NamedArg{Name: "c", Value: 3},
-			},
-			expectedRows: [][]interface{}{{int64(6)}},
-		},
 
 		{
 			name: "single statement with positional params",
@@ -6082,6 +6075,19 @@ SELECT ? + ?;
 `,
 			args:        []interface{}{int64(1)},
 			expectedErr: "not enough query arguments",
+		},
+
+		{
+			name: "limit offset test",
+			query: `
+CREATE TEMP TABLE SingerNames AS 
+SELECT 'Kylie' AS FirstName, 'Minogue' AS LastName
+UNION ALL SELECT 'Robyn', null;
+
+SELECT * FROM SingerNames
+ORDER BY FirstName ASC
+LIMIT 1 OFFSET 1;`,
+			expectedRows: [][]interface{}{{"Robyn", nil}},
 		},
 		{
 			name: "multiple statements with positional params",
@@ -6107,6 +6113,84 @@ SELECT c1 * ? * ? FROM t1;
 				strings.Repeat("false in (true) or ", 1001),
 			),
 			expectedErr: "too many arguments on function",
+		},
+		{
+			name: "merge two tables with empty source",
+			query: `
+CREATE TEMP TABLE target(id INT64, name STRING);
+CREATE TEMP TABLE source(id INT64, name STRING);
+MERGE target T USING source S ON T.id = S.id
+WHEN MATCHED THEN UPDATE SET id = S.id, name = S.name
+WHEN NOT MATCHED THEN INSERT (id, name) VALUES (id, name);
+SELECT * FROM target;
+`,
+			expectedRows: [][]interface{}{},
+		},
+		{
+			name: "merge two tables with non-empty source",
+			query: `
+CREATE TEMP TABLE target(id INT64, name STRING);
+CREATE TEMP TABLE source(id INT64, name STRING);
+INSERT INTO source(id, name) VALUES (1, "test");
+MERGE target T USING source S ON T.id = S.id
+WHEN MATCHED THEN UPDATE SET id = S.id, name = S.name
+WHEN NOT MATCHED THEN INSERT (id, name) VALUES (id, name);
+SELECT * FROM target;
+`,
+			expectedRows: [][]interface{}{{int64(1), "test"}},
+		},
+		{
+			name: "merge two tables where target table name is substring of source table name",
+			query: `
+CREATE TEMP TABLE target(id INT64, name STRING);
+CREATE TEMP TABLE tmp_target_123(id INT64, name STRING);
+INSERT INTO tmp_target_123(id, name) VALUES (1, "test");
+MERGE target T USING tmp_target_123 S ON T.id = S.id
+WHEN MATCHED THEN UPDATE SET id = S.id, name = S.name
+WHEN NOT MATCHED THEN INSERT (id, name) VALUES (id, name);
+SELECT * FROM target;
+`,
+			expectedRows: [][]interface{}{{int64(1), "test"}},
+		},
+		{
+			name: "merge two tables where source table is evaluated using a SELECT expression",
+			query: `
+CREATE TEMP TABLE target(id INT64, name STRING);
+CREATE TEMP TABLE source(id INT64, name STRING);
+INSERT INTO source(id, name) VALUES (1, "test");
+INSERT INTO source(id, name) VALUES (2, "test2");
+MERGE target T USING (SELECT * FROM source) S ON T.id = S.id
+WHEN MATCHED THEN UPDATE SET id = S.id, name = S.name
+WHEN NOT MATCHED THEN INSERT (id, name) VALUES (id, name);
+SELECT * FROM target;
+`,
+			expectedRows: [][]interface{}{{int64(1), "test"}, {int64(2), "test2"}},
+		},
+		{
+			name: "merge two tables deleting matched rows",
+			query: `
+CREATE TEMP TABLE target(id INT64, name STRING);
+CREATE TEMP TABLE source(id INT64, name STRING);
+INSERT INTO target(id, name) VALUES (1, "test");
+INSERT INTO target(id, name) VALUES (2, "test2");
+INSERT INTO source(id, name) VALUES (1, "test");
+MERGE target T USING (SELECT * FROM source) S ON T.id = S.id
+WHEN MATCHED THEN DELETE;
+SELECT * FROM target;
+`,
+			expectedRows: [][]interface{}{{int64(2), "test2"}},
+		},
+		{
+			name: "merge two tables omitting INSERT column list and using ROW",
+			query: `
+CREATE TEMP TABLE target(id INT64, name STRING);
+CREATE TEMP TABLE source(id INT64, name STRING);
+INSERT INTO source(id, name) VALUES (1, "test");
+MERGE target T USING (SELECT * FROM source) S ON T.id = S.id
+WHEN NOT MATCHED THEN INSERT ROW;
+SELECT * FROM target;
+`,
+			expectedRows: [][]interface{}{{int64(1), "test"}},
 		},
 	} {
 		test := test

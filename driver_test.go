@@ -60,6 +60,26 @@ CREATE VIEW IF NOT EXISTS SingerNames AS SELECT FirstName || ' ' || LastName AS 
 	if name != "John Titor" {
 		t.Fatalf("failed to find view row")
 	}
+
+	result, err := db.Exec("DELETE FROM Singers WHERE SingerId = @id", sql.Named("id", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rowsAffected, err := result.RowsAffected(); err != nil {
+		t.Fatal(err)
+	} else if rowsAffected != 1 {
+		t.Fatalf("expected 1 row affected, got %d", rowsAffected)
+	}
+
+	_, err = db.Exec("DROP VIEW SingerNames")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = db.Exec("DROP TABLE Singers")
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRegisterCustomDriver(t *testing.T) {
@@ -305,7 +325,7 @@ CREATE TABLE IF NOT EXISTS Singers (
 		}
 	})
 
-	t.Run("updated from", func(t *testing.T) {
+	t.Run("update from", func(t *testing.T) {
 		db, err := sql.Open("zetasqlite", ":memory:")
 		if err != nil {
 			t.Fatal(err)

@@ -77,6 +77,7 @@ func newAnalyzerOptions() (*zetasql.AnalyzerOptions, error) {
 		zetasql.FeatureV13Pivot,
 		zetasql.FeatureV13Unpivot,
 		zetasql.FeatureDMLUpdateWithJoin,
+		zetasql.FeatureV13OmitInsertColumnList,
 	})
 	langOpt.SetSupportedStatementKinds([]ast.Kind{
 		ast.BeginStmt,
@@ -246,7 +247,6 @@ func (a *Analyzer) context(
 	ctx = withFuncMap(ctx, funcMap)
 	ctx = withAnalyticOrderColumnNames(ctx, &analyticOrderColumnNames{})
 	ctx = withNodeMap(ctx, zetasql.NewNodeMap(stmtNode, stmt))
-	ctx = withUseTableNameForColumn(ctx)
 	return ctx
 }
 
@@ -320,11 +320,11 @@ func (a *Analyzer) newCreateTableStmtAction(ctx context.Context, args []driver.N
 }
 
 func (a *Analyzer) newCreateTableAsSelectStmtAction(ctx context.Context, _ string, args []driver.NamedValue, node *ast.CreateTableAsSelectStmtNode) (*CreateTableStmtAction, error) {
-	scan, err := NewSQLBuilderVisitor(ctx).VisitScan(node.Query())
+	stmt, err := NewSQLBuilderVisitor(ctx).VisitCreateTableAsSelectStmt(node)
 	if err != nil {
 		return nil, err
 	}
-	query := NewSelectStarStatement(scan)
+	query := stmt.(*CreateTableStatement).AsSelect
 	spec := newTableAsSelectSpec(a.namePath, query, node)
 	params := getParamsFromNode(node)
 	queryArgs, err := getArgsFromParams(args, params)
@@ -367,11 +367,10 @@ func (a *Analyzer) newCreateFunctionStmtAction(ctx context.Context, query string
 }
 
 func (a *Analyzer) newCreateViewStmtAction(ctx context.Context, _ string, args []driver.NamedValue, node *ast.CreateViewStmtNode) (*CreateViewStmtAction, error) {
-	scan, err := NewSQLBuilderVisitor(ctx).VisitScan(node.Query())
+	query, err := NewSQLBuilderVisitor(ctx).VisitCreateViewStatement(node)
 	if err != nil {
 		return nil, err
 	}
-	query := NewSelectStarStatement(scan)
 	spec := newTableAsViewSpec(a.namePath, query, node)
 	return &CreateViewStmtAction{
 		query:   query,
@@ -450,11 +449,11 @@ func (a *Analyzer) buildArrayTypeFuncFromTemplatedFunc(node *ast.CreateFunctionS
 }
 
 func (a *Analyzer) newDropStmtAction(ctx context.Context, query string, args []driver.NamedValue, node *ast.DropStmtNode) (*DropStmtAction, error) {
-	formattedQuery, err := newNode(node).FormatSQL(ctx)
+	formattedQuery, err := NewSQLBuilderVisitor(ctx).VisitDropStmt(node)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format query %s: %w", query, err)
 	}
-	if formattedQuery == "" {
+	if formattedQuery == nil {
 		return nil, fmt.Errorf("failed to format query %s", query)
 	}
 	params := getParamsFromNode(node)
@@ -470,7 +469,7 @@ func (a *Analyzer) newDropStmtAction(ctx context.Context, query string, args []d
 		funcMap:        funcMapFromContext(ctx),
 		catalog:        a.catalog,
 		query:          query,
-		formattedQuery: formattedQuery,
+		formattedQuery: formattedQuery.String(),
 		args:           queryArgs,
 	}, nil
 }
@@ -493,11 +492,11 @@ func (a *Analyzer) newDropFunctionStmtAction(ctx context.Context, query string, 
 }
 
 func (a *Analyzer) newDMLStmtAction(ctx context.Context, query string, args []driver.NamedValue, node ast.Node) (*DMLStmtAction, error) {
-	formattedQuery, err := newNode(node).FormatSQL(ctx)
+	stmt, err := NewSQLBuilderVisitor(ctx).VisitDMLStatement(node)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format query %s: %w", query, err)
 	}
-	if formattedQuery == "" {
+	if stmt == nil {
 		return nil, fmt.Errorf("failed to format query %s", query)
 	}
 	params := getParamsFromNode(node)
@@ -509,7 +508,7 @@ func (a *Analyzer) newDMLStmtAction(ctx context.Context, query string, args []dr
 		query:          query,
 		params:         params,
 		args:           queryArgs,
-		formattedQuery: formattedQuery,
+		formattedQuery: stmt.String(),
 	}, nil
 }
 
@@ -541,8 +540,10 @@ func (a *Analyzer) newQueryStmtAction(ctx context.Context, query string, args []
 		if err != nil {
 			return nil, fmt.Errorf("failed to format query %s: %w", query, err)
 		}
+
 		formattedQuery = fragment.String()
 	}
+
 	if formattedQuery == "" {
 		return nil, fmt.Errorf("failed to format query %s", query)
 	}
@@ -573,16 +574,22 @@ func (a *Analyzer) newTruncateStmtAction(ctx context.Context, query string, args
 	return &TruncateStmtAction{query: fmt.Sprintf("DELETE FROM `%s`", table)}, nil
 }
 
+func replaceMergeColumnReferences(query, sourceColumn, targetColumn string) string {
+	return strings.ReplaceAll(query, sourceColumn, targetColumn)
+}
+
 func (a *Analyzer) newMergeStmtAction(ctx context.Context, query string, args []driver.NamedValue, node *ast.MergeStmtNode) (*MergeStmtAction, error) {
-	targetTable, err := newNode(node.TableScan()).FormatSQL(ctx)
+	visitor := NewSQLBuilderVisitor(ctx)
+	targetTableName := node.TableScan().Table().Name()
+	targetTable, err := visitor.VisitScan(node.TableScan())
 	if err != nil {
 		return nil, err
 	}
-	sourceTable, err := newNode(node.FromScan()).FormatSQL(ctx)
+	sourceTable, err := visitor.VisitScan(node.FromScan())
 	if err != nil {
 		return nil, err
 	}
-	expr, err := newNode(node.MergeExpr()).FormatSQL(ctx)
+	expr, err := visitor.VisitExpression(node.MergeExpr())
 	if err != nil {
 		return nil, err
 	}
@@ -606,48 +613,66 @@ func (a *Analyzer) newMergeStmtAction(ctx context.Context, query string, args []
 		return nil, fmt.Errorf("unexpected MERGE expression. expected column reference but got %T", argList[1])
 	}
 	var (
-		sourceColumn *ast.Column
-		targetColumn *ast.Column
+		sourceColumn *ast.ColumnRefNode
+		targetColumn *ast.ColumnRefNode
 	)
-	if strings.Contains(sourceTable, colA.Column().TableName()) {
-		sourceColumn = colA.Column()
-		targetColumn = colB.Column()
+
+	if colA.Column().TableName() == node.TableScan().Table().Name() {
+		targetColumn = colA
+		sourceColumn = colB
 	} else {
-		sourceColumn = colB.Column()
-		targetColumn = colA.Column()
+		targetColumn = colB
+		sourceColumn = colA
 	}
-	mergedTableSourceColumnName := uniqueColumnIdentifier(ctx, sourceColumn)
-	mergedTableTargetColumnName := uniqueColumnIdentifier(ctx, targetColumn)
+	mergedTableSourceColumn, err := visitor.VisitExpression(sourceColumn)
+	if err != nil {
+		return nil, fmt.Errorf("unexpected MERGE expression. failed to format column: %s", err)
+	}
+	mergedTableTargetColumn, err := visitor.VisitExpression(targetColumn)
+	if err != nil {
+		return nil, fmt.Errorf("unexpected MERGE expression. failed to format column: %s", err)
+	}
+	var stmts []string
+	createTableStmt, columnMapping, err := CreateMergedTableStatement("zetasqlite_merged_table", sourceTable, targetTable, expr.(*SQLExpression))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create merged table statement: %w", err)
+	}
+
+	mergedTableSourceColumnName, ok := columnMapping.LookupName(mergedTableSourceColumn.(*SQLExpression))
+	if !ok {
+		return nil, fmt.Errorf("failed to find merged table column name")
+	}
+
+	mergedTableTargetColumnName, ok := columnMapping.LookupName(mergedTableTargetColumn.(*SQLExpression))
+	if !ok {
+		return nil, fmt.Errorf("failed to find merged table column name")
+	}
 	mergedTableOutputColumns := []string{
 		mergedTableTargetColumnName,
 		mergedTableSourceColumnName,
 	}
-	var stmts []string
-	stmts = append(stmts, fmt.Sprintf(
-		"CREATE TABLE zetasqlite_merged_table AS SELECT DISTINCT * FROM (SELECT * FROM %[1]s LEFT JOIN %[2]s ON %[3]s UNION ALL SELECT * FROM %[2]s LEFT JOIN %[1]s ON %[3]s)",
-		sourceTable, targetTable, expr,
-	))
+	stmts = append(stmts, createTableStmt.String())
 
 	// exists target table and source table
 	matchedFromStmt := fmt.Sprintf(
-		"FROM zetasqlite_merged_table WHERE %[2]s = %[1]s AND %[3]s = %[1]s",
-		targetColumn.Name(),
+		"FROM zetasqlite_merged_table WHERE `%[2]s` = %[1]s AND `%[3]s` = %[1]s",
+		targetColumn.Column().Name(),
 		mergedTableSourceColumnName,
 		mergedTableTargetColumnName,
 	)
 
 	// exists target table but not exists source table
 	notMatchedBySourceFromStmt := fmt.Sprintf(
-		"FROM zetasqlite_merged_table WHERE %[2]s = `%[1]s` AND %[3]s IS NULL",
-		targetColumn.Name(),
+		"FROM zetasqlite_merged_table WHERE `%[2]s` = `%[1]s` AND `%[3]s` IS NULL",
+		targetColumn.Column().Name(),
 		mergedTableTargetColumnName,
 		mergedTableSourceColumnName,
 	)
 
 	// exists source table but not exists target table
 	notMatchedByTargetFromStmt := fmt.Sprintf(
-		"FROM zetasqlite_merged_table WHERE %[2]s = `%[1]s` AND %[3]s IS NULL",
-		sourceColumn.Name(),
+		"FROM zetasqlite_merged_table WHERE `%[2]s` = `%[1]s` AND `%[3]s` IS NULL",
+		sourceColumn.Column().Name(),
 		mergedTableSourceColumnName,
 		mergedTableTargetColumnName,
 	)
@@ -672,37 +697,42 @@ func (a *Analyzer) newMergeStmtAction(ctx context.Context, query string, args []
 			for _, col := range when.InsertColumnList() {
 				columns = append(columns, fmt.Sprintf("`%s`", col.Name()))
 			}
-			row, err := newNode(when.InsertRow()).FormatSQL(unuseColumnID(ctx))
+			row, err := visitor.VisitInsertRowNode(when.InsertRow())
 			if err != nil {
 				return nil, err
 			}
 			stmts = append(stmts, fmt.Sprintf(
-				"INSERT INTO `%[1]s`(%[2]s) SELECT %[3]s FROM (SELECT * FROM `%[4]s` %[5]s)",
-				targetColumn.TableName(),
+				"INSERT INTO `%[1]s` (%[2]s) SELECT %[3]s FROM (SELECT * FROM %[4]s %[5]s) AS `%[6]s`",
+				targetTableName,
 				strings.Join(columns, ","),
 				row,
-				sourceColumn.TableName(),
+				sourceTable.String(),
 				whereStmt,
+				sourceTable.Alias,
 			))
 		case ast.ActionTypeUpdate:
 			var items []string
 			for _, item := range when.UpdateItemList() {
-				sql, err := newNode(item).FormatSQL(ctx)
+				sql, err := visitor.VisitUpdateItem(item)
 				if err != nil {
 					return nil, err
 				}
-				items = append(items, sql)
+				sqlString := sql.String()
+				for column, mapping := range columnMapping.SourceColumnMap {
+					sqlString = strings.ReplaceAll(sqlString, column.String(), fmt.Sprintf("`%s`", mapping))
+				}
+				items = append(items, sqlString)
 			}
 			stmts = append(stmts, fmt.Sprintf(
 				"UPDATE `%s` SET %s %s",
-				targetColumn.TableName(),
+				targetTableName,
 				strings.Join(items, ","),
 				fromStmt,
 			))
 		case ast.ActionTypeDelete:
 			stmts = append(stmts, fmt.Sprintf(
 				"DELETE FROM `%s` %s",
-				targetColumn.TableName(),
+				targetTableName,
 				whereStmt,
 			))
 		}

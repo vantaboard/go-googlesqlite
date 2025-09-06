@@ -115,6 +115,7 @@ func (v *SQLBuilderVisitor) VisitAnalyticFunctionGroupNode(node *ast.AnalyticFun
 
 		v.fragmentContext.AddAvailableColumn(call.Column(), &ColumnInfo{
 			Expression: item,
+			TableAlias: call.Column().Name(),
 		})
 	}
 	return items, nil

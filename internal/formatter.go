@@ -64,6 +64,13 @@ func getPathFromNode(n parsed_ast.Node) ([]string, error) {
 
 func uniqueColumnIdentifier(ctx context.Context, col *ast.Column) string {
 	colName := col.Name()
+	if useTableNameForColumn(ctx) {
+		return fmt.Sprintf("%s.%s", col.TableName(), colName)
+	}
+	if useColumnID(ctx) {
+		colID := col.ColumnID()
+		return fmt.Sprintf("%s#%d", colName, colID)
+	}
 	return colName
 }
 

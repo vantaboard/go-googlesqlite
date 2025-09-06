@@ -11,6 +11,7 @@ import (
 type SQLFragment interface {
 	WriteSql(writer *SQLWriter) error
 	String() string
+	DebugString() string
 }
 
 // SQLWriter handles SQL string generation with proper formatting
@@ -52,6 +53,20 @@ func (w *SQLWriter) Dedent() {
 
 func (w *SQLWriter) String() string {
 	return w.builder.String()
+}
+
+// WriteDebug writes debug information with tree structure formatting
+func (w *SQLWriter) WriteDebug(prefix string, s string) {
+	w.Write(prefix + s)
+}
+
+// WriteDebugLine writes debug information with tree structure formatting and newline
+func (w *SQLWriter) WriteDebugLine(prefix string, s string) {
+	if w.useNewlines {
+		w.Write(prefix + s + "\n")
+	} else {
+		w.Write(prefix + s)
+	}
 }
 
 // SelectType represents different SELECT variants
@@ -163,6 +178,11 @@ func (e *SQLExpression) WriteSql(writer *SQLWriter) error {
 		writer.Write(fmt.Sprintf(" COLLATE %s", e.Collation))
 	}
 
+	if e.Alias != "" {
+		writer.Write(" AS ")
+		writer.Write("`" + e.Alias + "`")
+	}
+
 	return nil
 }
 
@@ -171,6 +191,83 @@ func (e *SQLExpression) String() string {
 	writer.useNewlines = e.Subquery != nil
 	e.WriteSql(writer)
 	return writer.String()
+}
+
+// DebugString returns a hierarchical debug representation similar to ZetaSQL's node debug output
+func (e *SQLExpression) DebugString() string {
+	writer := NewSQLWriter()
+	e.writeDebugString(writer, "")
+	return writer.String()
+}
+
+func (e *SQLExpression) writeDebugString(writer *SQLWriter, prefix string) {
+	switch e.Type {
+	case ExpressionTypeColumn:
+		if e.TableAlias != "" {
+			writer.WriteDebugLine(prefix, fmt.Sprintf("+-ColumnRef(table=%s, column=%s)", e.TableAlias, e.Value))
+		} else {
+			writer.WriteDebugLine(prefix, fmt.Sprintf("+-ColumnRef(column=%s)", e.Value))
+		}
+	case ExpressionTypeLiteral:
+		writer.WriteDebugLine(prefix, fmt.Sprintf("+-Literal(value=%s)", e.Value))
+	case ExpressionTypeBinary:
+		writer.WriteDebugLine(prefix, fmt.Sprintf("+-BinaryExpression(operator=%s)", e.Operator))
+		if e.Left != nil {
+			writer.WriteDebugLine(prefix, "  +-left_operand=")
+			e.Left.writeDebugString(writer, prefix+"    ")
+		}
+		if e.Right != nil {
+			writer.WriteDebugLine(prefix, "  +-right_operand=")
+			e.Right.writeDebugString(writer, prefix+"    ")
+		}
+	case ExpressionTypeFunction:
+		if e.Function != nil {
+			writer.WriteDebugLine(prefix, fmt.Sprintf("+-FunctionCall(name=%s)", e.Function.Name))
+			for i, arg := range e.Function.Arguments {
+				writer.WriteDebugLine(prefix, fmt.Sprintf("  +-argument[%d]=", i))
+				arg.writeDebugString(writer, prefix+"    ")
+			}
+		}
+	case ExpressionTypeSubquery:
+		writer.WriteDebugLine(prefix, "+-SubqueryExpression")
+		if e.Subquery != nil {
+			writer.WriteDebugLine(prefix, "  +-subquery=")
+			e.Subquery.writeDebugString(writer, prefix+"    ")
+		}
+	case ExpressionTypeStar:
+		if e.TableAlias != "" {
+			writer.WriteDebugLine(prefix, fmt.Sprintf("+-StarExpression(table=%s)", e.TableAlias))
+		} else {
+			writer.WriteDebugLine(prefix, "+-StarExpression")
+		}
+	case ExpressionTypeCase:
+		writer.WriteDebugLine(prefix, "+-CaseExpression")
+		if e.CaseExpr != nil && e.CaseExpr.CaseExpr != nil {
+			writer.WriteDebugLine(prefix, "  +-case_expr=")
+			e.CaseExpr.CaseExpr.writeDebugString(writer, prefix+"    ")
+		}
+		for i, whenClause := range e.CaseExpr.WhenClauses {
+			writer.WriteDebugLine(prefix, fmt.Sprintf("  +-when_clause[%d]=", i))
+			writer.WriteDebugLine(prefix+"    ", "+-condition=")
+			whenClause.Condition.writeDebugString(writer, prefix+"      ")
+			writer.WriteDebugLine(prefix+"    ", "+-result=")
+			whenClause.Result.writeDebugString(writer, prefix+"      ")
+		}
+		if e.CaseExpr.ElseExpr != nil {
+			writer.WriteDebugLine(prefix, "  +-else_expr=")
+			e.CaseExpr.ElseExpr.writeDebugString(writer, prefix+"    ")
+		}
+	case ExpressionTypeExists:
+		writer.WriteDebugLine(prefix, "+-ExistsExpression")
+		if e.ExistsExpr != nil && e.ExistsExpr.Subquery != nil {
+			writer.WriteDebugLine(prefix, "  +-subquery=")
+			e.ExistsExpr.Subquery.writeDebugString(writer, prefix+"    ")
+		}
+	}
+
+	if e.Alias != "" {
+		writer.WriteDebugLine(prefix, fmt.Sprintf("  +-alias=%s", e.Alias))
+	}
 }
 
 // WriteSql method for CaseExpression
@@ -400,6 +497,15 @@ func (s *SelectListItem) String() string {
 	return writer.String()
 }
 
+func (s *SelectListItem) DebugString() string {
+	writer := NewSQLWriter()
+	s.Expression.writeDebugString(writer, "")
+	if s.Alias != "" {
+		writer.WriteDebugLine("", fmt.Sprintf("+-alias=%s", s.Alias))
+	}
+	return writer.String()
+}
+
 // FromItemType represents different types of FROM clause items
 type FromItemType int
 
@@ -439,10 +545,10 @@ type FromItem struct {
 func (f *FromItem) WriteSql(writer *SQLWriter) error {
 	switch f.Type {
 	case FromItemTypeTable:
-		writer.Write(f.TableName)
+		writer.Write("`" + f.TableName + "`")
 		if f.Alias != "" {
 			writer.Write(" AS ")
-			writer.Write(f.Alias)
+			writer.Write("`" + f.Alias + "`")
 		}
 	case FromItemTypeSubquery:
 		writer.Write("(")
@@ -490,6 +596,13 @@ func (f *FromItem) String() string {
 	writer := NewSQLWriter()
 	writer.useNewlines = false
 	f.WriteSql(writer)
+	return writer.String()
+}
+
+func (f *FromItem) DebugString() string {
+	writer := NewSQLWriter()
+	stmt := &SelectStatement{} // Create a temporary SelectStatement for reusing the debug logic
+	stmt.writeFromItemDebug(writer, "", f)
 	return writer.String()
 }
 
@@ -589,6 +702,19 @@ func (o *OrderByItem) String() string {
 	return writer.String()
 }
 
+func (o *OrderByItem) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", "+-OrderByItem")
+	o.Expression.writeDebugString(writer, "  ")
+	if o.Direction != "" {
+		writer.WriteDebugLine("  ", fmt.Sprintf("+-direction=%s", o.Direction))
+	}
+	if o.NullsOrder != "" {
+		writer.WriteDebugLine("  ", fmt.Sprintf("+-nulls_order=%s", o.NullsOrder))
+	}
+	return writer.String()
+}
+
 // WithClause represents CTE (Common Table Expression) definitions
 type WithClause struct {
 	Name    string
@@ -600,6 +726,19 @@ func (w *WithClause) String() string {
 	writer := NewSQLWriter()
 	writer.useNewlines = false
 	w.WriteSql(writer)
+	return writer.String()
+}
+
+func (w *WithClause) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", fmt.Sprintf("+-WithClause(name=%s)", w.Name))
+	if len(w.Columns) > 0 {
+		writer.WriteDebugLine("  ", fmt.Sprintf("+-columns=%v", w.Columns))
+	}
+	if w.Query != nil {
+		writer.WriteDebugLine("  ", "+-query=")
+		w.Query.writeDebugString(writer, "    ")
+	}
 	return writer.String()
 }
 
@@ -637,6 +776,16 @@ func (s *SetOperation) String() string {
 	writer := NewSQLWriter()
 	writer.useNewlines = false
 	s.WriteSql(writer)
+	return writer.String()
+}
+
+func (s *SetOperation) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", fmt.Sprintf("+-SetOperation(type=%s, modifier=%s)", s.Type, s.Modifier))
+	for i, item := range s.Items {
+		writer.WriteDebugLine("  ", fmt.Sprintf("+-item[%d]=", i))
+		item.writeDebugString(writer, "    ")
+	}
 	return writer.String()
 }
 
@@ -810,6 +959,526 @@ func (s *SelectStatement) String() string {
 	return strings.TrimSpace(writer.String())
 }
 
+// DebugString returns a hierarchical debug representation similar to ZetaSQL's node debug output
+func (s *SelectStatement) DebugString() string {
+	writer := NewSQLWriter()
+	s.writeDebugString(writer, "")
+	return writer.String()
+}
+
+func (s *SelectStatement) writeDebugString(writer *SQLWriter, prefix string) {
+	selectType := "SELECT"
+	switch s.SelectType {
+	case SelectTypeDistinct:
+		selectType = "SELECT DISTINCT"
+	case SelectTypeAll:
+		selectType = "SELECT ALL"
+	case SelectTypeAsStruct:
+		selectType = "SELECT AS STRUCT"
+	case SelectTypeAsValue:
+		selectType = "SELECT AS VALUE"
+	}
+
+	writer.WriteDebugLine(prefix, fmt.Sprintf("+-SelectStatement(type=%s)", selectType))
+
+	if len(s.WithClauses) > 0 {
+		writer.WriteDebugLine(prefix, "  +-with_clause_list=")
+		for i, withClause := range s.WithClauses {
+			writer.WriteDebugLine(prefix, fmt.Sprintf("    +-with_clause[%d]=%s", i, withClause.Name))
+			if withClause.Query != nil {
+				writer.WriteDebugLine(prefix, "      +-query=")
+				withClause.Query.writeDebugString(writer, prefix+"        ")
+			}
+		}
+	}
+
+	if s.SetOperation != nil {
+		writer.WriteDebugLine(prefix, fmt.Sprintf("  +-set_operation=%s %s", s.SetOperation.Type, s.SetOperation.Modifier))
+		for i, item := range s.SetOperation.Items {
+			writer.WriteDebugLine(prefix, fmt.Sprintf("    +-item[%d]=", i))
+			item.writeDebugString(writer, prefix+"      ")
+		}
+	} else {
+		if len(s.SelectList) > 0 {
+			writer.WriteDebugLine(prefix, "  +-select_list=")
+			for i, item := range s.SelectList {
+				writer.WriteDebugLine(prefix, fmt.Sprintf("    +-select_item[%d]=", i))
+				item.Expression.writeDebugString(writer, prefix+"      ")
+				if item.Alias != "" {
+					writer.WriteDebugLine(prefix, fmt.Sprintf("      +-alias=%s", item.Alias))
+				}
+			}
+		}
+
+		if s.FromClause != nil {
+			writer.WriteDebugLine(prefix, "  +-from_clause=")
+			s.writeFromItemDebug(writer, prefix+"    ", s.FromClause)
+		}
+	}
+
+	if s.WhereClause != nil {
+		writer.WriteDebugLine(prefix, "  +-where_clause=")
+		s.WhereClause.writeDebugString(writer, prefix+"    ")
+	}
+
+	if len(s.GroupByList) > 0 {
+		writer.WriteDebugLine(prefix, "  +-group_by_list=")
+		for i, expr := range s.GroupByList {
+			writer.WriteDebugLine(prefix, fmt.Sprintf("    +-group_by[%d]=", i))
+			expr.writeDebugString(writer, prefix+"      ")
+		}
+	}
+
+	if s.HavingClause != nil {
+		writer.WriteDebugLine(prefix, "  +-having_clause=")
+		s.HavingClause.writeDebugString(writer, prefix+"    ")
+	}
+
+	if len(s.OrderByList) > 0 {
+		writer.WriteDebugLine(prefix, "  +-order_by_list=")
+		for i, item := range s.OrderByList {
+			writer.WriteDebugLine(prefix, fmt.Sprintf("    +-order_by[%d]=", i))
+			item.Expression.writeDebugString(writer, prefix+"      ")
+			if item.Direction != "" {
+				writer.WriteDebugLine(prefix, fmt.Sprintf("      +-direction=%s", item.Direction))
+			}
+			if item.NullsOrder != "" {
+				writer.WriteDebugLine(prefix, fmt.Sprintf("      +-nulls_order=%s", item.NullsOrder))
+			}
+		}
+	}
+
+	if s.LimitClause != nil {
+		writer.WriteDebugLine(prefix, "  +-limit_clause=")
+		s.LimitClause.writeDebugString(writer, prefix+"    ")
+		if s.OffsetClause != nil {
+			writer.WriteDebugLine(prefix, "  +-offset_clause=")
+			s.OffsetClause.writeDebugString(writer, prefix+"    ")
+		}
+	}
+}
+
+func (s *SelectStatement) writeFromItemDebug(writer *SQLWriter, prefix string, item *FromItem) {
+	switch item.Type {
+	case FromItemTypeTable:
+		writer.WriteDebugLine(prefix, fmt.Sprintf("+-TableRef(name=%s)", item.TableName))
+		if item.Alias != "" {
+			writer.WriteDebugLine(prefix, fmt.Sprintf("  +-alias=%s", item.Alias))
+		}
+	case FromItemTypeSubquery:
+		writer.WriteDebugLine(prefix, "+-Subquery")
+		if item.Subquery != nil {
+			writer.WriteDebugLine(prefix, "  +-query=")
+			item.Subquery.writeDebugString(writer, prefix+"    ")
+		}
+		if item.Alias != "" {
+			writer.WriteDebugLine(prefix, fmt.Sprintf("  +-alias=%s", item.Alias))
+		}
+	case FromItemTypeJoin:
+		if item.Join != nil {
+			joinType := "INNER"
+			switch item.Join.Type {
+			case JoinTypeLeft:
+				joinType = "LEFT"
+			case JoinTypeRight:
+				joinType = "RIGHT"
+			case JoinTypeFull:
+				joinType = "FULL OUTER"
+			case JoinTypeCross:
+				joinType = "CROSS"
+			}
+			writer.WriteDebugLine(prefix, fmt.Sprintf("+-JoinScan(type=%s)", joinType))
+			if item.Join.Left != nil {
+				writer.WriteDebugLine(prefix, "  +-left_scan=")
+				s.writeFromItemDebug(writer, prefix+"    ", item.Join.Left)
+			}
+			if item.Join.Right != nil {
+				writer.WriteDebugLine(prefix, "  +-right_scan=")
+				s.writeFromItemDebug(writer, prefix+"    ", item.Join.Right)
+			}
+			if item.Join.Condition != nil {
+				writer.WriteDebugLine(prefix, "  +-join_condition=")
+				item.Join.Condition.writeDebugString(writer, prefix+"    ")
+			}
+		}
+	case FromItemTypeUnnest:
+		writer.WriteDebugLine(prefix, "+-UnnestScan")
+		if item.UnnestExpr != nil {
+			writer.WriteDebugLine(prefix, "  +-expression=")
+			item.UnnestExpr.writeDebugString(writer, prefix+"    ")
+		}
+		if item.Alias != "" {
+			writer.WriteDebugLine(prefix, fmt.Sprintf("  +-alias=%s", item.Alias))
+		}
+	case FromItemTypeTableFunction:
+		if item.TableFunction != nil {
+			writer.WriteDebugLine(prefix, fmt.Sprintf("+-TableFunctionScan(name=%s)", item.TableFunction.Name))
+			for i, arg := range item.TableFunction.Arguments {
+				writer.WriteDebugLine(prefix, fmt.Sprintf("  +-argument[%d]=", i))
+				arg.writeDebugString(writer, prefix+"    ")
+			}
+		}
+	}
+}
+
+// CreateTableStatement WriteSql implementation
+func (s *CreateTableStatement) WriteSql(writer *SQLWriter) error {
+	writer.Write("CREATE TABLE")
+	if s.IfNotExists {
+		writer.Write(" IF NOT EXISTS")
+	}
+	writer.Write(" ")
+	writer.Write(s.TableName)
+
+	if s.AsSelect != nil {
+		writer.Write(" AS ")
+		return s.AsSelect.WriteSql(writer)
+	}
+
+	writer.Write(" (")
+	writer.WriteLine("")
+	writer.Indent()
+	for i, col := range s.Columns {
+		if i > 0 {
+			writer.Write(",")
+			writer.WriteLine("")
+		}
+		col.WriteSql(writer)
+	}
+	writer.Dedent()
+	writer.WriteLine("")
+	writer.Write(")")
+	return nil
+}
+
+func (s *CreateTableStatement) String() string {
+	writer := NewSQLWriter()
+	s.WriteSql(writer)
+	return strings.TrimSpace(writer.String())
+}
+
+func (s *CreateTableStatement) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", fmt.Sprintf("+-CreateTableStatement(name=%s)", s.TableName))
+	if s.IfNotExists {
+		writer.WriteDebugLine("  ", "+-if_not_exists=true")
+	}
+	if s.AsSelect != nil {
+		writer.WriteDebugLine("  ", "+-as_select=")
+		s.AsSelect.writeDebugString(writer, "    ")
+	}
+	if len(s.Columns) > 0 {
+		writer.WriteDebugLine("  ", "+-columns=")
+		for i, col := range s.Columns {
+			writer.WriteDebugLine("    ", fmt.Sprintf("+-column[%d]=%s %s", i, col.Name, col.Type))
+		}
+	}
+	return writer.String()
+}
+
+// ColumnDefinition WriteSql implementation
+func (c *ColumnDefinition) WriteSql(writer *SQLWriter) error {
+	writer.Write(c.Name)
+	writer.Write(" ")
+	writer.Write(c.Type)
+	if c.NotNull {
+		writer.Write(" NOT NULL")
+	}
+	if c.IsPrimaryKey {
+		writer.Write(" PRIMARY KEY")
+	}
+	if c.DefaultValue != nil {
+		writer.Write(" DEFAULT ")
+		c.DefaultValue.WriteSql(writer)
+	}
+	return nil
+}
+
+func (c *ColumnDefinition) String() string {
+	writer := NewSQLWriter()
+	c.WriteSql(writer)
+	return strings.TrimSpace(writer.String())
+}
+
+func (c *ColumnDefinition) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", fmt.Sprintf("+-ColumnDefinition(name=%s, type=%s)", c.Name, c.Type))
+	if c.NotNull {
+		writer.WriteDebugLine("  ", "+-not_null=true")
+	}
+	if c.IsPrimaryKey {
+		writer.WriteDebugLine("  ", "+-primary_key=true")
+	}
+	if c.DefaultValue != nil {
+		writer.WriteDebugLine("  ", "+-default_value=")
+		c.DefaultValue.writeDebugString(writer, "    ")
+	}
+	return writer.String()
+}
+
+// CreateViewStatement WriteSql implementation
+func (s *CreateViewStatement) WriteSql(writer *SQLWriter) error {
+	writer.Write("CREATE VIEW")
+	if s.IfNotExists {
+		writer.Write(" IF NOT EXISTS")
+	}
+	writer.Write(" ")
+	writer.Write(s.ViewName)
+	writer.Write(" AS ")
+	return s.Query.WriteSql(writer)
+}
+
+func (s *CreateViewStatement) String() string {
+	writer := NewSQLWriter()
+	s.WriteSql(writer)
+	return strings.TrimSpace(writer.String())
+}
+
+func (s *CreateViewStatement) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", fmt.Sprintf("+-CreateViewStatement(name=%s)", s.ViewName))
+	if s.IfNotExists {
+		writer.WriteDebugLine("  ", "+-if_not_exists=true")
+	}
+	if s.Query != nil {
+		writer.WriteDebugLine("  ", "+-query=")
+		s.Query.WriteSql(writer) // Note: Query is SQLFragment, so it should have DebugString too
+	}
+	return writer.String()
+}
+
+// CreateFunctionStatement WriteSql implementation
+func (s *CreateFunctionStatement) WriteSql(writer *SQLWriter) error {
+	writer.Write("CREATE FUNCTION")
+	if s.IfNotExists {
+		writer.Write(" IF NOT EXISTS")
+	}
+	writer.Write(" ")
+	writer.Write(s.FunctionName)
+	writer.Write("(")
+	for i, param := range s.Parameters {
+		if i > 0 {
+			writer.Write(", ")
+		}
+		param.WriteSql(writer)
+	}
+	writer.Write(")")
+	if s.ReturnType != "" {
+		writer.Write(" RETURNS ")
+		writer.Write(s.ReturnType)
+	}
+	if s.Language != "" {
+		writer.Write(" LANGUAGE ")
+		writer.Write(s.Language)
+	}
+	if s.Code != "" {
+		writer.Write(" AS ")
+		writer.Write(s.Code)
+	}
+	return nil
+}
+
+func (s *CreateFunctionStatement) String() string {
+	writer := NewSQLWriter()
+	s.WriteSql(writer)
+	return strings.TrimSpace(writer.String())
+}
+
+func (s *CreateFunctionStatement) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", fmt.Sprintf("+-CreateFunctionStatement(name=%s)", s.FunctionName))
+	if s.IfNotExists {
+		writer.WriteDebugLine("  ", "+-if_not_exists=true")
+	}
+	if s.ReturnType != "" {
+		writer.WriteDebugLine("  ", fmt.Sprintf("+-return_type=%s", s.ReturnType))
+	}
+	if len(s.Parameters) > 0 {
+		writer.WriteDebugLine("  ", "+-parameters=")
+		for i, param := range s.Parameters {
+			writer.WriteDebugLine("    ", fmt.Sprintf("+-param[%d]=%s %s", i, param.Name, param.Type))
+		}
+	}
+	return writer.String()
+}
+
+// ParameterDefinition WriteSql implementation
+func (p *ParameterDefinition) WriteSql(writer *SQLWriter) error {
+	writer.Write(p.Name)
+	writer.Write(" ")
+	writer.Write(p.Type)
+	return nil
+}
+
+func (p *ParameterDefinition) String() string {
+	writer := NewSQLWriter()
+	p.WriteSql(writer)
+	return strings.TrimSpace(writer.String())
+}
+
+func (p *ParameterDefinition) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", fmt.Sprintf("+-ParameterDefinition(name=%s, type=%s)", p.Name, p.Type))
+	return writer.String()
+}
+
+// DropStatement WriteSql implementation
+func (s *DropStatement) WriteSql(writer *SQLWriter) error {
+	writer.Write("DROP ")
+	writer.Write(s.ObjectType)
+	if s.IfExists {
+		writer.Write(" IF EXISTS")
+	}
+	writer.Write(" ")
+	writer.Write(s.ObjectName)
+	return nil
+}
+
+func (s *DropStatement) String() string {
+	writer := NewSQLWriter()
+	s.WriteSql(writer)
+	return strings.TrimSpace(writer.String())
+}
+
+func (s *DropStatement) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", fmt.Sprintf("+-DropStatement(type=%s, name=%s)", s.ObjectType, s.ObjectName))
+	if s.IfExists {
+		writer.WriteDebugLine("  ", "+-if_exists=true")
+	}
+	return writer.String()
+}
+
+// TruncateStatement WriteSql implementation
+func (s *TruncateStatement) WriteSql(writer *SQLWriter) error {
+	writer.Write("TRUNCATE TABLE ")
+	writer.Write("`" + s.TableName + "`")
+	return nil
+}
+
+func (s *TruncateStatement) String() string {
+	writer := NewSQLWriter()
+	s.WriteSql(writer)
+	return strings.TrimSpace(writer.String())
+}
+
+func (s *TruncateStatement) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", fmt.Sprintf("+-TruncateStatement(table=%s)", s.TableName))
+	return writer.String()
+}
+
+// MergeStatement WriteSql implementation
+func (s *MergeStatement) WriteSql(writer *SQLWriter) error {
+	writer.Write("MERGE ")
+	writer.Write(s.TargetTable)
+	if s.SourceTable != nil {
+		writer.Write(" USING ")
+		s.SourceTable.WriteSql(writer)
+	}
+	if s.MergeClause != nil {
+		writer.Write(" ON ")
+		s.MergeClause.WriteSql(writer)
+	}
+	for _, when := range s.WhenClauses {
+		writer.WriteLine("")
+		when.WriteSql(writer)
+	}
+	return nil
+}
+
+func (s *MergeStatement) String() string {
+	writer := NewSQLWriter()
+	s.WriteSql(writer)
+	return strings.TrimSpace(writer.String())
+}
+
+func (s *MergeStatement) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", fmt.Sprintf("+-MergeStatement(target=%s)", s.TargetTable))
+	if s.SourceTable != nil {
+		writer.WriteDebugLine("  ", "+-source_table=")
+		stmt := &SelectStatement{} // Temporary for reusing debug logic
+		stmt.writeFromItemDebug(writer, "    ", s.SourceTable)
+	}
+	if s.MergeClause != nil {
+		writer.WriteDebugLine("  ", "+-merge_condition=")
+		s.MergeClause.writeDebugString(writer, "    ")
+	}
+	for i, when := range s.WhenClauses {
+		writer.WriteDebugLine("  ", fmt.Sprintf("+-when_clause[%d]=%s", i, when.Type))
+	}
+	return writer.String()
+}
+
+// MergeWhenClause WriteSql implementation
+func (c *MergeWhenClause) WriteSql(writer *SQLWriter) error {
+	writer.Write("WHEN ")
+	writer.Write(c.Type)
+	if c.Condition != nil {
+		writer.Write(" AND ")
+		c.Condition.WriteSql(writer)
+	}
+	writer.Write(" THEN ")
+	writer.Write(c.Action)
+	if len(c.SetList) > 0 {
+		writer.Write(" SET ")
+		for i, set := range c.SetList {
+			if i > 0 {
+				writer.Write(", ")
+			}
+			set.WriteSql(writer)
+		}
+	}
+	return nil
+}
+
+func (c *MergeWhenClause) String() string {
+	writer := NewSQLWriter()
+	c.WriteSql(writer)
+	return strings.TrimSpace(writer.String())
+}
+
+func (c *MergeWhenClause) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", fmt.Sprintf("+-MergeWhenClause(type=%s, action=%s)", c.Type, c.Action))
+	if c.Condition != nil {
+		writer.WriteDebugLine("  ", "+-condition=")
+		c.Condition.writeDebugString(writer, "    ")
+	}
+	if len(c.SetList) > 0 {
+		writer.WriteDebugLine("  ", "+-set_list=")
+		for i, set := range c.SetList {
+			writer.WriteDebugLine("    ", fmt.Sprintf("+-set[%d]=", i))
+			writer.WriteDebugLine("    ", set.DebugString())
+		}
+	}
+	return writer.String()
+}
+
+// SetItem WriteSql implementation
+func (s *SetItem) WriteSql(writer *SQLWriter) error {
+	s.Column.WriteSql(writer)
+	writer.Write(" = ")
+	return s.Value.WriteSql(writer)
+}
+
+func (s *SetItem) String() string {
+	writer := NewSQLWriter()
+	s.WriteSql(writer)
+	return strings.TrimSpace(writer.String())
+}
+
+func (s *SetItem) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", "+-SetItem")
+	writer.WriteDebugLine("  ", "+-column=")
+	s.Column.writeDebugString(writer, "    ")
+	writer.WriteDebugLine("  ", "+-value=")
+	s.Value.writeDebugString(writer, "    ")
+	return writer.String()
+}
+
 // Builder helper functions
 
 // NewSelectStatement creates a new SELECT statement
@@ -855,7 +1524,7 @@ func NewStarExpression(tableAlias ...string) *SQLExpression {
 }
 
 func getUniqueColumnName(column *ast.Column) string {
-	return fmt.Sprintf("%s#%d", column.Name(), column.ColumnID())
+	return fmt.Sprintf("%s__%d", column.Name(), column.ColumnID())
 }
 
 // NewUniqueColumnExpression creates a new unique column reference expression
@@ -999,6 +1668,220 @@ func NewInnerJoin(left, right *FromItem, condition *SQLExpression) *FromItem {
 	}
 }
 
+// DDL Statement types
+
+type CreateTableStatement struct {
+	IfNotExists bool
+	TableName   string
+	Columns     []*ColumnDefinition
+	AsSelect    *SelectStatement
+}
+
+type ColumnDefinition struct {
+	Name         string
+	Type         string
+	NotNull      bool
+	DefaultValue *SQLExpression
+	IsPrimaryKey bool
+}
+
+type CreateViewStatement struct {
+	IfNotExists bool
+	ViewName    string
+	Query       SQLFragment
+}
+
+type CreateFunctionStatement struct {
+	IfNotExists  bool
+	FunctionName string
+	Parameters   []*ParameterDefinition
+	ReturnType   string
+	Language     string
+	Code         string
+	Options      map[string]*SQLExpression
+}
+
+type ParameterDefinition struct {
+	Name string
+	Type string
+}
+
+type DeleteStatement struct {
+	Table     SQLFragment
+	WhereExpr SQLFragment
+}
+
+func (d *DeleteStatement) String() string {
+	writer := NewSQLWriter()
+	d.WriteSql(writer)
+	return strings.TrimSpace(writer.String())
+}
+
+func (d *DeleteStatement) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", "+-DeleteStatement")
+	writer.WriteDebugLine("  ", "+-table=")
+	d.Table.WriteSql(writer) // Note: Table is SQLFragment
+	if d.WhereExpr != nil {
+		writer.WriteDebugLine("  ", "+-where=")
+		writer.WriteDebugLine("    ", d.WhereExpr.String())
+	}
+	return writer.String()
+}
+
+func (d *DeleteStatement) WriteSql(writer *SQLWriter) error {
+	writer.Write("DELETE FROM ")
+	d.Table.WriteSql(writer)
+	if d.WhereExpr != nil {
+		writer.Write(" WHERE ")
+		writer.Write(d.WhereExpr.String())
+	}
+	return nil
+}
+
+type InsertStatement struct {
+	TableName string
+	Columns   []string
+	Query     *SelectStatement
+	Rows      []SQLFragment
+}
+
+func (d *InsertStatement) String() string {
+	writer := NewSQLWriter()
+	d.WriteSql(writer)
+	return strings.TrimSpace(writer.String())
+}
+
+func (d *InsertStatement) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", fmt.Sprintf("+-InsertStatement(table=%s)", d.TableName))
+	if len(d.Columns) > 0 {
+		writer.WriteDebugLine("  ", fmt.Sprintf("+-columns=%v", d.Columns))
+	}
+	if d.Query != nil {
+		writer.WriteDebugLine("  ", "+-query=")
+		d.Query.writeDebugString(writer, "    ")
+	}
+	if len(d.Rows) > 0 {
+		writer.WriteDebugLine("  ", fmt.Sprintf("+-rows=%d", len(d.Rows)))
+	}
+	return writer.String()
+}
+
+func (d *InsertStatement) WriteSql(writer *SQLWriter) error {
+	writer.Write("INSERT INTO ")
+	writer.WriteLine("`" + d.TableName + "`")
+	writer.WriteLine(" (" + strings.Join(d.Columns, ", ") + ") ")
+	if d.Query != nil {
+		writer.Write(" ")
+		d.Query.WriteSql(writer)
+	} else if len(d.Rows) > 0 {
+		writer.WriteLine("VALUES ")
+		for i, value := range d.Rows {
+			writer.Write("(" + value.String() + ")")
+			if len(d.Rows) != 1 && i != len(d.Rows)-1 {
+				writer.Write(",")
+			}
+		}
+	} else {
+		return fmt.Errorf("expected either Query or Rows in InsertStatement.WriteSql")
+	}
+	return nil
+}
+
+type DropStatement struct {
+	IfExists   bool
+	ObjectType string
+	ObjectName string
+}
+
+type TruncateStatement struct {
+	TableName string
+}
+
+type MergeStatement struct {
+	TargetTable string
+	SourceTable *FromItem
+	MergeClause *SQLExpression
+	WhenClauses []*MergeWhenClause
+}
+
+type MergeWhenClause struct {
+	Type      string // "MATCHED", "NOT MATCHED"
+	Condition *SQLExpression
+	Action    string // "UPDATE", "DELETE", "INSERT"
+	SetList   []*SetItem
+}
+
+type UpdateStatement struct {
+	Table       *FromItem
+	SetItems    []*SetItem
+	FromClause  *FromItem
+	WhereClause *SQLExpression
+}
+
+func (u *UpdateStatement) WriteSql(writer *SQLWriter) error {
+	writer.Write("UPDATE ")
+	u.Table.WriteSql(writer)
+	writer.Write(" SET ")
+	for i, item := range u.SetItems {
+		if i > 0 {
+			writer.Write(", ")
+		}
+		item.WriteSql(writer)
+	}
+	if u.FromClause != nil {
+		writer.Write(" FROM ")
+		u.FromClause.WriteSql(writer)
+	}
+	if u.WhereClause != nil {
+		writer.Write(" WHERE ")
+		u.WhereClause.WriteSql(writer)
+	}
+	return nil
+}
+
+func (u *UpdateStatement) String() string {
+	writer := NewSQLWriter()
+	u.WriteSql(writer)
+	return strings.TrimSpace(writer.String())
+}
+
+func (u *UpdateStatement) DebugString() string {
+	writer := NewSQLWriter()
+	writer.WriteDebugLine("", "+-UpdateStatement")
+	if u.Table != nil {
+		writer.WriteDebugLine("  ", "+-table=")
+		stmt := &SelectStatement{} // Temporary for reusing debug logic
+		stmt.writeFromItemDebug(writer, "    ", u.Table)
+	}
+	if len(u.SetItems) > 0 {
+		writer.WriteDebugLine("  ", "+-set_items=")
+		for i, item := range u.SetItems {
+			writer.WriteDebugLine("    ", fmt.Sprintf("+-set[%d]=", i))
+			writer.WriteDebugLine("      ", "+-column=")
+			item.Column.writeDebugString(writer, "        ")
+			writer.WriteDebugLine("      ", "+-value=")
+			item.Value.writeDebugString(writer, "        ")
+		}
+	}
+	if u.FromClause != nil {
+		writer.WriteDebugLine("  ", "+-from_clause=")
+		stmt := &SelectStatement{} // Temporary for reusing debug logic
+		stmt.writeFromItemDebug(writer, "    ", u.FromClause)
+	}
+	if u.WhereClause != nil {
+		writer.WriteDebugLine("  ", "+-where_clause=")
+		u.WhereClause.writeDebugString(writer, "    ")
+	}
+	return writer.String()
+}
+
+type SetItem struct {
+	Column *SQLExpression
+	Value  *SQLExpression
+}
+
 // FragmentType represents the type of SQL fragment
 type FragmentType int
 
@@ -1016,63 +1899,32 @@ const (
 	FragmentTypeTableReference
 )
 
+type ScopeInfo struct {
+	ResolvedColumns map[string]*ColumnInfo
+}
+
 // FragmentContext stores contextual information during AST traversal
 type FragmentContext struct {
 	// Current scope information
-	AvailableColumns map[string]*ColumnInfo
-	TableAliases     map[string]string
-	CurrentScope     *ScopeInfo
+	TableAliases map[string]string
+	CurrentScope *ScopeInfo
 
 	// Symbol management
-	symbolTable    *SymbolTable
 	aliasGenerator *AliasGenerator
-
-	// Fragment storage by node ID
-	fragments        map[NodeID]SQLFragment
-	fragmentMetadata map[NodeID]*FragmentMetadata
 
 	// Stack for nested contexts (subqueries, CTEs)
 	scopeStack []*ScopeInfo
 
-	// AST path tracking for generating stable NodeIDs
-	astPath     *ASTPath
 	WithEntries map[string]map[string]string
+
+	// Testing instrumentation (optional)
+	OnPushScope     func(scopeType string, stackDepth int)
+	OnPopScope      func(alias string, stackDepth int)
+	ResolvedColumns map[string]*ColumnInfo
 }
 
 // NodeID represents a unique identifier for AST nodes based on path in the AST
 type NodeID string
-
-// ASTPath tracks the current path through the AST during traversal
-type ASTPath struct {
-	path []string
-}
-
-func NewASTPath() *ASTPath {
-	return &ASTPath{
-		path: make([]string, 0),
-	}
-}
-
-func (p *ASTPath) Push(segment string) {
-	p.path = append(p.path, segment)
-}
-
-func (p *ASTPath) Pop() {
-	if len(p.path) > 0 {
-		p.path = p.path[:len(p.path)-1]
-	}
-}
-
-func (p *ASTPath) Current() NodeID {
-	return NodeID(strings.Join(p.path, "/"))
-}
-
-func (p *ASTPath) Child(segment string) NodeID {
-	childPath := make([]string, len(p.path)+1)
-	copy(childPath, p.path)
-	childPath[len(p.path)] = segment
-	return NodeID(strings.Join(childPath, "/"))
-}
 
 // ColumnInfo stores metadata about available columns
 type ColumnInfo struct {
@@ -1080,48 +1932,21 @@ type ColumnInfo struct {
 	Type         string
 	TableAlias   string
 	Expression   *SQLExpression
-	Node         *ast.Column
+	ID           int
 	IsAggregated bool
 	Source       NodeID // Which node produced this column
 }
 
-// ScopeInfo tracks the current scope during traversal
-type ScopeInfo struct {
-	ScopeType     string // "query", "subquery", "cte", "window"
-	OutputColumns map[string]*ColumnInfo
-	InputScans    []NodeID
-	ParentScope   *ScopeInfo
-}
-
-// FragmentMetadata stores additional information about fragments
-type FragmentMetadata struct {
-	NodeType        string
-	OutputColumns   []*ColumnInfo
-	RequiredColumns []*ColumnInfo
-	IsOrdered       bool
-	TableAliases    []string
-	Dependencies    []NodeID
-}
-
-// SymbolTable manages symbol resolution and alias generation
-type SymbolTable struct {
-	symbols      map[string]*Symbol
-	scopes       []*SymbolScope
-	currentScope int
-}
-
-type Symbol struct {
-	Name         string
-	Type         string
-	Alias        string
-	NeedsAlias   bool
-	ReferencedBy []NodeID
-}
-
-type SymbolScope struct {
-	symbols map[string]*Symbol
-	parent  *SymbolScope
-	scopeID string
+func (i ColumnInfo) Clone() *ColumnInfo {
+	return &ColumnInfo{
+		Name:         i.Name,
+		Type:         i.Type,
+		TableAlias:   i.TableAlias,
+		Expression:   i.Expression,
+		ID:           i.ID,
+		IsAggregated: i.IsAggregated,
+		Source:       i.Source,
+	}
 }
 
 // AliasGenerator creates unique aliases for tables and columns
@@ -1139,22 +1964,10 @@ type FragmentStorage struct {
 
 func NewFragmentContext() *FragmentContext {
 	return &FragmentContext{
-		AvailableColumns: make(map[string]*ColumnInfo),
-		TableAliases:     make(map[string]string),
-		WithEntries:      make(map[string]map[string]string),
-		fragments:        make(map[NodeID]SQLFragment),
-		fragmentMetadata: make(map[NodeID]*FragmentMetadata),
-		symbolTable:      NewSymbolTable(),
-		aliasGenerator:   NewAliasGenerator(),
-		scopeStack:       make([]*ScopeInfo, 0),
-		astPath:          NewASTPath(),
-	}
-}
-
-func NewSymbolTable() *SymbolTable {
-	return &SymbolTable{
-		symbols: make(map[string]*Symbol),
-		scopes:  make([]*SymbolScope, 0),
+		TableAliases:    make(map[string]string),
+		WithEntries:     make(map[string]map[string]string),
+		ResolvedColumns: make(map[string]*ColumnInfo),
+		aliasGenerator:  NewAliasGenerator(),
 	}
 }
 
@@ -1164,33 +1977,40 @@ func NewAliasGenerator() *AliasGenerator {
 	}
 }
 
-// Core fragment storage methods
-
-func (fc *FragmentContext) StoreFragment(nodeID NodeID, fragment SQLFragment, metadata *FragmentMetadata) {
-	fc.fragments[nodeID] = fragment
-	fc.fragmentMetadata[nodeID] = metadata
-}
-
-func (fc *FragmentContext) GetFragment(nodeID NodeID) (SQLFragment, *FragmentMetadata, bool) {
-	fragment, exists := fc.fragments[nodeID]
-	if !exists {
-		return nil, nil, false
-	}
-	metadata := fc.fragmentMetadata[nodeID]
-	return fragment, metadata, true
-}
-
 // Scope management methods
 
-func (fc *FragmentContext) PushScope(scopeType string) {
+func (fc *FragmentContext) UseScope(scopeType string) func() {
 	newScope := &ScopeInfo{
-		ScopeType:     scopeType,
-		OutputColumns: make(map[string]*ColumnInfo),
-		InputScans:    make([]NodeID, 0),
-		ParentScope:   fc.CurrentScope,
+		ResolvedColumns: make(map[string]*ColumnInfo),
 	}
 	fc.scopeStack = append(fc.scopeStack, newScope)
 	fc.CurrentScope = newScope
+	return func() {
+		fc.PopScope(scopeType)
+	}
+}
+
+func (fc *FragmentContext) OpenScope(scopeType string, columns []*ast.Column) ScopeInfo {
+	fc.PushScope(scopeType)
+	for _, column := range columns {
+		fc.AddAvailableColumn(column, &ColumnInfo{
+			Name: column.Name(),
+			Type: column.Type().Kind().String(),
+		})
+	}
+	return *fc.CurrentScope
+}
+
+func (fc *FragmentContext) PushScope(scopeType string) {
+	newScope := &ScopeInfo{
+		ResolvedColumns: make(map[string]*ColumnInfo),
+	}
+	fc.scopeStack = append(fc.scopeStack, newScope)
+	fc.CurrentScope = newScope
+
+	if fc.OnPushScope != nil {
+		fc.OnPushScope(scopeType, len(fc.scopeStack))
+	}
 }
 
 func (fc *FragmentContext) PopScope(alias string) *ScopeInfo {
@@ -1207,38 +2027,42 @@ func (fc *FragmentContext) PopScope(alias string) *ScopeInfo {
 		fc.CurrentScope = nil
 	}
 
-	// Push referenced OutputColumns to the latest scope
+	// Push resolved columns to the latest scope
 	if currentScope != nil {
-		for columnID, column := range currentScope.OutputColumns {
+		for key, column := range currentScope.ResolvedColumns {
+			column = column.Clone()
+			// All references must use the generated table alias
+			column.TableAlias = alias
+
 			// Once a scope has been finalized, the column is no longer available to be inlined as a direct expression
 			// It must be referenced as a column
 			column.Expression = nil
-
-			// All references must use the generated table alias
-			column.TableAlias = alias
-			column.Name = fmt.Sprintf("col%d", column.Node.ColumnID())
-			fc.AvailableColumns[columnID] = column
+			fc.ResolvedColumns[key] = column
 		}
+	}
+
+	if fc.OnPopScope != nil {
+		fc.OnPopScope(alias, len(fc.scopeStack))
 	}
 
 	return currentScope
 }
 
 // Column management methods
-
 func (fc *FragmentContext) AddAvailableColumn(column *ast.Column, info *ColumnInfo) {
 	name := getUniqueColumnName(column)
-	info.Node = column
-	info.Name = fmt.Sprintf("col%d", column.ColumnID())
-	fc.AvailableColumns[name] = info
+	info.ID = column.ColumnID()
+	info.Name = name
+	info.TableAlias = name
+	fc.ResolvedColumns[name] = info
 	if fc.CurrentScope != nil {
-		fc.CurrentScope.OutputColumns[name] = info
+		fc.CurrentScope.ResolvedColumns[name] = info
 	}
 }
 
 func (fc *FragmentContext) GetColumnExpression(column *ast.Column) *SQLExpression {
 	columnID := getUniqueColumnName(column)
-	columnInfo, exists := fc.AvailableColumns[columnID]
+	columnInfo, exists := fc.ResolvedColumns[columnID]
 	if exists {
 		if columnInfo.Expression != nil {
 			return columnInfo.Expression
@@ -1254,9 +2078,24 @@ func (fc *FragmentContext) GetColumnExpression(column *ast.Column) *SQLExpressio
 func (fc *FragmentContext) AddWithEntryColumnMapping(name string, columns []*ast.Column) {
 	mapping := make(map[string]string)
 	for _, column := range columns {
-		mapping[column.Name()] = fmt.Sprintf("col%d", column.ColumnID())
+		mapping[column.Name()] = column.Name()
 	}
 	fc.WithEntries[name] = mapping
+}
+
+func (fc *FragmentContext) FilterScope(scopeType string, list []*ast.Column) {
+	scope := fc.PopScope(scopeType)
+	previous := scope.ResolvedColumns
+	scope.ResolvedColumns = make(map[string]*ColumnInfo)
+
+	for _, column := range list {
+		columnID := getUniqueColumnName(column)
+		if column, exists := previous[columnID]; exists {
+			column.Expression = nil
+			scope.ResolvedColumns[columnID] = column
+		}
+	}
+	fc.PushScope(scopeType)
 }
 
 // Alias generation methods
@@ -1281,4 +2120,194 @@ func (ag *AliasGenerator) GenerateSubqueryAlias() string {
 	}
 	ag.usedAliases[alias] = true
 	return alias
+}
+
+// ColumnMapping represents the mapping between original and new column names
+type ColumnMapping struct {
+	SourceColumnMap map[*SQLExpression]string // original column expression -> new column name for source table
+	TargetColumnMap map[*SQLExpression]string // original column expression -> new column name for target table
+	AllColumnMap    map[*SQLExpression]string // all original column names -> new column names
+}
+
+func (m ColumnMapping) LookupName(column *SQLExpression) (string, bool) {
+	for expr, name := range m.AllColumnMap {
+		if expr.String() == column.String() {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// CreateMergedTableStatement creates a CREATE TABLE AS SELECT statement using the merged table pattern
+// for MERGE operations with distinct column naming. This generates the SQL pattern:
+// CREATE TABLE tableName AS SELECT DISTINCT sourceCol1 AS merged_sourceCol1, targetCol1 AS merged_targetCol1, ... FROM (
+//
+//	SELECT * FROM sourceTable LEFT JOIN targetTable ON joinCondition
+//	UNION ALL
+//	SELECT * FROM targetTable LEFT JOIN sourceTable ON joinCondition
+//
+// )
+// Returns the CreateTableStatement and a mapping of original -> new column names
+func CreateMergedTableStatement(tableName string, sourceTable, targetTable *FromItem, joinCondition *SQLExpression) (*CreateTableStatement, *ColumnMapping, error) {
+	// Extract column information from the fragments
+	sourceColumns, err := extractColumnNames(sourceTable)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to extract source columns: %w", err)
+	}
+
+	targetColumns, err := extractColumnNames(targetTable)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to extract target columns: %w", err)
+	}
+
+	// Create distinct column mappings
+	columnMapping := createColumnMapping(sourceColumns, targetColumns)
+
+	// Create the inner subquery with LEFT JOIN and explicit column selection
+	leftJoin := createJoinWithColumnMapping(&FromItem{
+		Type: FromItemTypeJoin,
+		Join: &JoinClause{
+			Type:      JoinTypeLeft,
+			Left:      sourceTable,
+			Right:     targetTable,
+			Condition: joinCondition,
+		},
+	}, columnMapping)
+
+	rightJoin := createJoinWithColumnMapping(&FromItem{
+		Type: FromItemTypeJoin,
+		Join: &JoinClause{
+			Type:      JoinTypeLeft,
+			Left:      targetTable,
+			Right:     sourceTable,
+			Condition: joinCondition,
+		},
+	}, columnMapping)
+
+	// Create the UNION ALL operation
+	unionOperation := &SetOperation{
+		Type:     "UNION",
+		Modifier: "ALL",
+		Items:    []*SelectStatement{leftJoin, rightJoin},
+	}
+
+	// Create the outer subquery with UNION ALL
+	unionStatement := NewSelectStatement()
+	unionStatement.SetOperation = unionOperation
+
+	// Create the final SELECT DISTINCT * from the UNION subquery
+	distinctQuery := &SelectStatement{
+		SelectType: SelectTypeDistinct,
+		SelectList: []*SelectListItem{
+			{Expression: NewStarExpression()},
+		},
+		FromClause: NewSubqueryFromItem(unionStatement, "merged_union"),
+	}
+
+	// Create the CREATE TABLE AS SELECT statement
+	return &CreateTableStatement{
+		TableName: tableName,
+		AsSelect:  distinctQuery,
+	}, columnMapping, nil
+}
+
+// extractColumnNames extracts column names from different SQLFragment types
+func extractColumnNames(fragment SQLFragment) ([]*SQLExpression, error) {
+	switch f := fragment.(type) {
+	case *SelectStatement:
+		var columns []*SQLExpression
+		for _, item := range f.SelectList {
+			columns = append(columns, item.Expression)
+		}
+		return columns, nil
+	case *FromItem:
+		// For subqueries, use the select list and re-alias to the FromItem alias
+		if f.Type == FromItemTypeSubquery {
+			mappings, err := extractColumnNames(f.Subquery)
+			if err != nil {
+				return nil, err
+			}
+			for key, expr := range mappings {
+				mappings[key] = NewColumnExpression(expr.Value, f.Alias)
+			}
+			return mappings, nil
+		}
+		return nil, fmt.Errorf("unsupported fragment type: %T with type %T", f, f.Type)
+	default:
+		return nil, fmt.Errorf("unsupported fragment type: %T", f)
+	}
+}
+
+// createColumnMapping creates distinct column names and mappings
+func createColumnMapping(sourceColumns, targetColumns []*SQLExpression) *ColumnMapping {
+	mapping := &ColumnMapping{
+		SourceColumnMap: make(map[*SQLExpression]string),
+		TargetColumnMap: make(map[*SQLExpression]string),
+		AllColumnMap:    make(map[*SQLExpression]string),
+	}
+
+	usedNames := make(map[string]bool)
+
+	// Process source columns
+	for _, col := range sourceColumns {
+		newName := fmt.Sprintf("merged_source_%s", col.Value)
+		counter := 1
+		originalNewName := newName
+
+		// Ensure uniqueness
+		for usedNames[newName] {
+			newName = fmt.Sprintf("%s_%d", originalNewName, counter)
+			counter++
+		}
+
+		usedNames[newName] = true
+		mapping.SourceColumnMap[col] = newName
+		mapping.AllColumnMap[col] = newName
+	}
+
+	// Process target columns
+	for _, col := range targetColumns {
+		newName := fmt.Sprintf("merged_target_%s", col.Value)
+		counter := 1
+		originalNewName := newName
+
+		// Ensure uniqueness
+		for usedNames[newName] {
+			newName = fmt.Sprintf("%s_%d", originalNewName, counter)
+			counter++
+		}
+
+		usedNames[newName] = true
+		mapping.TargetColumnMap[col] = newName
+		mapping.AllColumnMap[col] = newName
+	}
+
+	return mapping
+}
+
+// createJoinWithColumnMapping creates a SELECT statement with explicit column mapping for joins
+func createJoinWithColumnMapping(joinFromItem *FromItem, mapping *ColumnMapping) *SelectStatement {
+	stmt := NewSelectStatement()
+	stmt.FromClause = joinFromItem
+
+	// Build explicit SELECT list with column mappings
+	stmt.SelectList = []*SelectListItem{}
+
+	// Add source columns
+	for origName, newName := range mapping.SourceColumnMap {
+		stmt.SelectList = append(stmt.SelectList, &SelectListItem{
+			Expression: origName,
+			Alias:      newName,
+		})
+	}
+
+	// Add target columns
+	for origName, newName := range mapping.TargetColumnMap {
+		stmt.SelectList = append(stmt.SelectList, &SelectListItem{
+			Expression: origName,
+			Alias:      newName,
+		})
+	}
+
+	return stmt
 }
