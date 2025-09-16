@@ -190,6 +190,9 @@ func (c *QueryCoordinator) TransformStatement(stmtData StatementData, ctx Transf
 				transformer, exists = c.statementTransformers[reflect.TypeOf(&ast.CreateFunctionStmtNode{})]
 			}
 		}
+	case StatementTypeDrop:
+		// For DROP statements, we use the same transformer for both DropStmt and DropFunctionStmt
+		transformer, exists = c.statementTransformers[reflect.TypeOf(&ast.DropStmtNode{})]
 	default:
 		return nil, fmt.Errorf("unsupported statement data type: %v", stmtData.Type)
 	}

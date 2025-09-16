@@ -597,7 +597,6 @@ CREATE FUNCTION customfunc(
 		{
 			name: "use function",
 			query: `
-
 CREATE FUNCTION customfunc(
   arr ARRAY<STRUCT<name STRING, val INT64>>
 ) AS (
@@ -6197,6 +6196,21 @@ WHEN NOT MATCHED THEN INSERT ROW;
 SELECT * FROM target;
 `,
 			expectedRows: [][]interface{}{{int64(1), "test"}},
+		},
+		{
+			name:         "simple drop",
+			query:        `CREATE TABLE target(id INT64); DROP TABLE target;`,
+			expectedRows: [][]interface{}{},
+		},
+
+		{
+			name: "simple drop function",
+			query: `CREATE FUNCTION customfunc(
+  arr ARRAY<STRUCT<name STRING, val INT64>>
+) AS (
+  (SELECT SUM(IF(elem.name = "foo",elem.val,null)) FROM UNNEST(arr) AS elem)
+); DROP FUNCTION customfunc;`,
+			expectedRows: [][]interface{}{},
 		},
 	} {
 		test := test

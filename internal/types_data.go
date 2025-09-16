@@ -177,6 +177,7 @@ type StatementData struct {
 	Update *UpdateData   `json:"update,omitempty"`
 	Delete *DeleteData   `json:"delete,omitempty"`
 	Create *CreateData   `json:"create,omitempty"`
+	Drop   *DropData     `json:"drop,omitempty"`
 }
 
 // StatementType identifies the type of statement
@@ -188,6 +189,7 @@ const (
 	StatementTypeUpdate
 	StatementTypeDelete
 	StatementTypeCreate
+	StatementTypeDrop
 )
 
 // SelectData represents SELECT statement data
@@ -438,6 +440,13 @@ type CreateFunctionData struct {
 type ParameterDefinitionData struct {
 	Name string `json:"name,omitempty"`
 	Type string `json:"type,omitempty"`
+}
+
+// DropData represents DROP statement data
+type DropData struct {
+	IfExists   bool   `json:"if_exists,omitempty"`
+	ObjectType string `json:"object_type,omitempty"` // TABLE, VIEW, INDEX, SCHEMA, FUNCTION
+	ObjectName string `json:"object_name,omitempty"`
 }
 
 // WithScanData represents WITH scan data (complete WITH statements)

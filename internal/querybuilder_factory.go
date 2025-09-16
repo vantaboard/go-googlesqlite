@@ -129,9 +129,9 @@ func (f *QueryTransformFactory) registerStatementTransformers(coord *QueryCoordi
 	//createViewTransformer := NewCreateViewTransformer(f.config.SQL, coord)
 	//coord.RegisterStatementTransformer(reflect.TypeOf(&ast.CreateViewStmtNode{}), createViewTransformer)
 
-	//dropTransformer := NewDropTransformer(f.config.SQL)
-	//coord.RegisterStatementTransformer(reflect.TypeOf(&ast.DropStmtNode{}), dropTransformer)
-	//coord.RegisterStatementTransformer(reflect.TypeOf(&ast.DropFunctionStmtNode{}), dropTransformer)
+	dropTransformer := NewDropStmtTransformer(coord)
+	coord.RegisterStatementTransformer(reflect.TypeOf(&ast.DropStmtNode{}), dropTransformer)
+	coord.RegisterStatementTransformer(reflect.TypeOf(&ast.DropFunctionStmtNode{}), dropTransformer)
 
 	// DML transformers
 	//insertTransformer := NewInsertTransformer(f.config.SQL, coord)
@@ -283,7 +283,6 @@ func NewCreateFunctionTransformer(coord Coordinator) StatementTransformer {
 	return nil
 }
 func NewCreateViewTransformer(coord Coordinator) StatementTransformer { return nil }
-func NewDropTransformer() StatementTransformer                        { return nil }
 func NewInsertTransformer(coord Coordinator) StatementTransformer     { return nil }
 func NewUpdateTransformer(coord Coordinator) StatementTransformer     { return nil }
 func NewDeleteTransformer(coord Coordinator) StatementTransformer     { return nil }

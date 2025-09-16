@@ -1231,7 +1231,7 @@ func (s *DropStatement) WriteSql(writer *SQLWriter) error {
 		writer.Write(" IF EXISTS")
 	}
 	writer.Write(" ")
-	writer.Write(s.ObjectName)
+	writer.Write("`" + s.ObjectName + "`")
 	return nil
 }
 

@@ -536,6 +536,10 @@ func (e *NodeExtractor) ExtractStatementData(node ast.Node, ctx TransformContext
 		return e.extractUpdateStatementData(n, ctx)
 	case *ast.DeleteStmtNode:
 		return e.extractDeleteStatementData(n, ctx)
+	case *ast.DropStmtNode:
+		return e.extractDropStatementData(n, ctx)
+	case *ast.DropFunctionStmtNode:
+		return e.extractDropFunctionStatementData(n, ctx)
 	default:
 		return StatementData{}, fmt.Errorf("unsupported statement node type: %T", node)
 	}
@@ -1131,6 +1135,66 @@ func (e *NodeExtractor) extractAnalyticScanData(node *ast.AnalyticScanNode, ctx 
 		AnalyticScan: &AnalyticScanData{
 			InputScan:    inputScanData,
 			FunctionList: functionList,
+		},
+	}, nil
+}
+
+// extractDropStatementData extracts data from DROP statement nodes
+func (e *NodeExtractor) extractDropStatementData(node *ast.DropStmtNode, ctx TransformContext) (StatementData, error) {
+	objectType := "TABLE"
+	switch node.ObjectType() {
+	case "TABLE":
+		objectType = "TABLE"
+	case "VIEW":
+		objectType = "VIEW"
+	case "INDEX":
+		objectType = "INDEX"
+	case "SCHEMA":
+		objectType = "SCHEMA"
+	default:
+		objectType = node.ObjectType()
+	}
+
+	// Get the name path from context and format the object name
+	var objectName string
+	if namePath := namePathFromContext(ctx.Context()); namePath != nil {
+		objectName = namePath.format(node.NamePath())
+	} else {
+		// Fallback to simple name formatting if no context
+		if len(node.NamePath()) > 0 {
+			objectName = node.NamePath()[len(node.NamePath())-1]
+		}
+	}
+
+	return StatementData{
+		Type: StatementTypeDrop,
+		Drop: &DropData{
+			IfExists:   node.IsIfExists(),
+			ObjectType: objectType,
+			ObjectName: objectName,
+		},
+	}, nil
+}
+
+// extractDropFunctionStatementData extracts data from DROP FUNCTION statement nodes
+func (e *NodeExtractor) extractDropFunctionStatementData(node *ast.DropFunctionStmtNode, ctx TransformContext) (StatementData, error) {
+	// Get the name path from context and format the function name
+	var objectName string
+	if namePath := namePathFromContext(ctx.Context()); namePath != nil {
+		objectName = namePath.format(node.NamePath())
+	} else {
+		// Fallback to simple name formatting if no context
+		if len(node.NamePath()) > 0 {
+			objectName = node.NamePath()[len(node.NamePath())-1]
+		}
+	}
+
+	return StatementData{
+		Type: StatementTypeDrop,
+		Drop: &DropData{
+			IfExists:   node.IsIfExists(),
+			ObjectType: "FUNCTION",
+			ObjectName: objectName,
 		},
 	}, nil
 }

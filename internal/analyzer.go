@@ -446,11 +446,12 @@ func (a *Analyzer) buildArrayTypeFuncFromTemplatedFunc(node *ast.CreateFunctionS
 }
 
 func (a *Analyzer) newDropStmtAction(ctx context.Context, query string, args []driver.NamedValue, node *ast.DropStmtNode) (*DropStmtAction, error) {
-	formattedQuery, err := NewSQLBuilderVisitor(ctx).VisitDropStmt(node)
+	factory := NewQueryTransformFactory(DefaultTransformConfig(true))
+	result, err := factory.TransformQuery(ctx, node)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format query %s: %w", query, err)
 	}
-	if formattedQuery == nil {
+	if result == nil || result.Fragment == nil {
 		return nil, fmt.Errorf("failed to format query %s", query)
 	}
 	params := getParamsFromNode(node)
@@ -466,12 +467,20 @@ func (a *Analyzer) newDropStmtAction(ctx context.Context, query string, args []d
 		funcMap:        funcMapFromContext(ctx),
 		catalog:        a.catalog,
 		query:          query,
-		formattedQuery: formattedQuery.String(),
+		formattedQuery: result.Fragment.String(),
 		args:           queryArgs,
 	}, nil
 }
 
 func (a *Analyzer) newDropFunctionStmtAction(ctx context.Context, query string, args []driver.NamedValue, node *ast.DropFunctionStmtNode) (*DropStmtAction, error) {
+	factory := NewQueryTransformFactory(DefaultTransformConfig(true))
+	result, err := factory.TransformQuery(ctx, node)
+	if err != nil {
+		return nil, fmt.Errorf("failed to format query %s: %w", query, err)
+	}
+	if result == nil || result.Fragment == nil {
+		return nil, fmt.Errorf("failed to format query %s", query)
+	}
 	params := getParamsFromNode(node)
 	queryArgs, err := getArgsFromParams(args, params)
 	if err != nil {
@@ -479,12 +488,13 @@ func (a *Analyzer) newDropFunctionStmtAction(ctx context.Context, query string, 
 	}
 	name := a.namePath.format(node.NamePath())
 	return &DropStmtAction{
-		name:       name,
-		objectType: "FUNCTION",
-		funcMap:    funcMapFromContext(ctx),
-		catalog:    a.catalog,
-		query:      query,
-		args:       queryArgs,
+		name:           name,
+		objectType:     "FUNCTION",
+		funcMap:        funcMapFromContext(ctx),
+		catalog:        a.catalog,
+		query:          query,
+		formattedQuery: result.Fragment.String(),
+		args:           queryArgs,
 	}, nil
 }
 
