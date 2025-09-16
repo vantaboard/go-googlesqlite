@@ -21,14 +21,14 @@ func NewSQLBuilderVisitor(ctx context.Context) *SQLBuilderVisitor {
 	}
 }
 
-// VisitQuery Formats the outermost query statement that runs and produces rows of output, like a SELECT
+// VisitQuery Formats the outermost querybuilder statement that runs and produces rows of output, like a SELECT
 // The node's `OutputColumnList()` gives user-visible column names that should be returned. There may be duplicate names,
 // and multiple output columns may reference the same column from `Query()`
 // https://github.com/google/zetasql/blob/master/docs/resolved_ast.md#ResolvedQueryStmt
 func (v *SQLBuilderVisitor) VisitQuery(node *ast.QueryStmtNode) (SQLFragment, error) {
 	scan, err := v.VisitScan(node.Query())
 	if err != nil {
-		return nil, fmt.Errorf("failed to visit query: %w", err)
+		return nil, fmt.Errorf("failed to visit querybuilder: %w", err)
 	}
 
 	selectStatement := NewSelectStatement()
@@ -113,7 +113,7 @@ func (v *SQLBuilderVisitor) VisitCreateTableAsSelectStmt(node *ast.CreateTableAs
 
 	scan, err := v.VisitScan(node.Query())
 	if err != nil {
-		return nil, fmt.Errorf("failed to visit query in CREATE TABLE AS SELECT: %w", err)
+		return nil, fmt.Errorf("failed to visit querybuilder in CREATE TABLE AS SELECT: %w", err)
 	}
 
 	query, err := v.visitOutputColumnProvider(scan, node.OutputColumnList())
@@ -515,7 +515,7 @@ func (v *SQLBuilderVisitor) VisitMergeStatement(node *ast.MergeStmtNode) ([]*SQL
 	//if !ok {
 	//	return nil, fmt.Errorf("currently MERGE expression is supported equal expression only")
 	//}
-	//if fn.Function().FullName(false) != "$equal" {
+	//if fn.FunctionCall().FullName(false) != "$equal" {
 	//	return nil, fmt.Errorf("currently MERGE expression is supported equal expression only")
 	//}
 	//argList := fn.ArgumentList()

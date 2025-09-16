@@ -242,10 +242,7 @@ func (a *Analyzer) context(
 	stmt parsed_ast.StatementNode) context.Context {
 	ctx = withAnalyzer(ctx, a)
 	ctx = withNamePath(ctx, a.namePath)
-	ctx = withColumnRefMap(ctx, map[string]string{})
-	ctx = withTableNameToColumnListMap(ctx, map[string][]*ast.Column{})
 	ctx = withFuncMap(ctx, funcMap)
-	ctx = withAnalyticOrderColumnNames(ctx, &analyticOrderColumnNames{})
 	ctx = withNodeMap(ctx, zetasql.NewNodeMap(stmtNode, stmt))
 	return ctx
 }
@@ -258,7 +255,7 @@ func (a *Analyzer) analyzeTemplatedFunctionWithRuntimeArgument(ctx context.Conte
 	node := out.Statement()
 	stmt, ok := node.(*ast.CreateFunctionStmtNode)
 	if !ok {
-		return nil, fmt.Errorf("unexpected create function query %s", query)
+		return nil, fmt.Errorf("unexpected create function querybuilder %s", query)
 	}
 	spec, err := newFunctionSpec(ctx, a.namePath, stmt)
 	if err != nil {
@@ -536,12 +533,13 @@ func (a *Analyzer) newQueryStmtAction(ctx context.Context, query string, args []
 		}
 	} else {
 		var err error
-		fragment, err := NewSQLBuilderVisitor(ctx).VisitQuery(node)
+		factory := NewQueryTransformFactory(DefaultTransformConfig(true))
+		result, err := factory.TransformQuery(ctx, node)
 		if err != nil {
 			return nil, fmt.Errorf("failed to format query %s: %w", query, err)
 		}
 
-		formattedQuery = fragment.String()
+		formattedQuery = result.Fragment.String()
 	}
 
 	if formattedQuery == "" {

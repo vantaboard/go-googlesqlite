@@ -6043,7 +6043,7 @@ SELECT @a + @b;
 SELECT @a + @b;
 `,
 			args:        []interface{}{sql.NamedArg{Name: "a", Value: 1}},
-			expectedErr: "not enough query arguments",
+			expectedErr: "not enough querybuilder arguments",
 		},
 		{
 			name: "single statement with params below default limit",
@@ -6074,7 +6074,7 @@ SELECT ? + ?;
 SELECT ? + ?;
 `,
 			args:        []interface{}{int64(1)},
-			expectedErr: "not enough query arguments",
+			expectedErr: "not enough querybuilder arguments",
 		},
 
 		{
@@ -6088,6 +6088,12 @@ SELECT * FROM SingerNames
 ORDER BY FirstName ASC
 LIMIT 1 OFFSET 1;`,
 			expectedRows: [][]interface{}{{"Robyn", nil}},
+		},
+		{
+			name:         "simple binding",
+			query:        `select ?`,
+			args:         []interface{}{int64(1)},
+			expectedRows: [][]interface{}{{int64(1)}},
 		},
 		{
 			name: "multiple statements with positional params",
@@ -6198,6 +6204,7 @@ SELECT * FROM target;
 			rows, err := db.QueryContext(ctx, test.query, test.args...)
 			if err != nil {
 				if test.expectedErr == "" {
+					t.Log("FOUND ERROR\n--- ")
 					t.Fatal(err)
 				} else {
 					return

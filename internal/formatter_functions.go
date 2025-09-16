@@ -1,11 +1,64 @@
 package internal
 
 import (
+	"context"
 	"fmt"
 	ast "github.com/goccy/go-zetasql/resolved_ast"
-	"github.com/goccy/go-zetasql/types"
 	"strings"
 )
+
+func getZetasqliteFuncName(ctx context.Context, node *ast.BaseFunctionCallNode, isWindowFunc bool) (string, error) {
+	funcName := node.Function().FullName(false)
+	funcName = strings.Replace(funcName, ".", "_", -1)
+
+	_, existsCurrentTimeFunc := currentTimeFuncMap[funcName]
+	_, existsNormalFunc := normalFuncMap[funcName]
+	_, existsAggregateFunc := aggregateFuncMap[funcName]
+	_, existsWindowFunc := windowFuncMap[funcName]
+
+	funcPrefix := "zetasqlite"
+	if node.ErrorMode() == ast.SafeErrorMode {
+		if !existsNormalFunc {
+			return "", fmt.Errorf("SAFE is not supported for function %s", funcName)
+		}
+		funcPrefix = "zetasqlite_safe"
+	}
+
+	if strings.HasPrefix(funcName, "$") {
+		if isWindowFunc {
+			funcName = fmt.Sprintf("%s_window_%s", funcPrefix, funcName[1:])
+		} else {
+			funcName = fmt.Sprintf("%s_%s", funcPrefix, funcName[1:])
+		}
+	} else if existsCurrentTimeFunc {
+		// TODO: Handle currentTime
+		//currentTime := CurrentTime(ctx)
+		//if currentTime != nil {
+		//	args = append(
+		//		args,
+		//		NewLiteralExpressionFromGoValue(types.Int64Type(), currentTime.UnixNano()),
+		//	)
+		//}
+		funcName = fmt.Sprintf("%s_%s", funcPrefix, funcName)
+	} else if existsNormalFunc {
+		funcName = fmt.Sprintf("%s_%s", funcPrefix, funcName)
+	} else if !isWindowFunc && existsAggregateFunc {
+		funcName = fmt.Sprintf("%s_%s", funcPrefix, funcName)
+	} else if isWindowFunc && existsWindowFunc {
+		funcName = fmt.Sprintf("%s_window_%s", funcPrefix, funcName)
+	} else {
+		if node.Function().IsZetaSQLBuiltin() {
+			return "", fmt.Errorf("%s function is unimplemented", funcName)
+		}
+		fname, err := getFuncName(ctx, node)
+		if err != nil {
+			return "", err
+		}
+		funcName = fname
+	}
+
+	return funcName, nil
+}
 
 func (v *SQLBuilderVisitor) getFuncNameAndArgs(node *ast.BaseFunctionCallNode, isWindowFunc bool) (string, []*SQLExpression, error) {
 	ctx := v.context
@@ -24,7 +77,7 @@ func (v *SQLBuilderVisitor) getFuncNameAndArgs(node *ast.BaseFunctionCallNode, i
 	_, existsNormalFunc := normalFuncMap[funcName]
 	_, existsAggregateFunc := aggregateFuncMap[funcName]
 	_, existsWindowFunc := windowFuncMap[funcName]
-	currentTime := CurrentTime(ctx)
+	//currentTime := CurrentTime(ctx)
 
 	funcPrefix := "zetasqlite"
 	if node.ErrorMode() == ast.SafeErrorMode {
@@ -41,12 +94,20 @@ func (v *SQLBuilderVisitor) getFuncNameAndArgs(node *ast.BaseFunctionCallNode, i
 			funcName = fmt.Sprintf("%s_%s", funcPrefix, funcName[1:])
 		}
 	} else if existsCurrentTimeFunc {
-		if currentTime != nil {
-			args = append(
-				args,
-				NewLiteralExpressionFromGoValue(types.Int64Type(), currentTime.UnixNano()),
-			)
-		}
+		//if currentTime != nil {
+		//	encoded, err := ValueFromGoValue(currentTime.UnixNano())
+		//	if err != nil {
+		//		return "", nil, err
+		//	}
+		//	literal, err := LiteralFromZetaSQLValue(encoded)
+		//	if err != nil {
+		//		return "", nil, err
+		//	}
+		//	args = append(
+		//		args,
+		//		NewLiteralExpression(literal),
+		//	)
+		//}
 		funcName = fmt.Sprintf("%s_%s", funcPrefix, funcName)
 	} else if existsNormalFunc {
 		funcName = fmt.Sprintf("%s_%s", funcPrefix, funcName)
@@ -105,12 +166,12 @@ func (v *SQLBuilderVisitor) VisitAnalyticFunctionGroupNode(node *ast.AnalyticFun
 		}
 
 		item := fragment.(*SQLExpression)
-		if item.Type != ExpressionTypeFunction && item.Function == nil {
+		if item.Type != ExpressionTypeFunction && item.FunctionCall == nil {
 			return nil, fmt.Errorf("expected analytic function, got unexpected expression type: %d", item.Type)
 		} else {
 			// Copy over group context to the function call spec
-			item.Function.WindowSpec.OrderBy = specification.OrderBy
-			item.Function.WindowSpec.PartitionBy = specification.PartitionBy
+			item.FunctionCall.WindowSpec.OrderBy = specification.OrderBy
+			item.FunctionCall.WindowSpec.PartitionBy = specification.PartitionBy
 		}
 
 		v.fragmentContext.AddAvailableColumn(call.Column(), &ColumnInfo{
@@ -179,7 +240,7 @@ var windowFuncFixedRangesVisitor = map[string]*FrameClause{
 	},
 	"zetasqlite_window_cume_dist": {
 		Unit:  "GROUPS",
-		Start: &FrameBound{Type: "FOLLOWING", Offset: NewLiteralExpressionFromGoValue(types.Int64Type(), int64(1))},
+		Start: &FrameBound{Type: "FOLLOWING", Offset: NewLiteralExpression("1")},
 		End:   &FrameBound{Type: "UNBOUNDED FOLLOWING"},
 	},
 	"zetasqlite_window_dense_rank": {
@@ -259,7 +320,7 @@ func (v *SQLBuilderVisitor) VisitAnalyticFunctionCallNode(node *ast.AnalyticFunc
 
 	return &SQLExpression{
 		Type: ExpressionTypeFunction,
-		Function: &FunctionCall{
+		FunctionCall: &FunctionCall{
 			Name:       funcName,
 			Arguments:  args,
 			IsDistinct: false,
@@ -286,7 +347,7 @@ func (v *SQLBuilderVisitor) VisitAggregateFunctionCallNode(node *ast.AggregateFu
 		opts = append(opts, NewFunctionExpression(
 			"zetasqlite_order_by",
 			v.fragmentContext.GetColumnExpression(columnRef.Column()),
-			NewLiteralExpressionFromGoValue(types.BoolType(), !item.IsDescending()),
+			NewLiteralExpression(fmt.Sprintf("%t", !item.IsDescending())),
 		))
 	}
 	if node.Distinct() {

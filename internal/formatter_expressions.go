@@ -4,7 +4,7 @@
 //
 // The main functionality includes:
 // - Expression dispatch and type-specific conversion
-// - Function call handling with special cases for control flow
+// - FunctionCall call handling with special cases for control flow
 // - Type casting and column reference resolution
 // - Subquery expression conversion
 // - Parameter and argument reference handling
@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"github.com/goccy/go-json"
 	ast "github.com/goccy/go-zetasql/resolved_ast"
-	"github.com/goccy/go-zetasql/types"
 )
 
 // ColumnListProvider provides a common interface for AST nodes that contain column lists.
@@ -109,7 +108,7 @@ func (v *SQLBuilderVisitor) VisitMakeStructNode(node *ast.MakeStructNode) (SQLFr
 	args := make([]*SQLExpression, 0, fieldNum*2)
 	for i := 0; i < fieldNum; i++ {
 		fieldName := typ.Field(i).Name()
-		args = append(args, NewLiteralExpressionFromGoValue(types.StringType(), fieldName))
+		args = append(args, NewLiteralExpression(fieldName))
 		field, err := v.VisitExpression(fields[i])
 		if err != nil {
 			return nil, err
@@ -118,7 +117,7 @@ func (v *SQLBuilderVisitor) VisitMakeStructNode(node *ast.MakeStructNode) (SQLFr
 	}
 	return &SQLExpression{
 		Type: ExpressionTypeFunction,
-		Function: &FunctionCall{
+		FunctionCall: &FunctionCall{
 			Name:      "zetasqlite_make_struct",
 			Arguments: args,
 		},
@@ -138,10 +137,10 @@ func (v *SQLBuilderVisitor) VisitGetJsonFieldNode(node *ast.GetJsonFieldNode) (S
 		return nil, err
 	}
 	args = append(args, expr.(*SQLExpression))
-	args = append(args, NewLiteralExpressionFromGoValue(types.StringType(), node.FieldName()))
+	args = append(args, NewLiteralExpression(node.FieldName()))
 	return &SQLExpression{
 		Type: ExpressionTypeFunction,
-		Function: &FunctionCall{
+		FunctionCall: &FunctionCall{
 			Name:      "zetasqlite_get_json_field",
 			Arguments: args,
 		},
@@ -165,7 +164,7 @@ func (v *SQLBuilderVisitor) VisitGetStructFieldNode(node *ast.GetStructFieldNode
 	args = append(args, NewLiteralExpression(fmt.Sprintf("%d", node.FieldIdx())))
 	return &SQLExpression{
 		Type: ExpressionTypeFunction,
-		Function: &FunctionCall{
+		FunctionCall: &FunctionCall{
 			Name:      "zetasqlite_get_struct_field",
 			Arguments: args,
 		},
@@ -285,9 +284,9 @@ func (v *SQLBuilderVisitor) VisitCastNode(node *ast.CastNode) (SQLFragment, erro
 	return NewFunctionExpression(
 		"zetasqlite_cast",
 		expr.(*SQLExpression),
-		NewLiteralExpressionFromGoValue(types.StringType(), string(jsonEncodedFromType)),
-		NewLiteralExpressionFromGoValue(types.StringType(), string(jsonEncodedToType)),
-		NewLiteralExpressionFromGoValue(types.BoolType(), node.ReturnNullOnError()),
+		NewLiteralExpression(string(jsonEncodedFromType)),
+		NewLiteralExpression(string(jsonEncodedToType)),
+		NewLiteralExpression(fmt.Sprintf("%t", node.ReturnNullOnError())),
 	), nil
 }
 
@@ -301,7 +300,7 @@ func (v *SQLBuilderVisitor) VisitColumnRefNode(node *ast.ColumnRefNode) (SQLFrag
 }
 
 // VisitSubqueryExpressionNode handles different types of subquery expressions in ZetaSQL.
-// It converts subqueries based on their type and context within the larger query.
+// It converts subqueries based on their type and context within the larger querybuilder.
 //
 // Supported subquery types:
 // - Scalar: Returns a single value from the subquery
@@ -358,7 +357,7 @@ func (v *SQLBuilderVisitor) VisitSubqueryExpressionNode(node *ast.SubqueryExprNo
 }
 
 // VisitOutputColumnNode handles output column references by delegating to the fragment context.
-// Output columns represent the final columns in a query's result set.
+// Output columns represent the final columns in a querybuilder's result set.
 //
 // Returns the column expression from the fragment context.
 func (v *SQLBuilderVisitor) VisitOutputColumnNode(node *ast.OutputColumnNode) (SQLFragment, error) {
@@ -438,8 +437,6 @@ func (v *SQLBuilderVisitor) VisitOrderByItemNode(node *ast.OrderByItemNode) ([]*
 //
 // Returns a SelectStatement with the aggregate operation and proper grouping.
 func (v *SQLBuilderVisitor) VisitAggregateScanNode(node *ast.AggregateScanNode) (SQLFragment, error) {
-	nodeID := NodeID(fmt.Sprintf("aggregate_%p", node))
-
 	inputFromItem, err := v.VisitScan(node.InputScan())
 	if err != nil {
 		return nil, fmt.Errorf("failed to visit input scan: %w", err)
@@ -457,9 +454,8 @@ func (v *SQLBuilderVisitor) VisitAggregateScanNode(node *ast.AggregateScanNode) 
 		// Store column reference mapping for this aggregate
 		colName := agg.Column().Name()
 		v.fragmentContext.AddAvailableColumn(agg.Column(), &ColumnInfo{
-			Name:   colName,
-			Type:   agg.Column().Type().Kind().String(),
-			Source: nodeID,
+			Name: colName,
+			Type: agg.Column().Type().Kind().String(),
 		})
 
 		aggregateExpressions[colName] = expr
@@ -535,9 +531,8 @@ func (v *SQLBuilderVisitor) VisitAggregateScanNode(node *ast.AggregateScanNode) 
 	outputColumnInfos := make([]*ColumnInfo, 0, len(node.ColumnList()))
 	for _, col := range node.ColumnList() {
 		columnInfo := &ColumnInfo{
-			Name:   getUniqueColumnName(col),
-			Type:   col.Type().Kind().String(),
-			Source: nodeID,
+			Name: GetUniqueColumnName(col),
+			Type: col.Type().Kind().String(),
 		}
 		outputColumnInfos = append(outputColumnInfos, columnInfo)
 	}

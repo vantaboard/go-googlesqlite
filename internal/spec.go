@@ -102,6 +102,43 @@ func (s *FunctionSpec) CallSQL(ctx context.Context, callNode *ast.BaseFunctionCa
 	return NewLiteralExpression(fmt.Sprintf("( %s )", body.String())), nil
 }
 
+func (s *FunctionSpec) CallSQLData(ctx context.Context, functionData *FunctionCallData, argValues []*SQLExpression) (*SQLExpression, error) {
+	args := functionData.Arguments
+	var body *SQLExpression
+	if s.Body == nil {
+		// templated argument func
+		definedArgs := make([]string, 0, len(args))
+		for idx, arg := range functionData.Signature.Arguments {
+			typeName := newType(arg.Type).FormatType()
+			definedArgs = append(
+				definedArgs,
+				fmt.Sprintf("%s %s", s.Args[idx].Name, typeName),
+			)
+		}
+		funcName := strings.Join(s.NamePath, ".")
+		runtimeDefinedFunc := fmt.Sprintf(
+			"CREATE FUNCTION `%s`(%s) as (%s)",
+			funcName,
+			strings.Join(definedArgs, ","),
+			s.Code,
+		)
+		analyzer := analyzerFromContext(ctx)
+		runtimeSpec, err := analyzer.analyzeTemplatedFunctionWithRuntimeArgument(ctx, runtimeDefinedFunc)
+		if err != nil {
+			return nil, err
+		}
+		body = runtimeSpec.Body
+	} else {
+		body = s.Body
+	}
+	for i := 0; i < len(s.Args); i++ {
+		argRef := fmt.Sprintf("@%s", s.Args[i].Name)
+		value := argValues[i]
+		body = NewLiteralExpression(strings.Replace(body.String(), argRef, value.String(), -1))
+	}
+	return NewLiteralExpression(fmt.Sprintf("( %s )", body.String())), nil
+}
+
 type TableSpec struct {
 	IsTemp     bool           `json:"isTemp"`
 	IsView     bool           `json:"isView"`
@@ -109,7 +146,7 @@ type TableSpec struct {
 	Columns    []*ColumnSpec  `json:"columns"`
 	PrimaryKey []string       `json:"primaryKey"`
 	CreateMode ast.CreateMode `json:"createMode"`
-	Query      string         `json:"query"`
+	Query      string         `json:"querybuilder"`
 	UpdatedAt  time.Time      `json:"updatedAt"`
 	CreatedAt  time.Time      `json:"createdAt"`
 }
@@ -362,25 +399,16 @@ func newFunctionSpec(ctx context.Context, namePath *NamePath, stmt *ast.CreateFu
 	language := stmt.Language()
 	switch language {
 	case "js":
-		code, err := NewLiteralFromGoValue(types.StringType(), stmt.Code())
-		if err != nil {
-			return nil, err
-		}
+		code := NewLiteralExpression(stmt.Code())
 		encodedType, err := json.Marshal(newType(stmt.ReturnType()))
 		if err != nil {
 			return nil, err
 		}
-		retType, err := NewLiteralFromGoValue(types.StringType(), string(encodedType))
-		if err != nil {
-			return nil, err
-		}
+		retType := NewLiteralExpression(string(encodedType))
 		argParams := make([]*SQLExpression, 0, len(args))
 		argNames := make([]string, 0, len(args))
 		for _, arg := range args {
-			literal, err := NewLiteralFromGoValue(types.StringType(), fmt.Sprintf("@%s", arg.Name))
-			if err != nil {
-				return nil, err
-			}
+			literal := NewLiteralExpression(fmt.Sprintf("@%s", arg.Name))
 			argParams = append(argParams, literal)
 			argNames = append(argNames, arg.Name)
 		}
@@ -391,10 +419,11 @@ func newFunctionSpec(ctx context.Context, namePath *NamePath, stmt *ast.CreateFu
 				retType,
 			)
 		} else {
-			arr, err := NewLiteralFromGoValue(types.StringArrayType(), argNames)
+			encoded, err := json.Marshal(argNames)
 			if err != nil {
 				return nil, err
 			}
+			arr := NewLiteralExpression(string(encoded))
 
 			varArgs := []*SQLExpression{code, retType, arr}
 			varArgs = append(varArgs, argParams...)

@@ -116,12 +116,12 @@ func (v *SQLBuilderVisitor) VisitScan(scan ast.Node) (*FromItem, error) {
 }
 
 // VisitWithEntryNode processes individual entries in WITH clauses (Common Table Expressions).
-// It creates a named subquery that can be referenced by other parts of the query.
+// It creates a named subquery that can be referenced by other parts of the querybuilder.
 //
 // The function:
 // 1. Visits the subquery to get its SQL representation
 // 2. Registers the WITH entry's column mappings in the fragment context
-// 3. Creates a WithClause fragment with the query name and SELECT * wrapper
+// 3. Creates a WithClause fragment with the querybuilder name and SELECT * wrapper
 //
 // This enables proper column resolution when the WITH entry is later referenced.
 //
@@ -148,7 +148,7 @@ func (v *SQLBuilderVisitor) VisitWithEntryNode(node *ast.WithEntryNode) (SQLFrag
 // its columns to the expected output format.
 //
 // The function:
-// 1. Creates a SELECT statement with the WITH query name as the table
+// 1. Creates a SELECT statement with the WITH querybuilder name as the table
 // 2. Uses stored column mappings to properly reference CTE columns
 // 3. Assigns output column aliases matching the expected format
 //
@@ -156,7 +156,7 @@ func (v *SQLBuilderVisitor) VisitWithEntryNode(node *ast.WithEntryNode) (SQLFrag
 //
 // Returns a SelectStatement that references the WITH clause.
 func (v *SQLBuilderVisitor) VisitWithRefScanNode(node *ast.WithRefScanNode) (SQLFragment, error) {
-	//tableAlias := v.fragmentContext.aliasGenerator.GenerateTableAlias()
+	//tableAlias := v.fragmentContext.AliasGenerator.GenerateTableAlias()
 	selectStatement := NewSelectStatement()
 	selectStatement.FromClause = &FromItem{
 		Type:      FromItemTypeTable,
@@ -180,11 +180,11 @@ func (v *SQLBuilderVisitor) VisitWithRefScanNode(node *ast.WithRefScanNode) (SQL
 }
 
 // VisitWithScanNode handles complete WITH statements that define multiple CTEs
-// and execute a main query that can reference those CTEs.
+// and execute a main querybuilder that can reference those CTEs.
 //
 // The function:
 // 1. Processes all WITH entries to create CTE definitions
-// 2. Visits the main query that uses those CTEs
+// 2. Visits the main querybuilder that uses those CTEs
 // 3. Combines them into a SELECT statement with WITH clauses
 //
 // This implements ZetaSQL's WITH clause semantics in SQLite-compatible syntax.
@@ -280,7 +280,7 @@ func (v *SQLBuilderVisitor) VisitSetOperationScanNode(node *ast.SetOperationScan
 	selectStatement.FromClause = &FromItem{
 		Type:     FromItemTypeSubquery,
 		Subquery: setStatement,
-		Alias:    v.fragmentContext.aliasGenerator.GenerateTableAlias(),
+		Alias:    v.fragmentContext.AliasGenerator.GenerateTableAlias(),
 	}
 	for _, col := range node.ColumnList() {
 		v.fragmentContext.AddAvailableColumn(col, &ColumnInfo{})
@@ -381,12 +381,14 @@ func (v *SQLBuilderVisitor) VisitLimitOffsetScanNode(node *ast.LimitOffsetScanNo
 		})
 	}
 
+	clause := &LimitClause{}
+
 	if node.Limit() != nil {
 		limit, err := v.VisitExpression(node.Limit())
 		if err != nil {
 			return nil, err
 		}
-		selectStatement.LimitClause = limit.(*SQLExpression)
+		clause.Count = limit.(*SQLExpression)
 	}
 
 	if node.Offset() != nil {
@@ -394,8 +396,10 @@ func (v *SQLBuilderVisitor) VisitLimitOffsetScanNode(node *ast.LimitOffsetScanNo
 		if err != nil {
 			return nil, err
 		}
-		selectStatement.OffsetClause = offset.(*SQLExpression)
+		clause.Offset = offset.(*SQLExpression)
 	}
+
+	selectStatement.LimitClause = clause
 
 	return selectStatement, nil
 }
@@ -453,7 +457,7 @@ func (v *SQLBuilderVisitor) VisitAnalyticScanNode(node *ast.AnalyticScanNode) (S
 // Returns a TableFromItem fragment representing the table reference.
 func (v *SQLBuilderVisitor) VisitTableScan(node *ast.TableScanNode, fromOnly bool) (SQLFragment, error) {
 	// Always generate a table alias to help with column disambiguation
-	tableAlias := v.fragmentContext.aliasGenerator.GenerateTableAlias()
+	tableAlias := v.fragmentContext.AliasGenerator.GenerateTableAlias()
 	fromItem := NewTableFromItem(
 		namePathFromContext(v.context).format([]string{node.Table().Name()}),
 		tableAlias,
@@ -541,8 +545,6 @@ func (v *SQLBuilderVisitor) VisitProjectScan(node *ast.ProjectScanNode) (SQLFrag
 //
 // Returns a SelectStatement fragment with the JOIN operation.
 func (v *SQLBuilderVisitor) VisitJoinScan(node *ast.JoinScanNode) (SQLFragment, error) {
-	nodeID := NodeID(fmt.Sprintf("join_%p", node))
-
 	// Visit left and right inputs
 	// Push new scope for LeftScan
 	leftFromItem, err := v.VisitScan(node.LeftScan())
@@ -588,8 +590,7 @@ func (v *SQLBuilderVisitor) VisitJoinScan(node *ast.JoinScanNode) (SQLFragment, 
 
 		// Create output column info for this join result
 		joinColumnInfo := &ColumnInfo{
-			Type:   col.Type().Kind().String(),
-			Source: nodeID,
+			Type: col.Type().Kind().String(),
 		}
 		outputColumns = append(outputColumns, joinColumnInfo)
 
@@ -621,8 +622,8 @@ func (v *SQLBuilderVisitor) finalizeFromItem(fragment SQLFragment) *FromItem {
 		v.fragmentContext.PopScope(f.Alias)
 		return f
 	case *SelectStatement:
-		// Wrap complex query in subquery
-		alias := v.fragmentContext.aliasGenerator.GenerateSubqueryAlias()
+		// Wrap complex querybuilder in subquery
+		alias := v.fragmentContext.AliasGenerator.GenerateSubqueryAlias()
 		v.fragmentContext.PopScope(alias)
 		return NewSubqueryFromItem(f, alias)
 	case nil:
@@ -731,7 +732,7 @@ func (v *SQLBuilderVisitor) VisitArrayScan(node *ast.ArrayScanNode) (SQLFragment
 		joinType = JoinTypeCross
 	}
 
-	// Return a JOINed query combining input and UNNEST
+	// Return a JOINed querybuilder combining input and UNNEST
 	unnestSelect.FromClause = &FromItem{
 		Type: FromItemTypeJoin,
 		Join: &JoinClause{
