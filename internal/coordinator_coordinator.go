@@ -1,8 +1,8 @@
 package internal
 
 import (
+	"encoding/json"
 	"fmt"
-	"github.com/goccy/go-json"
 	"reflect"
 
 	ast "github.com/goccy/go-zetasql/resolved_ast"
@@ -49,7 +49,7 @@ func (c *QueryCoordinator) registerDefaultTransformers() {
 	//c.RegisterStatementTransformer(reflect.TypeOf(&ast.QueryStmtNode{}), NewSelectTransformer(c))
 
 	// Scan transformers
-	c.RegisterScanTransformer(reflect.TypeOf(&ast.TableScanNode{}), NewTableScanTransformer())
+	c.RegisterScanTransformer(reflect.TypeOf(&ast.TableScanNode{}), NewTableScanTransformer(c))
 	c.RegisterScanTransformer(reflect.TypeOf(&ast.ProjectScanNode{}), NewProjectScanTransformer(c))
 	c.RegisterScanTransformer(reflect.TypeOf(&ast.FilterScanNode{}), NewFilterScanTransformer(c))
 	c.RegisterScanTransformer(reflect.TypeOf(&ast.JoinScanNode{}), NewJoinScanTransformer(c))
@@ -86,7 +86,7 @@ func (c *QueryCoordinator) TransformStatementNode(node ast.Node, ctx TransformCo
 	debug := ctx.Config().Debug
 	if debug {
 		fmt.Println("--- AST:")
-		fmt.Println(node.DebugString())
+		fmt.Print(node.DebugString())
 	}
 
 	nodeType := reflect.TypeOf(node)

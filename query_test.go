@@ -597,11 +597,6 @@ CREATE FUNCTION customfunc(
 		{
 			name: "use function",
 			query: `
-CREATE FUNCTION customfunc(
-  arr ARRAY<STRUCT<name STRING, val INT64>>
-) AS (
-  (SELECT SUM(IF(elem.name = "foo",elem.val,null)) FROM UNNEST(arr) AS elem)
-);
 SELECT customfunc([
   STRUCT<name STRING, val INT64>("foo", 10),
   STRUCT<name STRING, val INT64>("bar", 40),

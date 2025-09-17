@@ -1654,22 +1654,39 @@ type SetItem struct {
 	Value  *SQLExpression
 }
 
-// FragmentType represents the type of SQL fragment
-type FragmentType int
+// CompoundSQLFragment represents multiple SQL statements that should be executed in sequence
+type CompoundSQLFragment struct {
+	statements []string
+}
 
-const (
-	FragmentTypeExpression FragmentType = iota
-	FragmentTypeSelectStatement
-	FragmentTypeFromClause
-	FragmentTypeJoinClause
-	FragmentTypeOrderByClause
-	FragmentTypeWhereClause
-	FragmentTypeGroupByClause
-	FragmentTypeHavingClause
-	FragmentTypeLimitClause
-	FragmentTypeColumnList
-	FragmentTypeTableReference
-)
+// NewCompoundSQLFragment creates a new compound SQL fragment
+func NewCompoundSQLFragment(statements []string) *CompoundSQLFragment {
+	return &CompoundSQLFragment{
+		statements: statements,
+	}
+}
+
+// String returns the compound fragment as a collection of statements
+// Note: This is primarily for compatibility - the actual execution will handle each statement separately
+func (c *CompoundSQLFragment) String() string {
+	return strings.Join(c.statements, ";\n") + ";"
+}
+
+// WriteSql writes the compound fragment to a SQL writer
+func (c *CompoundSQLFragment) WriteSql(writer *SQLWriter) error {
+	for i, stmt := range c.statements {
+		if i > 0 {
+			writer.Write(";\n")
+		}
+		writer.Write(stmt)
+	}
+	return nil
+}
+
+// GetStatements returns the individual statements in the compound fragment
+func (c *CompoundSQLFragment) GetStatements() []string {
+	return c.statements
+}
 
 type ScopeInfo struct {
 	ResolvedColumns map[string]*ColumnInfo
@@ -1891,194 +1908,4 @@ func (ag *AliasGenerator) GenerateSubqueryAlias() string {
 	}
 	ag.usedAliases[alias] = true
 	return alias
-}
-
-// ColumnMapping represents the mapping between original and new column names
-type ColumnMapping struct {
-	SourceColumnMap map[*SQLExpression]string // original column expression -> new column name for source table
-	TargetColumnMap map[*SQLExpression]string // original column expression -> new column name for target table
-	AllColumnMap    map[*SQLExpression]string // all original column names -> new column names
-}
-
-func (m ColumnMapping) LookupName(column *SQLExpression) (string, bool) {
-	for expr, name := range m.AllColumnMap {
-		if expr.String() == column.String() {
-			return name, true
-		}
-	}
-	return "", false
-}
-
-// CreateMergedTableStatement creates a CREATE TABLE AS SELECT statement using the merged table pattern
-// for MERGE operations with distinct column naming. This generates the SQL pattern:
-// CREATE TABLE tableName AS SELECT DISTINCT sourceCol1 AS merged_sourceCol1, targetCol1 AS merged_targetCol1, ... FROM (
-//
-//	SELECT * FROM sourceTable LEFT JOIN targetTable ON joinCondition
-//	UNION ALL
-//	SELECT * FROM targetTable LEFT JOIN sourceTable ON joinCondition
-//
-// )
-// Returns the CreateTableStatement and a mapping of original -> new column names
-func CreateMergedTableStatement(tableName string, sourceTable, targetTable *FromItem, joinCondition *SQLExpression) (*CreateTableStatement, *ColumnMapping, error) {
-	// Extract column information from the fragments
-	sourceColumns, err := extractColumnNames(sourceTable)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to extract source columns: %w", err)
-	}
-
-	targetColumns, err := extractColumnNames(targetTable)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to extract target columns: %w", err)
-	}
-
-	// Create distinct column mappings
-	columnMapping := createColumnMapping(sourceColumns, targetColumns)
-
-	// Create the inner subquery with LEFT JOIN and explicit column selection
-	leftJoin := createJoinWithColumnMapping(&FromItem{
-		Type: FromItemTypeJoin,
-		Join: &JoinClause{
-			Type:      JoinTypeLeft,
-			Left:      sourceTable,
-			Right:     targetTable,
-			Condition: joinCondition,
-		},
-	}, columnMapping)
-
-	rightJoin := createJoinWithColumnMapping(&FromItem{
-		Type: FromItemTypeJoin,
-		Join: &JoinClause{
-			Type:      JoinTypeLeft,
-			Left:      targetTable,
-			Right:     sourceTable,
-			Condition: joinCondition,
-		},
-	}, columnMapping)
-
-	// Create the UNION ALL operation
-	unionOperation := &SetOperation{
-		Type:     "UNION",
-		Modifier: "ALL",
-		Items:    []*SelectStatement{leftJoin, rightJoin},
-	}
-
-	// Create the outer subquery with UNION ALL
-	unionStatement := NewSelectStatement()
-	unionStatement.SetOperation = unionOperation
-
-	// Create the final SELECT DISTINCT * from the UNION subquery
-	distinctQuery := &SelectStatement{
-		SelectType: SelectTypeDistinct,
-		SelectList: []*SelectListItem{
-			{Expression: NewStarExpression()},
-		},
-		FromClause: NewSubqueryFromItem(unionStatement, "merged_union"),
-	}
-
-	// Create the CREATE TABLE AS SELECT statement
-	return &CreateTableStatement{
-		TableName: tableName,
-		AsSelect:  distinctQuery,
-	}, columnMapping, nil
-}
-
-// extractColumnNames extracts column names from different SQLFragment types
-func extractColumnNames(fragment SQLFragment) ([]*SQLExpression, error) {
-	switch f := fragment.(type) {
-	case *SelectStatement:
-		var columns []*SQLExpression
-		for _, item := range f.SelectList {
-			columns = append(columns, item.Expression)
-		}
-		return columns, nil
-	case *FromItem:
-		// For subqueries, use the select list and re-alias to the FromItem alias
-		if f.Type == FromItemTypeSubquery {
-			mappings, err := extractColumnNames(f.Subquery)
-			if err != nil {
-				return nil, err
-			}
-			for key, expr := range mappings {
-				mappings[key] = NewColumnExpression(expr.Value, f.Alias)
-			}
-			return mappings, nil
-		}
-		return nil, fmt.Errorf("unsupported fragment type: %T with type %T", f, f.Type)
-	default:
-		return nil, fmt.Errorf("unsupported fragment type: %T", f)
-	}
-}
-
-// createColumnMapping creates distinct column names and mappings
-func createColumnMapping(sourceColumns, targetColumns []*SQLExpression) *ColumnMapping {
-	mapping := &ColumnMapping{
-		SourceColumnMap: make(map[*SQLExpression]string),
-		TargetColumnMap: make(map[*SQLExpression]string),
-		AllColumnMap:    make(map[*SQLExpression]string),
-	}
-
-	usedNames := make(map[string]bool)
-
-	// Process source columns
-	for _, col := range sourceColumns {
-		newName := fmt.Sprintf("merged_source_%s", col.Value)
-		counter := 1
-		originalNewName := newName
-
-		// Ensure uniqueness
-		for usedNames[newName] {
-			newName = fmt.Sprintf("%s_%d", originalNewName, counter)
-			counter++
-		}
-
-		usedNames[newName] = true
-		mapping.SourceColumnMap[col] = newName
-		mapping.AllColumnMap[col] = newName
-	}
-
-	// Process target columns
-	for _, col := range targetColumns {
-		newName := fmt.Sprintf("merged_target_%s", col.Value)
-		counter := 1
-		originalNewName := newName
-
-		// Ensure uniqueness
-		for usedNames[newName] {
-			newName = fmt.Sprintf("%s_%d", originalNewName, counter)
-			counter++
-		}
-
-		usedNames[newName] = true
-		mapping.TargetColumnMap[col] = newName
-		mapping.AllColumnMap[col] = newName
-	}
-
-	return mapping
-}
-
-// createJoinWithColumnMapping creates a SELECT statement with explicit column mapping for joins
-func createJoinWithColumnMapping(joinFromItem *FromItem, mapping *ColumnMapping) *SelectStatement {
-	stmt := NewSelectStatement()
-	stmt.FromClause = joinFromItem
-
-	// Build explicit SELECT list with column mappings
-	stmt.SelectList = []*SelectListItem{}
-
-	// Add source columns
-	for origName, newName := range mapping.SourceColumnMap {
-		stmt.SelectList = append(stmt.SelectList, &SelectListItem{
-			Expression: origName,
-			Alias:      newName,
-		})
-	}
-
-	// Add target columns
-	for origName, newName := range mapping.TargetColumnMap {
-		stmt.SelectList = append(stmt.SelectList, &SelectListItem{
-			Expression: origName,
-			Alias:      newName,
-		})
-	}
-
-	return stmt
 }

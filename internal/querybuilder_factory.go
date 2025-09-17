@@ -139,6 +139,10 @@ func (f *QueryTransformFactory) registerStatementTransformers(coord *QueryCoordi
 	coord.RegisterStatementTransformer(reflect.TypeOf(&ast.UpdateStmtNode{}), dmlTransformer)
 	coord.RegisterStatementTransformer(reflect.TypeOf(&ast.DeleteStmtNode{}), dmlTransformer)
 
+	// MERGE transformer
+	mergeTransformer := NewMergeStmtTransformer(coord)
+	coord.RegisterStatementTransformer(reflect.TypeOf(&ast.MergeStmtNode{}), mergeTransformer)
+
 	// Other statement transformers
 	//truncateTransformer := NewTruncateTransformer(f.config.SQL)
 	//coord.RegisterStatementTransformer(reflect.TypeOf(&ast.TruncateStmtNode{}), truncateTransformer)
@@ -147,7 +151,7 @@ func (f *QueryTransformFactory) registerStatementTransformers(coord *QueryCoordi
 // registerScanTransformers registers all scan transformers
 func (f *QueryTransformFactory) registerScanTransformers(coord *QueryCoordinator) {
 	// Table scan transformer
-	tableScanTransformer := NewTableScanTransformer()
+	tableScanTransformer := NewTableScanTransformer(coord)
 	coord.RegisterScanTransformer(reflect.TypeOf(&ast.TableScanNode{}), tableScanTransformer)
 
 	// Join scan transformer

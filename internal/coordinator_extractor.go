@@ -126,6 +126,9 @@ func (e *NodeExtractor) extractFunctionCallData(node *ast.BaseFunctionCallNode, 
 
 	// Extract arguments
 	arguments := make([]ExpressionData, 0, len(node.ArgumentList()))
+	signature := &FunctionSignature{
+		Arguments: []*ArgumentInfo{},
+	}
 	for _, arg := range node.ArgumentList() {
 		argData, err := e.ExtractExpressionData(arg, ctx)
 		if err != nil {
@@ -134,11 +137,20 @@ func (e *NodeExtractor) extractFunctionCallData(node *ast.BaseFunctionCallNode, 
 		arguments = append(arguments, argData)
 	}
 
+	for _, arg := range node.Signature().Arguments() {
+		argInfo := &ArgumentInfo{Type: arg.Type()}
+		if arg.HasArgumentName() {
+			argInfo.Name = arg.ArgumentName()
+		}
+		signature.Arguments = append(signature.Arguments, argInfo)
+	}
+
 	return ExpressionData{
 		Type: ExpressionTypeFunction,
 		Function: &FunctionCallData{
 			Name:      funcName,
 			Arguments: arguments,
+			Signature: signature,
 		},
 	}, nil
 }
@@ -540,6 +552,8 @@ func (e *NodeExtractor) ExtractStatementData(node ast.Node, ctx TransformContext
 		return e.extractUpdateStatementData(n, ctx)
 	case *ast.DeleteStmtNode:
 		return e.extractDeleteStatementData(n, ctx)
+	case *ast.MergeStmtNode:
+		return e.extractMergeStatementData(n, ctx)
 	case *ast.DropStmtNode:
 		return e.extractDropStatementData(n, ctx)
 	case *ast.DropFunctionStmtNode:
@@ -620,12 +634,119 @@ func (e *NodeExtractor) ExtractScanData(node ast.Node, ctx TransformContext) (Sc
 
 // extractTableScanData extracts data from table scan nodes
 func (e *NodeExtractor) extractTableScanData(node *ast.TableScanNode, ctx TransformContext) (ScanData, error) {
+	// Check if this is a wildcard table
+	table := node.Table()
+	if wildcardTable, isWildcard := table.(*WildcardTable); isWildcard {
+		// Extract wildcard table data as a SetOp (UNION ALL)
+		return e.extractWildcardTableAsSetOp(wildcardTable, node, ctx)
+	}
+
 	return ScanData{
 		Type:       ScanTypeTable,
 		ColumnList: extractColumnDataList(node.ColumnList()),
 		TableScan: &TableScanData{
-			TableName: node.Table().Name(),
+			TableName: table.Name(),
 			Alias:     node.Alias(),
+		},
+	}, nil
+}
+
+// extractWildcardTableAsSetOp converts a wildcard table to a SetOp (UNION ALL) structure
+func (e *NodeExtractor) extractWildcardTableAsSetOp(wildcardTable *WildcardTable, node *ast.TableScanNode, ctx TransformContext) (ScanData, error) {
+	// Create individual SELECT statements for each table matched by the wildcard
+	items := make([]StatementData, 0, len(wildcardTable.tables))
+
+	columnData := extractColumnDataList(node.ColumnList())
+	columnIdsByName := make(map[string]int)
+	for _, col := range columnData {
+		columnIdsByName[col.Name] = col.ID
+	}
+
+	for _, tableSpec := range wildcardTable.tables {
+		// Create select items based on the wildcard table's column specification
+		selectItems := make([]*SelectItemData, 0, len(wildcardTable.spec.Columns))
+
+		for _, col := range wildcardTable.spec.Columns {
+			if col.Name == tableSuffixColumnName {
+				// Handle _TABLE_SUFFIX column by calculating the suffix from the table name
+				fullName := tableSpec.TableName()
+				var tableSuffix string
+				if len(fullName) > len(wildcardTable.prefix) {
+					tableSuffix = fullName[len(wildcardTable.prefix):]
+				} else {
+					tableSuffix = ""
+				}
+
+				// Create a literal expression for the table suffix
+				selectItems = append(selectItems, &SelectItemData{
+					Expression: ExpressionData{
+						Type: ExpressionTypeLiteral,
+						Literal: &LiteralData{
+							Value:    StringValue(tableSuffix),
+							TypeName: "STRING",
+						},
+					},
+					Alias: tableSuffixColumnName,
+				})
+			} else {
+				// Check if this column exists in the current table
+				var columnExpr ExpressionData
+				if wildcardTable.existsColumn(tableSpec, col.Name) {
+					// Column exists - reference it directly
+					columnExpr = ExpressionData{
+						Type: ExpressionTypeColumn,
+						Column: &ColumnRefData{
+							ColumnID:   columnIdsByName[col.Name],
+							ColumnName: col.Name,
+							TableName:  tableSpec.TableName(),
+						},
+					}
+				} else {
+					// Column doesn't exist - use NULL
+					columnExpr = ExpressionData{
+						Type: ExpressionTypeLiteral,
+						Literal: &LiteralData{
+							Value: nil,
+						},
+					}
+				}
+
+				selectItems = append(selectItems, &SelectItemData{
+					Expression: columnExpr,
+					Alias:      col.Name,
+				})
+			}
+		}
+
+		tableScanData := ScanData{
+			Type:       ScanTypeTable,
+			ColumnList: []*ColumnData{},
+			TableScan: &TableScanData{
+				TableName:        tableSpec.TableName(),
+				SyntheticColumns: selectItems,
+				Alias:            "", // No alias for individual tables in wildcard
+			},
+		}
+
+		// Create a SELECT statement for this table
+		stmtData := StatementData{
+			Type: StatementTypeSelect,
+			Select: &SelectData{
+				SelectList: selectItems,
+				FromClause: &tableScanData,
+			},
+		}
+
+		items = append(items, stmtData)
+	}
+
+	return ScanData{
+		Type:       ScanTypeSetOp,
+		ColumnList: columnData,
+		SetOperationScan: &SetOperationData{
+			Type:     "UNION",
+			Modifier: "ALL",
+			Items:    items,
 		},
 	}, nil
 }
@@ -1154,6 +1275,116 @@ func (e *NodeExtractor) extractDeleteStatementData(node *ast.DeleteStmtNode, ctx
 			TableName:   tableName,
 			TableScan:   &tableScanData,
 			WhereClause: whereClause,
+		},
+	}, nil
+}
+
+// extractMergeStatementData extracts data from MERGE statement nodes
+func (e *NodeExtractor) extractMergeStatementData(node *ast.MergeStmtNode, ctx TransformContext) (StatementData, error) {
+	// Extract target table name
+	targetTableName := node.TableScan().Table().Name()
+
+	// Extract target table scan data
+	targetScanData, err := e.ExtractScanData(node.TableScan(), ctx)
+	if err != nil {
+		return StatementData{}, fmt.Errorf("failed to extract merge target scan: %w", err)
+	}
+
+	// Extract source scan data
+	sourceScanData, err := e.ExtractScanData(node.FromScan(), ctx)
+	if err != nil {
+		return StatementData{}, fmt.Errorf("failed to extract merge source scan: %w", err)
+	}
+
+	// Extract merge expression (typically an equality condition)
+	mergeExprData, err := e.ExtractExpressionData(node.MergeExpr(), ctx)
+	if err != nil {
+		return StatementData{}, fmt.Errorf("failed to extract merge expression: %w", err)
+	}
+
+	// Extract WHEN clauses
+	whenClauses := make([]*MergeWhenClauseData, 0, len(node.WhenClauseList()))
+	for _, when := range node.WhenClauseList() {
+		whenData := &MergeWhenClauseData{
+			MatchType:  when.MatchType(),
+			ActionType: when.ActionType(),
+		}
+
+		// Extract condition if present
+		if when.MatchExpr() != nil {
+			conditionData, err := e.ExtractExpressionData(when.MatchExpr(), ctx)
+			if err != nil {
+				return StatementData{}, fmt.Errorf("failed to extract merge when condition: %w", err)
+			}
+			whenData.Condition = &conditionData
+		}
+
+		// Handle different action types
+		switch when.ActionType() {
+		case ast.ActionTypeInsert:
+			// Extract INSERT columns
+			columns := make([]*ColumnData, 0, len(when.InsertColumnList()))
+			for _, col := range when.InsertColumnList() {
+				columns = append(columns, &ColumnData{
+					ID:   col.ColumnID(),
+					Name: col.Name(),
+				})
+			}
+			whenData.InsertColumns = columns
+
+			// Extract INSERT values
+			if when.InsertRow() != nil {
+				values := make([]ExpressionData, 0, len(when.InsertRow().ValueList()))
+				for _, value := range when.InsertRow().ValueList() {
+					valueData, err := e.ExtractExpressionData(value, ctx)
+					if err != nil {
+						return StatementData{}, fmt.Errorf("failed to extract merge insert value: %w", err)
+					}
+					values = append(values, valueData)
+				}
+				whenData.InsertValues = values
+			}
+
+		case ast.ActionTypeUpdate:
+			// Extract UPDATE SET items
+			setItems := make([]*SetItemData, 0, len(when.UpdateItemList()))
+			for _, item := range when.UpdateItemList() {
+				// Extract target column name
+				var columnName string
+				if item.Target() != nil {
+					if columnRef, ok := item.Target().(*ast.ColumnRefNode); ok {
+						columnName = columnRef.Column().Name()
+					}
+				}
+
+				// Extract set value
+				valueData, err := e.ExtractExpressionData(item.SetValue(), ctx)
+				if err != nil {
+					return StatementData{}, fmt.Errorf("failed to extract merge update value: %w", err)
+				}
+
+				setItems = append(setItems, &SetItemData{
+					Column: columnName,
+					Value:  valueData,
+				})
+			}
+			whenData.SetItems = setItems
+
+		case ast.ActionTypeDelete:
+			// DELETE action has no additional data to extract
+		}
+
+		whenClauses = append(whenClauses, whenData)
+	}
+
+	return StatementData{
+		Type: StatementTypeMerge,
+		Merge: &MergeData{
+			TargetTable: targetTableName,
+			TargetScan:  &targetScanData,
+			SourceScan:  &sourceScanData,
+			MergeExpr:   mergeExprData,
+			WhenClauses: whenClauses,
 		},
 	}, nil
 }

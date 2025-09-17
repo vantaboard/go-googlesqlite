@@ -65,7 +65,6 @@ type FunctionCallData struct {
 	Arguments  []ExpressionData         `json:"arguments,omitempty"`
 	WindowSpec *WindowSpecificationData `json:"window_spec,omitempty"`
 	Signature  *FunctionSignature       `json:"signature,omitempty"`
-	Location   *ParseLocation           `json:"location,omitempty"`
 }
 
 func NewFunctionCallExpressionData(name string, arguments ...ExpressionData) ExpressionData {
@@ -93,9 +92,7 @@ type FrameBoundData struct {
 
 // FunctionSignature represents function signature information
 type FunctionSignature struct {
-	Name       string          `json:"name,omitempty"`
-	Arguments  []*ArgumentInfo `json:"arguments,omitempty"`
-	ReturnType types.Type      `json:"return_type,omitempty"`
+	Arguments []*ArgumentInfo `json:"arguments,omitempty"`
 }
 
 // ArgumentInfo represents function argument metadata
@@ -178,6 +175,7 @@ type StatementData struct {
 	Delete *DeleteData   `json:"delete,omitempty"`
 	Create *CreateData   `json:"create,omitempty"`
 	Drop   *DropData     `json:"drop,omitempty"`
+	Merge  *MergeData    `json:"merge,omitempty"`
 }
 
 // StatementType identifies the type of statement
@@ -190,6 +188,7 @@ const (
 	StatementTypeDelete
 	StatementTypeCreate
 	StatementTypeDrop
+	StatementTypeMerge
 )
 
 // SelectData represents SELECT statement data
@@ -230,6 +229,15 @@ type ScanData struct {
 	AnalyticScan     *AnalyticScanData  `json:"analytic_scan,omitempty"`
 }
 
+func (s *ScanData) FindColumnByID(id int) *ColumnData {
+	for _, col := range s.ColumnList {
+		if col.ID == id {
+			return col
+		}
+	}
+	return nil
+}
+
 // ScanType identifies the type of scan operation
 type ScanType int
 
@@ -252,10 +260,10 @@ const (
 
 // TableScanData represents table scan data
 type TableScanData struct {
-	TableName     string          `json:"table_name,omitempty"`
-	Alias         string          `json:"alias,omitempty"`
-	Columns       []*ColumnData   `json:"columns,omitempty"`
-	ForSystemTime *ExpressionData `json:"for_system_time,omitempty"`
+	TableName        string            `json:"table_name,omitempty"`
+	Alias            string            `json:"alias,omitempty"`
+	Columns          []*ColumnData     `json:"columns,omitempty"`
+	SyntheticColumns []*SelectItemData `json:"synthetic_columns,omitempty"`
 }
 
 // JoinScanData represents join operation data
@@ -469,4 +477,23 @@ type WithEntryData struct {
 	WithQueryName string        `json:"with_query_name,omitempty"`
 	WithSubquery  ScanData      `json:"with_subquery,omitempty"`
 	ColumnList    []*ColumnData `json:"column_list,omitempty"`
+}
+
+// MergeData represents MERGE statement data
+type MergeData struct {
+	TargetTable string                 `json:"target_table,omitempty"`
+	TargetScan  *ScanData              `json:"target_scan,omitempty"`
+	SourceScan  *ScanData              `json:"source_scan,omitempty"`
+	MergeExpr   ExpressionData         `json:"merge_expr,omitempty"`
+	WhenClauses []*MergeWhenClauseData `json:"when_clauses,omitempty"`
+}
+
+// MergeWhenClauseData represents a WHEN clause in MERGE statements
+type MergeWhenClauseData struct {
+	MatchType     ast.MatchType    `json:"match_type,omitempty"`     // MATCHED, NOT_MATCHED_BY_SOURCE, NOT_MATCHED_BY_TARGET
+	Condition     *ExpressionData  `json:"condition,omitempty"`      // Optional condition
+	ActionType    ast.ActionType   `json:"action_type,omitempty"`    // INSERT, UPDATE, DELETE
+	InsertColumns []*ColumnData    `json:"insert_columns,omitempty"` // For INSERT actions
+	InsertValues  []ExpressionData `json:"insert_values,omitempty"`  // For INSERT actions
+	SetItems      []*SetItemData   `json:"set_items,omitempty"`      // For UPDATE actions
 }

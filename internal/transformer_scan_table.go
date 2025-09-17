@@ -18,11 +18,14 @@ import (
 // This is the simplest transformer as it performs direct mapping without complex logic,
 // but it's crucial as the leaf node in the scan transformation tree.
 type TableScanTransformer struct {
+	coordinator Coordinator
 }
 
 // NewTableScanTransformer creates a new table scan transformer
-func NewTableScanTransformer() *TableScanTransformer {
-	return &TableScanTransformer{}
+func NewTableScanTransformer(coordinator Coordinator) *TableScanTransformer {
+	return &TableScanTransformer{
+		coordinator: coordinator,
+	}
 }
 
 // Transform converts TableScanData to FromItem
@@ -49,6 +52,27 @@ func (t *TableScanTransformer) Transform(data ScanData, ctx TransformContext) (*
 		selectList = append(selectList, &SelectListItem{
 			Expression: columnExpr,
 			Alias:      alias,
+		})
+	}
+
+	// Handle synthetic columns list
+	// This is used when querying Wildcard tables. A matched table may not have a column listed in the
+	// original query's SELECT statement, in which case, an expression is provided in place of a Column reference
+	for _, item := range tableData.SyntheticColumns {
+		if column := item.Expression.Column; item.Expression.Type == ExpressionTypeColumn {
+			ctx.FragmentContext().RegisterColumnScope(column.ColumnID, "")
+			ctx.FragmentContext().AddAvailableColumn(column.ColumnID, &ColumnInfo{
+				Name: column.ColumnName,
+			})
+		}
+
+		expr, err := t.coordinator.TransformExpression(item.Expression, ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to transform expression: %w", err)
+		}
+		selectList = append(selectList, &SelectListItem{
+			Expression: expr,
+			Alias:      item.Alias,
 		})
 	}
 

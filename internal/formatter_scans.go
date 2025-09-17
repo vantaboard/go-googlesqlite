@@ -55,7 +55,7 @@ import (
 //
 // Returns a FromItem suitable for use in FROM clauses of parent scans.
 func (v *SQLBuilderVisitor) VisitScan(scan ast.Node) (*FromItem, error) {
-	v.fragmentContext.PushScope(fmt.Sprintf("Scan(%s)", scan.Kind()))
+	v.fragmentContext.PushScope(fmt.Sprintf("Scan(%d)", scan.Kind()))
 
 	var fragment SQLFragment
 	var err error

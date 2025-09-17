@@ -39,7 +39,6 @@ func (t *QueryStmtTransformer) Transform(data StatementData, ctx TransformContex
 
 	selectData := data.Select
 
-	// Transform the main query scan using pure data (no AST nodes needed!)
 	fromItem, err := t.coordinator.TransformScan(*selectData.FromClause, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to transform query scan: %w", err)

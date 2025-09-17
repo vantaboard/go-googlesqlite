@@ -108,11 +108,11 @@ func (s *FunctionSpec) CallSQLData(ctx context.Context, functionData *FunctionCa
 	if s.Body == nil {
 		// templated argument func
 		definedArgs := make([]string, 0, len(args))
-		for idx, arg := range functionData.Signature.Arguments {
+		for i, arg := range functionData.Signature.Arguments {
 			typeName := newType(arg.Type).FormatType()
 			definedArgs = append(
 				definedArgs,
-				fmt.Sprintf("%s %s", s.Args[idx].Name, typeName),
+				fmt.Sprintf("%s %s", s.Args[i].Name, typeName),
 			)
 		}
 		funcName := strings.Join(s.NamePath, ".")
@@ -146,7 +146,7 @@ type TableSpec struct {
 	Columns    []*ColumnSpec  `json:"columns"`
 	PrimaryKey []string       `json:"primaryKey"`
 	CreateMode ast.CreateMode `json:"createMode"`
-	Query      string         `json:"querybuilder"`
+	Query      string         `json:"query"`
 	UpdatedAt  time.Time      `json:"updatedAt"`
 	CreatedAt  time.Time      `json:"createdAt"`
 }
@@ -399,12 +399,18 @@ func newFunctionSpec(ctx context.Context, namePath *NamePath, stmt *ast.CreateFu
 	language := stmt.Language()
 	switch language {
 	case "js":
-		code := NewLiteralExpression(stmt.Code())
+		code, err := NewLiteralExpressionFromGoValue(types.StringType(), stmt.Code())
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode function code: %w", err)
+		}
 		encodedType, err := json.Marshal(newType(stmt.ReturnType()))
 		if err != nil {
 			return nil, err
 		}
-		retType := NewLiteralExpression(string(encodedType))
+		retType, err := NewLiteralExpressionFromGoValue(types.StringType(), string(encodedType))
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode function return type: %w", err)
+		}
 		argParams := make([]*SQLExpression, 0, len(args))
 		argNames := make([]string, 0, len(args))
 		for _, arg := range args {
@@ -423,7 +429,10 @@ func newFunctionSpec(ctx context.Context, namePath *NamePath, stmt *ast.CreateFu
 			if err != nil {
 				return nil, err
 			}
-			arr := NewLiteralExpression(string(encoded))
+			arr, err := NewLiteralExpressionFromGoValue(types.StringType(), string(encoded))
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode function arg names: %w", err)
+			}
 
 			varArgs := []*SQLExpression{code, retType, arr}
 			varArgs = append(varArgs, argParams...)
@@ -436,11 +445,21 @@ func newFunctionSpec(ctx context.Context, namePath *NamePath, stmt *ast.CreateFu
 	default:
 		funcExpr := stmt.FunctionExpression()
 		if funcExpr != nil {
-			bodyQuery, err := NewSQLBuilderVisitor(ctx).VisitExpression(funcExpr)
+			factory := NewQueryTransformFactory(DefaultTransformConfig(true))
+			coordinator := factory.CreateCoordinator()
+			transformContext := factory.CreateTransformContext(ctx)
+			extractor := NewNodeExtractor()
+			extractor.SetCoordinator(coordinator)
+			funcExprData, err := extractor.ExtractExpressionData(funcExpr, transformContext)
+			if err != nil {
+				return nil, fmt.Errorf("failed to extract function expression data: %w", err)
+			}
+
+			bodyQuery, err := coordinator.TransformExpression(funcExprData, transformContext)
 			if err != nil {
 				return nil, fmt.Errorf("failed to format function expression: %w", err)
 			}
-			body = bodyQuery.(*SQLExpression)
+			body = bodyQuery
 		}
 	}
 	now := time.Now()

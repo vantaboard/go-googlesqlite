@@ -610,170 +610,26 @@ func (a *Analyzer) newTruncateStmtAction(ctx context.Context, query string, args
 	return &TruncateStmtAction{query: fmt.Sprintf("DELETE FROM `%s`", table)}, nil
 }
 
-func replaceMergeColumnReferences(query, sourceColumn, targetColumn string) string {
-	return strings.ReplaceAll(query, sourceColumn, targetColumn)
-}
-
 func (a *Analyzer) newMergeStmtAction(ctx context.Context, query string, args []driver.NamedValue, node *ast.MergeStmtNode) (*MergeStmtAction, error) {
-	visitor := NewSQLBuilderVisitor(ctx)
-	targetTableName := node.TableScan().Table().Name()
-	targetTable, err := visitor.VisitScan(node.TableScan())
+	// Use the new transformer pattern for MERGE statements
+	factory := NewQueryTransformFactory(DefaultTransformConfig(true))
+	result, err := factory.TransformQuery(ctx, node)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to format query %s: %w", "MERGE", err)
 	}
-	sourceTable, err := visitor.VisitScan(node.FromScan())
-	if err != nil {
-		return nil, err
+	if result == nil || result.Fragment == nil {
+		return nil, fmt.Errorf("failed to format MERGE query")
 	}
-	expr, err := visitor.VisitExpression(node.MergeExpr())
-	if err != nil {
-		return nil, err
-	}
-	fn, ok := node.MergeExpr().(*ast.FunctionCallNode)
-	if !ok {
-		return nil, fmt.Errorf("currently MERGE expression is supported equal expression only")
-	}
-	if fn.Function().FullName(false) != "$equal" {
-		return nil, fmt.Errorf("currently MERGE expression is supported equal expression only")
-	}
-	argList := fn.ArgumentList()
-	if len(argList) != 2 {
-		return nil, fmt.Errorf("unexpected MERGE expression column num. expected 2 column but specified %d column", len(args))
-	}
-	colA, ok := argList[0].(*ast.ColumnRefNode)
-	if !ok {
-		return nil, fmt.Errorf("unexpected MERGE expression. expected column reference but got %T", argList[0])
-	}
-	colB, ok := argList[1].(*ast.ColumnRefNode)
-	if !ok {
-		return nil, fmt.Errorf("unexpected MERGE expression. expected column reference but got %T", argList[1])
-	}
-	var (
-		sourceColumn *ast.ColumnRefNode
-		targetColumn *ast.ColumnRefNode
-	)
 
-	if colA.Column().TableName() == node.TableScan().Table().Name() {
-		targetColumn = colA
-		sourceColumn = colB
-	} else {
-		targetColumn = colB
-		sourceColumn = colA
-	}
-	mergedTableSourceColumn, err := visitor.VisitExpression(sourceColumn)
-	if err != nil {
-		return nil, fmt.Errorf("unexpected MERGE expression. failed to format column: %s", err)
-	}
-	mergedTableTargetColumn, err := visitor.VisitExpression(targetColumn)
-	if err != nil {
-		return nil, fmt.Errorf("unexpected MERGE expression. failed to format column: %s", err)
-	}
+	// Extract the transformed statements from the compound fragment
 	var stmts []string
-	createTableStmt, columnMapping, err := CreateMergedTableStatement("zetasqlite_merged_table", sourceTable, targetTable, expr.(*SQLExpression))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create merged table statement: %w", err)
+	if compoundFragment, ok := result.Fragment.(*CompoundSQLFragment); ok {
+		stmts = compoundFragment.GetStatements()
+	} else {
+		// Fallback to single statement
+		stmts = []string{result.Fragment.String()}
 	}
 
-	mergedTableSourceColumnName, ok := columnMapping.LookupName(mergedTableSourceColumn.(*SQLExpression))
-	if !ok {
-		return nil, fmt.Errorf("failed to find merged table column name")
-	}
-
-	mergedTableTargetColumnName, ok := columnMapping.LookupName(mergedTableTargetColumn.(*SQLExpression))
-	if !ok {
-		return nil, fmt.Errorf("failed to find merged table column name")
-	}
-	mergedTableOutputColumns := []string{
-		mergedTableTargetColumnName,
-		mergedTableSourceColumnName,
-	}
-	stmts = append(stmts, createTableStmt.String())
-
-	// exists target table and source table
-	matchedFromStmt := fmt.Sprintf(
-		"FROM zetasqlite_merged_table WHERE `%[2]s` = %[1]s AND `%[3]s` = %[1]s",
-		targetColumn.Column().Name(),
-		mergedTableSourceColumnName,
-		mergedTableTargetColumnName,
-	)
-
-	// exists target table but not exists source table
-	notMatchedBySourceFromStmt := fmt.Sprintf(
-		"FROM zetasqlite_merged_table WHERE `%[2]s` = `%[1]s` AND `%[3]s` IS NULL",
-		targetColumn.Column().Name(),
-		mergedTableTargetColumnName,
-		mergedTableSourceColumnName,
-	)
-
-	// exists source table but not exists target table
-	notMatchedByTargetFromStmt := fmt.Sprintf(
-		"FROM zetasqlite_merged_table WHERE `%[2]s` = `%[1]s` AND `%[3]s` IS NULL",
-		sourceColumn.Column().Name(),
-		mergedTableSourceColumnName,
-		mergedTableTargetColumnName,
-	)
-	for _, when := range node.WhenClauseList() {
-		var fromStmt string
-		switch when.MatchType() {
-		case ast.MatchTypeMatched:
-			fromStmt = matchedFromStmt
-		case ast.MatchTypeNotMatchedBySource:
-			fromStmt = notMatchedBySourceFromStmt
-		case ast.MatchTypeNotMatchedByTarget:
-			fromStmt = notMatchedByTargetFromStmt
-		}
-		whereStmt := fmt.Sprintf(
-			"WHERE EXISTS(SELECT %s %s)",
-			strings.Join(mergedTableOutputColumns, ","),
-			fromStmt,
-		)
-		switch when.ActionType() {
-		case ast.ActionTypeInsert:
-			var columns []string
-			for _, col := range when.InsertColumnList() {
-				columns = append(columns, fmt.Sprintf("`%s`", col.Name()))
-			}
-			row, err := visitor.VisitInsertRowNode(when.InsertRow())
-			if err != nil {
-				return nil, err
-			}
-			stmts = append(stmts, fmt.Sprintf(
-				"INSERT INTO `%[1]s` (%[2]s) SELECT %[3]s FROM (SELECT * FROM %[4]s %[5]s) AS `%[6]s`",
-				targetTableName,
-				strings.Join(columns, ","),
-				row,
-				sourceTable.String(),
-				whereStmt,
-				sourceTable.Alias,
-			))
-		case ast.ActionTypeUpdate:
-			var items []string
-			for _, item := range when.UpdateItemList() {
-				sql, err := visitor.VisitUpdateItem(item)
-				if err != nil {
-					return nil, err
-				}
-				sqlString := sql.String()
-				for column, mapping := range columnMapping.SourceColumnMap {
-					sqlString = strings.ReplaceAll(sqlString, column.String(), fmt.Sprintf("`%s`", mapping))
-				}
-				items = append(items, sqlString)
-			}
-			stmts = append(stmts, fmt.Sprintf(
-				"UPDATE `%s` SET %s %s",
-				targetTableName,
-				strings.Join(items, ","),
-				fromStmt,
-			))
-		case ast.ActionTypeDelete:
-			stmts = append(stmts, fmt.Sprintf(
-				"DELETE FROM `%s` %s",
-				targetTableName,
-				whereStmt,
-			))
-		}
-	}
-	stmts = append(stmts, "DROP TABLE zetasqlite_merged_table")
 	return &MergeStmtAction{stmts: stmts}, nil
 }
 
