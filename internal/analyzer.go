@@ -317,11 +317,23 @@ func (a *Analyzer) newCreateTableStmtAction(ctx context.Context, args []driver.N
 }
 
 func (a *Analyzer) newCreateTableAsSelectStmtAction(ctx context.Context, _ string, args []driver.NamedValue, node *ast.CreateTableAsSelectStmtNode) (*CreateTableStmtAction, error) {
-	stmt, err := NewSQLBuilderVisitor(ctx).VisitCreateTableAsSelectStmt(node)
+	// Use the new transformer pattern for CREATE TABLE AS SELECT statements
+	factory := NewQueryTransformFactory(DefaultTransformConfig(true))
+	result, err := factory.TransformQuery(ctx, node)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to format query %s: %w", "CREATE TABLE AS SELECT", err)
 	}
-	query := stmt.(*CreateTableStatement).AsSelect
+	if result == nil || result.Fragment == nil {
+		return nil, fmt.Errorf("failed to format CREATE TABLE AS SELECT query")
+	}
+
+	// Extract the transformed CREATE TABLE statement
+	createTableStmt, ok := result.Fragment.(*CreateTableStatement)
+	if !ok {
+		return nil, fmt.Errorf("expected CreateTableStatement from transformer, got %T", result.Fragment)
+	}
+
+	query := createTableStmt.AsSelect
 	spec := newTableAsSelectSpec(a.namePath, query, node)
 	params := getParamsFromNode(node)
 	queryArgs, err := getArgsFromParams(args, params)
@@ -364,13 +376,25 @@ func (a *Analyzer) newCreateFunctionStmtAction(ctx context.Context, query string
 }
 
 func (a *Analyzer) newCreateViewStmtAction(ctx context.Context, _ string, args []driver.NamedValue, node *ast.CreateViewStmtNode) (*CreateViewStmtAction, error) {
-	query, err := NewSQLBuilderVisitor(ctx).VisitCreateViewStatement(node)
+	// Use the new transformer pattern for CREATE VIEW statements
+	factory := NewQueryTransformFactory(DefaultTransformConfig(true))
+	result, err := factory.TransformQuery(ctx, node)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to format query %s: %w", "CREATE VIEW", err)
 	}
-	spec := newTableAsViewSpec(a.namePath, query, node)
+	if result == nil || result.Fragment == nil {
+		return nil, fmt.Errorf("failed to format CREATE VIEW query")
+	}
+
+	// Extract the transformed CREATE VIEW statement
+	createViewStmt, ok := result.Fragment.(*CreateViewStatement)
+	if !ok {
+		return nil, fmt.Errorf("expected CreateViewStatement from transformer, got %T", result.Fragment)
+	}
+
+	spec := newTableAsViewSpec(a.namePath, createViewStmt.Query, node)
 	return &CreateViewStmtAction{
-		query:   query,
+		query:   createViewStmt,
 		spec:    spec,
 		catalog: a.catalog,
 	}, nil
@@ -499,23 +523,27 @@ func (a *Analyzer) newDropFunctionStmtAction(ctx context.Context, query string, 
 }
 
 func (a *Analyzer) newDMLStmtAction(ctx context.Context, query string, args []driver.NamedValue, node ast.Node) (*DMLStmtAction, error) {
-	stmt, err := NewSQLBuilderVisitor(ctx).VisitDMLStatement(node)
+	// Use the new transformer pattern for DML statements
+	factory := NewQueryTransformFactory(DefaultTransformConfig(true))
+	result, err := factory.TransformQuery(ctx, node)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format query %s: %w", query, err)
 	}
-	if stmt == nil {
+	if result == nil || result.Fragment == nil {
 		return nil, fmt.Errorf("failed to format query %s", query)
 	}
+
 	params := getParamsFromNode(node)
 	queryArgs, err := getArgsFromParams(args, params)
 	if err != nil {
 		return nil, err
 	}
+
 	return &DMLStmtAction{
 		query:          query,
 		params:         params,
 		args:           queryArgs,
-		formattedQuery: stmt.String(),
+		formattedQuery: result.Fragment.String(),
 	}, nil
 }
 

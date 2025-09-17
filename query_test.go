@@ -6082,11 +6082,12 @@ SELECT ? + ?;
 CREATE TEMP TABLE SingerNames AS 
 SELECT 'Kylie' AS FirstName, 'Minogue' AS LastName
 UNION ALL SELECT 'Robyn', null;
+INSERT INTO SingerNames (FirstName, LastName) VALUES ("Bjork", NULL);
 
 SELECT * FROM SingerNames
 ORDER BY FirstName ASC
 LIMIT 1 OFFSET 1;`,
-			expectedRows: [][]interface{}{{"Robyn", nil}},
+			expectedRows: [][]interface{}{{"Kylie", "Minogue"}},
 		},
 		{
 			name:         "simple binding",
@@ -6199,7 +6200,7 @@ SELECT * FROM target;
 		},
 		{
 			name:         "simple drop",
-			query:        `CREATE TABLE target(id INT64); DROP TABLE target;`,
+			query:        `CREATE TABLE test_drop_target(id INT64); DROP TABLE test_drop_target;`,
 			expectedRows: [][]interface{}{},
 		},
 

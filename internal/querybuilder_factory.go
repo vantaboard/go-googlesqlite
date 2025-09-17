@@ -120,28 +120,24 @@ func (f *QueryTransformFactory) registerStatementTransformers(coord *QueryCoordi
 	//createTableTransformer := NewCreateTableTransformer(f.config.SQL, coord)
 	//coord.RegisterStatementTransformer(reflect.TypeOf(&ast.CreateTableStmtNode{}), createTableTransformer)
 
-	//createTableAsSelectTransformer := NewCreateTableAsSelectTransformer(f.config.SQL, coord)
-	//coord.RegisterStatementTransformer(reflect.TypeOf(&ast.CreateTableAsSelectStmtNode{}), createTableAsSelectTransformer)
+	createTableAsSelectTransformer := NewCreateTableAsSelectStmtTransformer(coord)
+	coord.RegisterStatementTransformer(reflect.TypeOf(&ast.CreateTableAsSelectStmtNode{}), createTableAsSelectTransformer)
 
 	//createFunctionTransformer := NewCreateFunctionTransformer(f.config.SQL, coord)
 	//coord.RegisterStatementTransformer(reflect.TypeOf(&ast.CreateFunctionStmtNode{}), createFunctionTransformer)
 
-	//createViewTransformer := NewCreateViewTransformer(f.config.SQL, coord)
-	//coord.RegisterStatementTransformer(reflect.TypeOf(&ast.CreateViewStmtNode{}), createViewTransformer)
+	createViewTransformer := NewCreateViewStmtTransformer(coord)
+	coord.RegisterStatementTransformer(reflect.TypeOf(&ast.CreateViewStmtNode{}), createViewTransformer)
 
 	dropTransformer := NewDropStmtTransformer(coord)
 	coord.RegisterStatementTransformer(reflect.TypeOf(&ast.DropStmtNode{}), dropTransformer)
 	coord.RegisterStatementTransformer(reflect.TypeOf(&ast.DropFunctionStmtNode{}), dropTransformer)
 
 	// DML transformers
-	//insertTransformer := NewInsertTransformer(f.config.SQL, coord)
-	//coord.RegisterStatementTransformer(reflect.TypeOf(&ast.InsertStmtNode{}), insertTransformer)
-
-	//updateTransformer := NewUpdateTransformer(f.config.SQL, coord)
-	//coord.RegisterStatementTransformer(reflect.TypeOf(&ast.UpdateStmtNode{}), updateTransformer)
-
-	//deleteTransformer := NewDeleteTransformer(f.config.SQL, coord)
-	//coord.RegisterStatementTransformer(reflect.TypeOf(&ast.DeleteStmtNode{}), deleteTransformer)
+	dmlTransformer := NewDMLStmtTransformer(coord)
+	coord.RegisterStatementTransformer(reflect.TypeOf(&ast.InsertStmtNode{}), dmlTransformer)
+	coord.RegisterStatementTransformer(reflect.TypeOf(&ast.UpdateStmtNode{}), dmlTransformer)
+	coord.RegisterStatementTransformer(reflect.TypeOf(&ast.DeleteStmtNode{}), dmlTransformer)
 
 	// Other statement transformers
 	//truncateTransformer := NewTruncateTransformer(f.config.SQL)
@@ -151,8 +147,8 @@ func (f *QueryTransformFactory) registerStatementTransformers(coord *QueryCoordi
 // registerScanTransformers registers all scan transformers
 func (f *QueryTransformFactory) registerScanTransformers(coord *QueryCoordinator) {
 	// Table scan transformer
-	//tableScanTransformer := NewTableScanTransformer(f.config.SQL)
-	//coord.RegisterScanTransformer(reflect.TypeOf(&ast.TableScanNode{}), tableScanTransformer)
+	tableScanTransformer := NewTableScanTransformer()
+	coord.RegisterScanTransformer(reflect.TypeOf(&ast.TableScanNode{}), tableScanTransformer)
 
 	// Join scan transformer
 	joinScanTransformer := NewJoinScanTransformer(coord)
@@ -276,14 +272,10 @@ func NewOutputColumnTransformer(coord Coordinator) ExpressionTransformer   { ret
 
 // Statement transformer placeholders
 func NewCreateTableTransformer(coord Coordinator) StatementTransformer { return nil }
-func NewCreateTableAsSelectTransformer(coord Coordinator) StatementTransformer {
-	return nil
-}
 func NewCreateFunctionTransformer(coord Coordinator) StatementTransformer {
 	return nil
 }
-func NewCreateViewTransformer(coord Coordinator) StatementTransformer { return nil }
-func NewInsertTransformer(coord Coordinator) StatementTransformer     { return nil }
-func NewUpdateTransformer(coord Coordinator) StatementTransformer     { return nil }
-func NewDeleteTransformer(coord Coordinator) StatementTransformer     { return nil }
-func NewTruncateTransformer() StatementTransformer                    { return nil }
+func NewInsertTransformer(coord Coordinator) StatementTransformer { return nil }
+func NewUpdateTransformer(coord Coordinator) StatementTransformer { return nil }
+func NewDeleteTransformer(coord Coordinator) StatementTransformer { return nil }
+func NewTruncateTransformer() StatementTransformer                { return nil }

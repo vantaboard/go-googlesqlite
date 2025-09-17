@@ -71,6 +71,7 @@ type FragmentContextProvider interface {
 	GetQualifiedColumnRef(columnID int) (columnName, tableAlias string)
 	RegisterColumnScope(columnID int, scopeAlias string)
 	RegisterColumnScopeMapping(scopeAlias string, columns []*ColumnData)
+	AddAvailableColumnsForDML(data *ScanData)
 }
 
 // ScopeToken represents a scope boundary

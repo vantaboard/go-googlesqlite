@@ -369,6 +369,7 @@ type InsertData struct {
 // UpdateData represents UPDATE statement data
 type UpdateData struct {
 	TableName   string          `json:"table_name,omitempty"`
+	TableScan   *ScanData       `json:"table_scan,omitempty"`
 	SetItems    []*SetItemData  `json:"set_items,omitempty"`
 	FromClause  *ScanData       `json:"from_clause,omitempty"`
 	WhereClause *ExpressionData `json:"where_clause,omitempty"`
@@ -383,6 +384,7 @@ type SetItemData struct {
 // DeleteData represents DELETE statement data
 type DeleteData struct {
 	TableName   string          `json:"table_name,omitempty"`
+	TableScan   *ScanData       `json:"table_scan,omitempty"`
 	WhereClause *ExpressionData `json:"where_clause,omitempty"`
 }
 

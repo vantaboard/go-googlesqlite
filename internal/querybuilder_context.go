@@ -121,6 +121,21 @@ func (fc *DefaultFragmentContext) AddAvailableColumn(columnID int, info *ColumnI
 	}
 }
 
+// AddAvailableColumnsForDML When transforming the columns for the base table of a DML statement,
+// do not use aliases, instead use the underlying SQLite column names
+func (fc *DefaultFragmentContext) AddAvailableColumnsForDML(scanData *ScanData) {
+	for _, col := range scanData.ColumnList {
+		// Register scope alias
+		fc.RegisterColumnScope(col.ID, scanData.TableScan.TableName)
+
+		// Add to available columns
+		fc.AddAvailableColumn(col.ID, &ColumnInfo{
+			Name:       col.Name, // Use simple name, not qualified
+			Expression: NewColumnExpression(col.Name),
+		})
+	}
+}
+
 func (fc *DefaultFragmentContext) GetID() string {
 	if len(fc.scopes) == 0 {
 		return "0"

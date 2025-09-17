@@ -33,10 +33,45 @@ func (t *TableScanTransformer) Transform(data ScanData, ctx TransformContext) (*
 
 	tableData := data.TableScan
 
-	// This is the base case - no inner scan to transform recursively
-	return &FromItem{
+	// Create a SELECT statement with explicit columns based on the ColumnList
+	// This ensures proper column validation and alias matching
+	selectList := make([]*SelectListItem, 0, len(data.ColumnList))
+	for _, col := range data.ColumnList {
+		// Create column reference expression
+		columnExpr := &SQLExpression{
+			Type:  ExpressionTypeColumn,
+			Value: col.Name,
+		}
+
+		// Generate ID-based alias for consistency with coordinator expectations
+		alias := generateIDBasedAlias(col.Name, col.ID)
+
+		selectList = append(selectList, &SelectListItem{
+			Expression: columnExpr,
+			Alias:      alias,
+		})
+	}
+
+	namePath := namePathFromContext(ctx.Context())
+
+	// Create the table FROM item
+	tableFromItem := &FromItem{
 		Type:      FromItemTypeTable,
-		TableName: tableData.TableName,
+		TableName: namePath.format([]string{tableData.TableName}),
 		Alias:     tableData.Alias,
+	}
+
+	// Create a SELECT statement that explicitly lists the columns
+	selectStatement := &SelectStatement{
+		SelectType: SelectTypeStandard,
+		FromClause: tableFromItem,
+		SelectList: selectList,
+	}
+
+	// Return as a subquery to ensure proper column validation
+	return &FromItem{
+		Type:     FromItemTypeSubquery,
+		Subquery: selectStatement,
+		Alias:    tableData.Alias,
 	}, nil
 }

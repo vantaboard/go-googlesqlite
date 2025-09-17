@@ -530,6 +530,10 @@ func (e *NodeExtractor) ExtractStatementData(node ast.Node, ctx TransformContext
 		return e.extractQueryStatementData(n, ctx)
 	case *ast.CreateTableStmtNode:
 		return e.extractCreateTableStatementData(n, ctx)
+	case *ast.CreateTableAsSelectStmtNode:
+		return e.extractCreateTableAsSelectStatementData(n, ctx)
+	case *ast.CreateViewStmtNode:
+		return e.extractCreateViewStatementData(n, ctx)
 	case *ast.InsertStmtNode:
 		return e.extractInsertStatementData(n, ctx)
 	case *ast.UpdateStmtNode:
@@ -994,18 +998,164 @@ func (e *NodeExtractor) extractCreateTableStatementData(node *ast.CreateTableStm
 }
 
 func (e *NodeExtractor) extractInsertStatementData(node *ast.InsertStmtNode, ctx TransformContext) (StatementData, error) {
-	// TODO: Implement
-	return StatementData{}, fmt.Errorf("insert statement extraction not implemented")
+	// Extract table name
+	tableName := node.TableScan().Table().Name()
+
+	// Extract column names
+	columns := make([]string, 0, len(node.InsertColumnList()))
+	for _, col := range node.InsertColumnList() {
+		columns = append(columns, col.Name())
+	}
+
+	insertData := &InsertData{
+		TableName: tableName,
+		Columns:   columns,
+	}
+
+	// Handle INSERT ... SELECT vs INSERT ... VALUES
+	if node.Query() != nil {
+		// This is an INSERT ... SELECT statement
+		queryScanData, err := e.ExtractScanData(node.Query(), ctx)
+		if err != nil {
+			return StatementData{}, fmt.Errorf("failed to extract insert query scan: %w", err)
+		}
+
+		// Convert ScanData to SelectData for the query
+		selectItems := make([]*SelectItemData, 0, len(queryScanData.ColumnList))
+		for _, col := range node.Query().ColumnList() {
+			selectItems = append(selectItems, &SelectItemData{
+				Expression: NewColumnExpressionData(col),
+				Alias:      col.Name(),
+			})
+		}
+
+		insertData.Query = &SelectData{
+			SelectList: selectItems,
+			FromClause: &queryScanData,
+		}
+	} else {
+		// This is an INSERT ... VALUES statement
+		values := make([][]ExpressionData, 0, len(node.RowList()))
+		for _, row := range node.RowList() {
+			rowValues := make([]ExpressionData, 0, len(row.ValueList()))
+			for _, value := range row.ValueList() {
+				valueData, err := e.ExtractExpressionData(value, ctx)
+				if err != nil {
+					return StatementData{}, fmt.Errorf("failed to extract insert value: %w", err)
+				}
+				rowValues = append(rowValues, valueData)
+			}
+			values = append(values, rowValues)
+		}
+		insertData.Values = values
+	}
+
+	return StatementData{
+		Type:   StatementTypeInsert,
+		Insert: insertData,
+	}, nil
 }
 
 func (e *NodeExtractor) extractUpdateStatementData(node *ast.UpdateStmtNode, ctx TransformContext) (StatementData, error) {
-	// TODO: Implement
-	return StatementData{}, fmt.Errorf("update statement extraction not implemented")
+	// Extract table name from table scan
+	tableName := node.TableScan().Table().Name()
+
+	// Extract table scan data to provide column information for WHERE clause and SET value resolution
+	tableScanData, err := e.ExtractScanData(node.TableScan(), ctx)
+	if err != nil {
+		return StatementData{}, fmt.Errorf("failed to extract update table scan: %w", err)
+	}
+
+	// Extract SET items
+	setItems := make([]*SetItemData, 0, len(node.UpdateItemList()))
+	for _, item := range node.UpdateItemList() {
+		// Extract target column
+		targetData, err := e.ExtractExpressionData(item.Target(), ctx)
+		if err != nil {
+			return StatementData{}, fmt.Errorf("failed to extract update target: %w", err)
+		}
+
+		// Extract set value
+		valueData, err := e.ExtractExpressionData(item.SetValue(), ctx)
+		if err != nil {
+			return StatementData{}, fmt.Errorf("failed to extract update value: %w", err)
+		}
+
+		// Get column name from target expression
+		var columnName string
+		if targetData.Type == ExpressionTypeColumn && targetData.Column != nil {
+			columnName = targetData.Column.ColumnName
+		} else {
+			// Fallback to string representation
+			columnName = "unknown_column"
+		}
+
+		setItems = append(setItems, &SetItemData{
+			Column: columnName,
+			Value:  valueData,
+		})
+	}
+
+	// Extract WHERE clause if present
+	var whereClause *ExpressionData
+	if node.WhereExpr() != nil {
+		whereData, err := e.ExtractExpressionData(node.WhereExpr(), ctx)
+		if err != nil {
+			return StatementData{}, fmt.Errorf("failed to extract update where clause: %w", err)
+		}
+		whereClause = &whereData
+	}
+
+	// Extract FROM clause if present (for JOINs in UPDATE)
+	var fromClause *ScanData
+	if node.FromScan() != nil {
+		fromData, err := e.ExtractScanData(node.FromScan(), ctx)
+		if err != nil {
+			return StatementData{}, fmt.Errorf("failed to extract update from clause: %w", err)
+		}
+		fromClause = &fromData
+	}
+
+	return StatementData{
+		Type: StatementTypeUpdate,
+		Update: &UpdateData{
+			TableName:   tableName,
+			TableScan:   &tableScanData,
+			SetItems:    setItems,
+			FromClause:  fromClause,
+			WhereClause: whereClause,
+		},
+	}, nil
 }
 
 func (e *NodeExtractor) extractDeleteStatementData(node *ast.DeleteStmtNode, ctx TransformContext) (StatementData, error) {
-	// TODO: Implement
-	return StatementData{}, fmt.Errorf("delete statement extraction not implemented")
+	// Extract table name from table scan
+	tableName := node.TableScan().Table().Name()
+
+	// Extract table scan data to provide column information for WHERE clause resolution
+	tableScanData, err := e.ExtractScanData(node.TableScan(), ctx)
+	if err != nil {
+		return StatementData{}, fmt.Errorf("failed to extract delete table scan: %w", err)
+	}
+
+	// Extract WHERE clause if present
+	var whereClause *ExpressionData
+	if node.WhereExpr() != nil {
+		whereData, err := e.ExtractExpressionData(node.WhereExpr(), ctx)
+		if err != nil {
+			return StatementData{}, fmt.Errorf("failed to extract delete where clause: %w", err)
+		}
+		whereClause = &whereData
+	}
+
+	return StatementData{
+		Type: StatementTypeDelete,
+		Delete: &DeleteData{
+			TableName:   tableName,
+			TableScan:   &tableScanData,
+			WhereClause: whereClause,
+		},
+	}, nil
 }
 
 // extractArrayScanData extracts data from array scan (UNNEST) nodes
@@ -1195,6 +1345,115 @@ func (e *NodeExtractor) extractDropFunctionStatementData(node *ast.DropFunctionS
 			IfExists:   node.IsIfExists(),
 			ObjectType: "FUNCTION",
 			ObjectName: objectName,
+		},
+	}, nil
+}
+
+// extractCreateTableAsSelectStatementData extracts data from CREATE TABLE AS SELECT statement nodes
+func (e *NodeExtractor) extractCreateTableAsSelectStatementData(node *ast.CreateTableAsSelectStmtNode, ctx TransformContext) (StatementData, error) {
+	// Get the table name from the name path
+	var tableName string
+	if namePath := namePathFromContext(ctx.Context()); namePath != nil {
+		tableName = namePath.format(node.NamePath())
+	} else {
+		// Fallback to simple name formatting if no context
+		if len(node.NamePath()) > 0 {
+			tableName = node.NamePath()[len(node.NamePath())-1]
+		}
+	}
+
+	// Extract the SELECT query scan data
+	queryScanData, err := e.ExtractScanData(node.Query(), ctx)
+	if err != nil {
+		return StatementData{}, fmt.Errorf("failed to extract CREATE TABLE AS SELECT query scan: %w", err)
+	}
+
+	// Extract output column information from the AS SELECT clause
+	selectItems := make([]*SelectItemData, 0, len(node.OutputColumnList()))
+	for _, col := range node.OutputColumnList() {
+		exprData, err := e.ExtractExpressionData(col, ctx)
+		if err != nil {
+			return StatementData{}, fmt.Errorf("failed to extract CREATE TABLE AS SELECT output column: %w", err)
+		}
+
+		selectItems = append(selectItems, &SelectItemData{
+			Expression: exprData,
+			Alias:      col.Name(),
+		})
+	}
+
+	// Create the SELECT data for the AS SELECT clause
+	asSelectData := &SelectData{
+		SelectList: selectItems,
+		FromClause: &queryScanData,
+	}
+
+	// Create the CREATE TABLE data
+	createTableData := &CreateTableData{
+		TableName:   tableName,
+		AsSelect:    asSelectData,
+		IfNotExists: node.CreateMode() == ast.CreateIfNotExistsMode,
+	}
+
+	return StatementData{
+		Type: StatementTypeCreate,
+		Create: &CreateData{
+			Type:  CreateTypeTable,
+			Table: createTableData,
+		},
+	}, nil
+}
+
+// extractCreateViewStatementData extracts data from CREATE VIEW statement nodes
+func (e *NodeExtractor) extractCreateViewStatementData(node *ast.CreateViewStmtNode, ctx TransformContext) (StatementData, error) {
+	// Get the view name from the name path
+	var viewName string
+	if namePath := namePathFromContext(ctx.Context()); namePath != nil {
+		viewName = namePath.format(node.NamePath())
+	} else {
+		// Fallback to simple name formatting if no context
+		if len(node.NamePath()) > 0 {
+			viewName = node.NamePath()[len(node.NamePath())-1]
+		}
+	}
+
+	// Extract the SELECT query scan data
+	queryScanData, err := e.ExtractScanData(node.Query(), ctx)
+	if err != nil {
+		return StatementData{}, fmt.Errorf("failed to extract CREATE VIEW query scan: %w", err)
+	}
+
+	// Extract output column information from the view's query
+	selectItems := make([]*SelectItemData, 0, len(node.OutputColumnList()))
+	for _, col := range node.OutputColumnList() {
+		exprData, err := e.ExtractExpressionData(col, ctx)
+		if err != nil {
+			return StatementData{}, fmt.Errorf("failed to extract CREATE VIEW output column: %w", err)
+		}
+
+		selectItems = append(selectItems, &SelectItemData{
+			Expression: exprData,
+			Alias:      col.Name(),
+		})
+	}
+
+	// Create the SELECT data for the view's query
+	queryData := SelectData{
+		SelectList: selectItems,
+		FromClause: &queryScanData,
+	}
+
+	// Create the CREATE VIEW data
+	createViewData := &CreateViewData{
+		ViewName: viewName,
+		Query:    queryData,
+	}
+
+	return StatementData{
+		Type: StatementTypeCreate,
+		Create: &CreateData{
+			Type: CreateTypeView,
+			View: createViewData,
 		},
 	}, nil
 }
