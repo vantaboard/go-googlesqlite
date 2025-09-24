@@ -206,6 +206,14 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 			}
 		}
 
+		// Fast path optimization: bypass function calls for primitive type comparisons
+		// Functions calls incur huge overheads: as each call's args must be decoded/encoded, as well as
+		// allocated within both the modernc.org/sqlite driver and the go-zetasqlite driver
+		// This could happen potentially hundreds of thousands of times per query in the case of complex JOINs
+		if canOptimizeComparison(function) {
+			return optimizeComparisonToSQL(function.Name, args)
+		}
+
 		funcMap := funcMapFromContext(ctx.Context())
 		if spec, exists := funcMap[function.Name]; exists {
 			return spec.CallSQL(ctx.Context(), function, args)
@@ -219,5 +227,76 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 				WindowSpec: windowSpec,
 			},
 		}, nil
+	}
+}
+
+// canOptimizeComparison checks if a comparison function can be optimized to use direct SQL operators
+func canOptimizeComparison(function *FunctionCallData) bool {
+	if len(function.Arguments) != 2 {
+		return false
+	}
+
+	_, found := comparisonToOperator[function.Name]
+	if found {
+		// Both arguments must be primitive SQLite-compatible types
+		return isPrimitiveSQLiteType(function.Arguments[0]) && isPrimitiveSQLiteType(function.Arguments[1])
+	}
+
+	return false
+}
+
+var comparisonToOperator = map[string]string{
+	"zetasqlite_equal":            "=",
+	"zetasqlite_not_equal":        "!=",
+	"zetasqlite_less":             "<",
+	"zetasqlite_greater":          ">",
+	"zetasqlite_less_or_equal":    "<=",
+	"zetasqlite_greater_or_equal": ">=",
+}
+
+// optimizeComparisonToSQL converts comparison functions to direct SQL operators
+func optimizeComparisonToSQL(functionName string, args []*SQLExpression) (*SQLExpression, error) {
+	if len(args) != 2 {
+		// Should not happen due to canOptimizeComparison check, but be safe
+		return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
+	}
+
+	operator, found := comparisonToOperator[functionName]
+	if !found {
+		return nil, fmt.Errorf("unknown comparison operator: %s", functionName)
+	}
+
+	return NewBinaryExpression(args[0], operator, args[1]), nil
+}
+
+// isPrimitiveSQLiteType checks if an expression represents a primitive type that SQLite can handle natively
+func isPrimitiveSQLiteType(expr ExpressionData) bool {
+	switch expr.Type {
+	case ExpressionTypeLiteral:
+		if expr.Literal == nil || expr.Literal.Value == nil {
+			return false
+		}
+		// Check if the literal value is a primitive type
+		switch expr.Literal.Value.(type) {
+		case IntValue, FloatValue, BoolValue:
+			return true
+		case StringValue:
+			// String literals can be compared directly in SQLite
+			return true
+		default:
+			return false
+		}
+	case ExpressionTypeColumn:
+		t := expr.Column.Type
+		return t.IsInt32() ||
+			t.IsInt64() ||
+			t.IsUint32() ||
+			t.IsUint64() ||
+			t.IsBool() ||
+			t.IsFloat() ||
+			t.IsDouble() ||
+			t.IsString()
+	default:
+		return false
 	}
 }
