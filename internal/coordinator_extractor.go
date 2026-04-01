@@ -878,6 +878,9 @@ func resolvedTableNamePath(node ast.Node) []string {
 }
 
 func getTableName(ctx context.Context, n ast.Node) (string, error) {
+	if path := resolvedTableNamePath(n); len(path) != 0 {
+		return formatNameWithPath(namePathFromContext(ctx), path), nil
+	}
 	nodeMap := nodeMapFromContext(ctx)
 	found := nodeMap.FindNodeFromResolvedNode(n)
 	if len(found) != 0 {
@@ -888,9 +891,6 @@ func getTableName(ctx context.Context, n ast.Node) (string, error) {
 		if err == nil {
 			return formatNameWithPath(namePathFromContext(ctx), path), nil
 		}
-	}
-	if path := resolvedTableNamePath(n); len(path) != 0 {
-		return formatNameWithPath(namePathFromContext(ctx), path), nil
 	}
 	return "", fmt.Errorf("failed to find path node from table node %T", n)
 }
