@@ -225,7 +225,7 @@ func bytesValueFromLiteral(lit string) (BytesValue, error) {
 }
 
 func dateValueFromLiteral(days int64) (DateValue, error) {
-	t := time.Unix(int64(time.Duration(days)*24*(time.Hour/time.Second)), 0)
+	t := time.Unix(int64(time.Duration(days)*24*(time.Hour/time.Second)), 0).UTC()
 	return DateValue(t), nil
 }
 
