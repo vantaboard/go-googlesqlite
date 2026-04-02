@@ -76,3 +76,4 @@ require (
 )
 
 replace github.com/goccy/go-zetasqlite => ../../
+replace github.com/goccy/go-zetasql => ../../../go-zetasql
