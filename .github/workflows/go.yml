@@ -6,6 +6,7 @@ on:
   pull_request:
 
 env:
+  CGO_ENABLED: "1"
   CC: clang
   CXX: clang++
 jobs:
