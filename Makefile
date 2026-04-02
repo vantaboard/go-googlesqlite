@@ -42,10 +42,12 @@ lint/install: | $(GOBIN)
 test/linux:
 	docker run --rm \
 		-e CGO_ENABLED=1 -e CC=clang -e CXX=clang++ \
+		-e CCACHE_DIR=/root/.ccache -e CCACHE_COMPRESS=1 \
 		-v "$(CURDIR)":/work/go-zetasqlite \
 		-v "$(GO_ZETASQL_ROOT)":/work/go-zetasql \
 		-v "$(DOCKER_GO_CACHE_ROOT)/gocache":/root/.cache/go-build \
 		-v "$(DOCKER_GO_CACHE_ROOT)/gomodcache":/go/pkg/mod \
+		-v "$(DOCKER_GO_CACHE_ROOT)/ccache":/root/.ccache \
 		-w /work/go-zetasqlite \
 		$(DOCKER_DEV_IMAGE) \
 		bash -c "go test -race -v ./... -count=1"
