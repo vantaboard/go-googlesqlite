@@ -16,7 +16,8 @@ import (
 
 func TestQuery(t *testing.T) {
 	t.Setenv("TZ", "UTC")
-	now := time.Now()
+	// Align with default UTC semantics; TZ=UTC alone does not always reset time.Local early enough.
+	now := time.Now().UTC()
 	ctx := context.Background()
 	ctx = zetasqlite.WithCurrentTime(ctx, now)
 	db, err := sql.Open("zetasqlite", ":memory:")
