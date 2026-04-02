@@ -29,6 +29,8 @@ CGO_ENABLED=1
 CXX=clang++
 ```
 
+For a full local stack (`go-zetasql`, `go-zetasqlite`, `bigquery-emulator` as sibling repos), add `replace` lines in `go.mod` (for example `replace github.com/goccy/go-zetasql => ../go-zetasql`). Emulator Docker builds use only that module’s tree, so they rely on published versions unless you change the build context.
+
 # Synopsis
 
 You can pass ZetaSQL queries to Query/Exec function of database/sql package.
