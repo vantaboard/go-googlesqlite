@@ -80,5 +80,5 @@ func modifyTimeZone(t time.Time, loc *time.Location) (time.Time, error) {
 }
 
 func timeFromUnixNano(unixNano int64) time.Time {
-	return time.Unix(0, unixNano)
+	return time.Unix(0, unixNano).UTC()
 }
