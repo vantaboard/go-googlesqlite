@@ -33,6 +33,8 @@ For a full local stack (`go-zetasql`, `go-zetasqlite`, `bigquery-emulator` as si
 
 When exercising the whole stack, run **`go test` in each repo one at a time** (not in parallel) to avoid OOM from overlapping CGO builds, and set a **shared `GOCACHE`** (and optionally `GOMODCACHE`) as described in the [go-zetasql README](https://github.com/goccy/go-zetasql#development) so `go-zetasql` compile artifacts are reused.
 
+To match the **`go-zetasql:dev` Docker cache** used in `go-zetasql`, run **`make test/linux`** here after **`make docker/build-dev`** in `../go-zetasql` (same named volume cache as `go-zetasql`).
+
 # Synopsis
 
 You can pass ZetaSQL queries to Query/Exec function of database/sql package.
