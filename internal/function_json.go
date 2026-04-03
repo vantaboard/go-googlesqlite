@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/goccy/go-json"
 )
@@ -322,6 +323,67 @@ func TO_JSON(v Value, stringifyWideNumbers bool) (Value, error) {
 		return nil, err
 	}
 	return JsonValue(s), nil
+}
+
+// JSON_OBJECT builds a JSON object using the same per-value JSON encoding as TO_JSON.
+// Supports JSON_OBJECT(k1, v1, ...) and JSON_OBJECT(ARRAY<STRING> keys, ARRAY<ANY> values).
+func JSON_OBJECT(args []Value) (Value, error) {
+	if len(args) == 2 {
+		if keysArr, ok := args[0].(*ArrayValue); ok {
+			if valsArr, ok2 := args[1].(*ArrayValue); ok2 {
+				return jsonObjectFromArrays(keysArr, valsArr)
+			}
+		}
+	}
+	if len(args)%2 != 0 {
+		return nil, fmt.Errorf("JSON_OBJECT: expected even number of key/value arguments")
+	}
+	return jsonObjectFromPairs(args)
+}
+
+func jsonObjectFromArrays(keysArr, valsArr *ArrayValue) (Value, error) {
+	if len(keysArr.values) != len(valsArr.values) {
+		return nil, fmt.Errorf("JSON_OBJECT: number of keys and values must match")
+	}
+	pairs := make([]Value, 0, len(keysArr.values)*2)
+	for i := range keysArr.values {
+		pairs = append(pairs, keysArr.values[i], valsArr.values[i])
+	}
+	return jsonObjectFromPairs(pairs)
+}
+
+func jsonObjectFromPairs(pairs []Value) (Value, error) {
+	var b strings.Builder
+	b.WriteByte('{')
+	for i := 0; i < len(pairs); i += 2 {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		if pairs[i] == nil {
+			return nil, fmt.Errorf("JSON_OBJECT: key cannot be NULL")
+		}
+		keyStr, err := pairs[i].ToString()
+		if err != nil {
+			return nil, fmt.Errorf("JSON_OBJECT: key: %w", err)
+		}
+		keyJSON, err := json.Marshal(keyStr)
+		if err != nil {
+			return nil, err
+		}
+		b.Write(keyJSON)
+		b.WriteByte(':')
+		if pairs[i+1] == nil {
+			b.WriteString("null")
+			continue
+		}
+		vj, err := pairs[i+1].ToJSON()
+		if err != nil {
+			return nil, err
+		}
+		b.WriteString(vj)
+	}
+	b.WriteByte('}')
+	return JsonValue(b.String()), nil
 }
 
 func TO_JSON_STRING(v Value, prettyPrint bool) (Value, error) {
