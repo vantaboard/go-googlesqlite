@@ -37,9 +37,13 @@ lint/install: | $(GOBIN)
 	# binary will be $(go env GOPATH)/bin/golangci-lint
 	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(GOBIN) v2.4.0
 
-# Run tests in the same go-zetasql:dev toolchain + shared GOCACHE as ../go-zetasql (build the image there first: make docker/build-dev).
-.PHONY: test/linux
-test/linux:
+# Run tests in the same go-zetasql:dev toolchain + shared GO_CACHE_ROOT as ../go-zetasql.
+.PHONY: docker/build-dev-zetasql test/linux
+docker/build-dev-zetasql:
+	$(MAKE) -C "$(GO_ZETASQL_ROOT)" docker/build-dev
+
+# test/linux depends on docker/build-dev-zetasql so the local go-zetasql:dev image exists (Docker otherwise tries to pull it).
+test/linux: docker/build-dev-zetasql
 	docker run --rm \
 		-e CGO_ENABLED=1 -e CC=clang -e CXX=clang++ \
 		-e CCACHE_DIR=/root/.ccache -e CCACHE_COMPRESS=1 \
