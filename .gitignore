@@ -1,3 +1,6 @@
+# Built CLI (Unix binary has no extension)
+/cmd/zetasqlite-cli/zetasqlite-cli
+
 # Binaries for programs and plugins
 *.exe
 *.exe~
