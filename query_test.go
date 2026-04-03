@@ -6616,6 +6616,12 @@ FROM input_rows`,
 			query:        `SELECT FLOAT64(JSON '9.8') AS velocity`,
 			expectedRows: [][]interface{}{{float64(9.8)}},
 		},
+		// 2023.03.2→2023.04.1 reference_impl: FLOAT64(JSON, wide_number_mode => ...) (named arg only).
+		{
+			name:         "json_float64_wide_number_mode",
+			query:        `SELECT FLOAT64(JSON '9.8', wide_number_mode => 'round') AS velocity`,
+			expectedRows: [][]interface{}{{float64(9.8)}},
+		},
 		{
 			name: "json_type",
 			query: `
@@ -6641,6 +6647,21 @@ FROM
 				{`["apple","banana"]`, "array"},
 				{"false", "boolean"},
 			},
+		},
+		{
+			name:         "json_array_empty",
+			query:        `SELECT JSON_ARRAY() AS j`,
+			expectedRows: [][]interface{}{{"[]"}},
+		},
+		{
+			name:         "json_array_values",
+			query:        `SELECT JSON_ARRAY(1, 'a', TRUE, NULL) AS j`,
+			expectedRows: [][]interface{}{{`[1,"a",true,null]`}},
+		},
+		{
+			name:         "json_object_duplicate_keys_first_wins",
+			query:        `SELECT JSON_OBJECT('k', 1, 'k', 2) AS j`,
+			expectedRows: [][]interface{}{{`{"k":1}`}},
 		},
 
 		// subquery expr

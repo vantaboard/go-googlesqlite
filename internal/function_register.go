@@ -193,6 +193,7 @@ var normalFuncs = []*FuncInfo{
 	{Name: "to_json", BindFunc: bindToJson},
 	{Name: "to_json_string", BindFunc: bindToJsonString},
 	{Name: "json_object", BindFunc: bindJsonObject},
+	{Name: "json_array", BindFunc: bindJsonArray},
 	{Name: "bool", BindFunc: bindBool},
 	{Name: "int64", BindFunc: bindInt64},
 	{Name: "float64", BindFunc: bindDouble},
