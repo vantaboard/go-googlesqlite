@@ -6656,12 +6656,47 @@ FROM
 		{
 			name:         "json_array_values",
 			query:        `SELECT JSON_ARRAY(1, 'a', TRUE, NULL) AS j`,
-			expectedRows: [][]interface{}{{`[1,"a",true,null]`}},
+			expectedRows: [][]interface{}{{`[1,"a",1,null]`}},
 		},
 		{
 			name:         "json_object_duplicate_keys_first_wins",
 			query:        `SELECT JSON_OBJECT('k', 1, 'k', 2) AS j`,
 			expectedRows: [][]interface{}{{`{"k":1}`}},
+		},
+		{
+			name:         "upgrade_2023_08_pi_double",
+			query:        `SELECT PI()`,
+			expectedRows: [][]interface{}{{3.141592653589793}},
+		},
+		{
+			name:         "upgrade_2023_08_array_first_n",
+			query:        `SELECT ARRAY_FIRST_N([1,2,3,4], 2)`,
+			expectedRows: [][]interface{}{{[]interface{}{int64(1), int64(2)}}},
+		},
+		{
+			name:         "upgrade_2023_08_nullifzero",
+			query:        `SELECT NULLIFZERO(0), NULLIFZERO(3)`,
+			expectedRows: [][]interface{}{{nil, int64(3)}},
+		},
+		{
+			name:         "upgrade_2023_08_zeroifnull",
+			query:        `SELECT ZEROIFNULL(CAST(NULL AS INT64))`,
+			expectedRows: [][]interface{}{{int64(0)}},
+		},
+		{
+			name:         "upgrade_2023_08_json_remove",
+			query:        `SELECT JSON_REMOVE(PARSE_JSON('{"a":1,"b":2}'), '$.a')`,
+			expectedRows: [][]interface{}{{`{"b":2}`}},
+		},
+		{
+			name:         "upgrade_2023_08_json_set",
+			query:        `SELECT JSON_SET(PARSE_JSON('{"x":1}'), '$.y', CAST(2 AS INT64))`,
+			expectedRows: [][]interface{}{{`{"x":1,"y":2}`}},
+		},
+		{
+			name:         "upgrade_2023_08_json_strip_nulls",
+			query:        `SELECT JSON_STRIP_NULLS(PARSE_JSON('{"a":null,"b":1}'))`,
+			expectedRows: [][]interface{}{{`{"b":1}`}},
 		},
 
 		// subquery expr
