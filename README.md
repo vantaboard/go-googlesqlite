@@ -33,7 +33,13 @@ For a full local stack (`go-zetasql`, `go-zetasqlite`, `bigquery-emulator` as si
 
 When exercising the whole stack, run **`go test` in each repo one at a time** (not in parallel) to avoid OOM from overlapping CGO builds, and set a **shared `GOCACHE`** (and optionally `GOMODCACHE`) as described in the [go-zetasql README](https://github.com/goccy/go-zetasql#development) so `go-zetasql` compile artifacts are reused.
 
-To match the **`go-zetasql:dev` Docker cache** used in `go-zetasql`, run **`make test/linux`** here after **`make docker/build-dev`** in `../go-zetasql` (same named volume cache as `go-zetasql`).
+**Shared cache directory (`GO_CACHE_ROOT`):** The [Makefile](Makefile) target **`make test/linux`** bind-mounts the same tree as `go-zetasql`: **`GO_CACHE_ROOT`** (default **`$HOME/.cache/go-zetasql`**) into **`gocache`**, **`gomodcache`**, and **`ccache`** inside the **`go-zetasql:dev`** container. Override **`GO_CACHE_ROOT`** if you need a different path; keep it identical across **`go-zetasql`**, **`go-zetasqlite`**, and **`bigquery-emulator`** so the stack shares one warm cache.
+
+**Host-native builds and tests:** For incremental C++ compiles on the host, mirror [go-zetasql](https://github.com/goccy/go-zetasql#development): use **`CC="ccache clang"`** and **`CXX="ccache clang++"`**, point **`GOCACHE`**, **`GOMODCACHE`**, and **`CCACHE_DIR`** at the same tree (for example under **`GO_CACHE_ROOT`**), or run tests from **`go-zetasql`** with **`make -C ../go-zetasql local/test`** and **`TESTPKG=./...`** (or a narrower package path). On **Linux**, install **`mold`** and keep it on **`PATH`** so **`make local/build`** / **`local/test`** in `go-zetasql` can pass **`CGO_LDFLAGS=-fuse-ld=mold`**; the **`go-zetasql:dev`** image already sets **`mold`** for Docker-based **`make test/linux`** here.
+
+**Optional warm-up:** After a cold toolchain or before a long test run, **`make -C ../go-zetasql docker/warm-cache`** pre-compiles the same **`-race`** graph as tests without executing them, so the next **`make test/linux`** in this repo is faster.
+
+To match the **`go-zetasql:dev` Docker cache** used in `go-zetasql`, run **`make test/linux`** here after **`make docker/build-dev`** in `../go-zetasql` (same **`GO_CACHE_ROOT`** as `go-zetasql`).
 
 # Synopsis
 
