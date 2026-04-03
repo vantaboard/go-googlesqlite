@@ -1694,6 +1694,10 @@ func bindJsonObject(args ...Value) (Value, error) {
 	return JSON_OBJECT(args)
 }
 
+func bindJsonArray(args ...Value) (Value, error) {
+	return JSON_ARRAY(args)
+}
+
 func bindToJsonString(args ...Value) (Value, error) {
 	if len(args) != 1 && len(args) != 2 {
 		return nil, fmt.Errorf("TO_JSON_STRING: invalid argument num %d", len(args))

@@ -353,13 +353,13 @@ func jsonObjectFromArrays(keysArr, valsArr *ArrayValue) (Value, error) {
 	return jsonObjectFromPairs(pairs)
 }
 
+// jsonObjectFromPairs builds a JSON object. Duplicate keys keep the first value (ZetaSQL / BigQuery semantics).
 func jsonObjectFromPairs(pairs []Value) (Value, error) {
 	var b strings.Builder
 	b.WriteByte('{')
+	seen := make(map[string]struct{})
+	first := true
 	for i := 0; i < len(pairs); i += 2 {
-		if i > 0 {
-			b.WriteByte(',')
-		}
 		if pairs[i] == nil {
 			return nil, fmt.Errorf("JSON_OBJECT: key cannot be NULL")
 		}
@@ -367,6 +367,14 @@ func jsonObjectFromPairs(pairs []Value) (Value, error) {
 		if err != nil {
 			return nil, fmt.Errorf("JSON_OBJECT: key: %w", err)
 		}
+		if _, dup := seen[keyStr]; dup {
+			continue
+		}
+		seen[keyStr] = struct{}{}
+		if !first {
+			b.WriteByte(',')
+		}
+		first = false
 		keyJSON, err := json.Marshal(keyStr)
 		if err != nil {
 			return nil, err
@@ -384,6 +392,28 @@ func jsonObjectFromPairs(pairs []Value) (Value, error) {
 		b.WriteString(vj)
 	}
 	b.WriteByte('}')
+	return JsonValue(b.String()), nil
+}
+
+// JSON_ARRAY builds a JSON array from values using the same per-element encoding as TO_JSON.
+func JSON_ARRAY(args []Value) (Value, error) {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, arg := range args {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		if arg == nil {
+			b.WriteString("null")
+			continue
+		}
+		vj, err := arg.ToJSON()
+		if err != nil {
+			return nil, fmt.Errorf("JSON_ARRAY: %w", err)
+		}
+		b.WriteString(vj)
+	}
+	b.WriteByte(']')
 	return JsonValue(b.String()), nil
 }
 
