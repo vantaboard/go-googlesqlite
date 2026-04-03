@@ -2029,6 +2029,27 @@ func bindAtanh(args ...Value) (Value, error) {
 	return ATANH(args[0])
 }
 
+func bindCoth(args ...Value) (Value, error) {
+	if existsNull(args) {
+		return nil, nil
+	}
+	return COTH(args[0])
+}
+
+func bindSech(args ...Value) (Value, error) {
+	if existsNull(args) {
+		return nil, nil
+	}
+	return SECH(args[0])
+}
+
+func bindCsch(args ...Value) (Value, error) {
+	if existsNull(args) {
+		return nil, nil
+	}
+	return CSCH(args[0])
+}
+
 func bindAtan2(args ...Value) (Value, error) {
 	if existsNull(args) {
 		return nil, nil
