@@ -360,3 +360,72 @@ func ARRAY_MAX(arr *ArrayValue) (Value, error) {
 	}
 	return max, nil
 }
+
+// ARRAY_FIRST_N returns the first N elements (or fewer if the array is shorter).
+func ARRAY_FIRST_N(arr *ArrayValue, n int64) (Value, error) {
+	if n < 0 {
+		return nil, fmt.Errorf("ARRAY_FIRST_N: count must be non-negative")
+	}
+	if n == 0 {
+		return &ArrayValue{}, nil
+	}
+	l := len(arr.values)
+	if l == 0 {
+		return &ArrayValue{}, nil
+	}
+	take := int(n)
+	if take > l {
+		take = l
+	}
+	out := make([]Value, take)
+	copy(out, arr.values[:take])
+	return &ArrayValue{values: out}, nil
+}
+
+// ARRAY_LAST_N returns the last N elements.
+func ARRAY_LAST_N(arr *ArrayValue, n int64) (Value, error) {
+	if n < 0 {
+		return nil, fmt.Errorf("ARRAY_LAST_N: count must be non-negative")
+	}
+	if n == 0 {
+		return &ArrayValue{}, nil
+	}
+	l := len(arr.values)
+	if l == 0 {
+		return &ArrayValue{}, nil
+	}
+	take := int(n)
+	if take > l {
+		take = l
+	}
+	start := l - take
+	out := make([]Value, take)
+	copy(out, arr.values[start:])
+	return &ArrayValue{values: out}, nil
+}
+
+// ARRAY_REMOVE_FIRST_N drops the first N elements.
+func ARRAY_REMOVE_FIRST_N(arr *ArrayValue, n int64) (Value, error) {
+	if n < 0 {
+		return nil, fmt.Errorf("ARRAY_REMOVE_FIRST_N: count must be non-negative")
+	}
+	l := len(arr.values)
+	skip := int(n)
+	if skip > l {
+		skip = l
+	}
+	return &ArrayValue{values: arr.values[skip:]}, nil
+}
+
+// ARRAY_REMOVE_LAST_N drops the last N elements.
+func ARRAY_REMOVE_LAST_N(arr *ArrayValue, n int64) (Value, error) {
+	if n < 0 {
+		return nil, fmt.Errorf("ARRAY_REMOVE_LAST_N: count must be non-negative")
+	}
+	l := len(arr.values)
+	keep := l - int(n)
+	if keep < 0 {
+		keep = 0
+	}
+	return &ArrayValue{values: arr.values[:keep]}, nil
+}

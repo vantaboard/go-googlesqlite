@@ -93,6 +93,10 @@ func newAnalyzerOptions() (*zetasql.AnalyzerOptions, error) {
 		zetasql.FeatureV13WithRecursive,
 		zetasql.FeatureV12GroupByArray,
 		zetasql.FeatureV12GroupByStruct,
+		// v1.4 builtins (numeric ids until named in go-zetasql enum): FIRST/LAST N, NULLIFZERO/ZEROIFNULL, PI
+		zetasql.LanguageFeature(14027),
+		zetasql.LanguageFeature(14028),
+		zetasql.LanguageFeature(14029),
 	})
 	langOpt.SetSupportedStatementKinds([]ast.Kind{
 		ast.BeginStmt,
@@ -192,12 +196,12 @@ func normalizePositionalParameters(query string, parameters []*bigquery.QueryPar
 	}
 
 	var (
-		builder           strings.Builder
-		positionalIdx     int
-		inSingleQuote     bool
-		inDoubleQuote     bool
-		inBacktick        bool
-		normalizedParams  []*bigquery.QueryParameter
+		builder          strings.Builder
+		positionalIdx    int
+		inSingleQuote    bool
+		inDoubleQuote    bool
+		inBacktick       bool
+		normalizedParams []*bigquery.QueryParameter
 	)
 	if len(parameters) > 0 {
 		normalizedParams = make([]*bigquery.QueryParameter, 0, len(parameters))
@@ -977,6 +981,3 @@ func synthesizedPositionalParamIndex(name string) (int, bool) {
 	}
 	return idx - 1, true
 }
-
-
-
