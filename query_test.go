@@ -5952,6 +5952,23 @@ FROM Input`,
 			query:        `SELECT DATE "2020-09-22" + val FROM UNNEST([INTERVAL 1 DAY,INTERVAL -1 DAY,INTERVAL 2 YEAR,CAST('1-2 3 18:1:55' AS INTERVAL)]) as val`,
 			expectedRows: [][]interface{}{{"2020-09-23T00:00:00"}, {"2020-09-21T00:00:00"}, {"2022-09-22T00:00:00"}, {"2021-11-25T18:01:55"}},
 		},
+		// Invalid STRING to INTERVAL (ZetaSQL 2022.02.1+ improves analyzer messaging upstream; runtime still rejects bad literals.)
+		{
+			name:        "invalid_string_to_interval_cast",
+			query:       `SELECT CAST('totally-not-interval' AS INTERVAL)`,
+			expectedErr: "no value parsed",
+		},
+		// COTH / SECH / CSCH added in ZetaSQL 2022.02.1 export.
+		// FLATTEN / ResolveArrayElement (same release): analyzer-only upstream fix; SQL FLATTEN is not implemented in this runtime.
+		{
+			name:  "hyperbolic_coth_sech_csch",
+			query: `SELECT COTH(1.0), SECH(1.0), CSCH(1.0)`,
+			expectedRows: [][]interface{}{{
+				1.3130352854993312,
+				0.6480542736638855,
+				0.8509181282393216,
+			}},
+		},
 
 		{
 			name: "interval from sub operator",

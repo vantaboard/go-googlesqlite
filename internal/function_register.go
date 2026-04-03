@@ -195,6 +195,7 @@ var normalFuncs = []*FuncInfo{
 	{Name: "json_object", BindFunc: bindJsonObject},
 	{Name: "bool", BindFunc: bindBool},
 	{Name: "int64", BindFunc: bindInt64},
+	{Name: "float64", BindFunc: bindDouble},
 	{Name: "double", BindFunc: bindDouble},
 	{Name: "json_type", BindFunc: bindJsonType},
 
@@ -235,6 +236,9 @@ var normalFuncs = []*FuncInfo{
 	{Name: "atan", BindFunc: bindAtan},
 	{Name: "atanh", BindFunc: bindAtanh},
 	{Name: "atan2", BindFunc: bindAtan2},
+	{Name: "coth", BindFunc: bindCoth},
+	{Name: "sech", BindFunc: bindSech},
+	{Name: "csch", BindFunc: bindCsch},
 	{Name: "range_bucket", BindFunc: bindRangeBucket},
 
 	// array functions
