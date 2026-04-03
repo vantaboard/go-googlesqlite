@@ -267,3 +267,96 @@ func ARRAY_REVERSE(v *ArrayValue) (Value, error) {
 	}
 	return ret, nil
 }
+
+// ARRAY_SUM returns the sum of non-NULL elements, or NULL if there are no such elements.
+func ARRAY_SUM(arr *ArrayValue) (Value, error) {
+	var sum Value
+	for _, v := range arr.values {
+		if v == nil {
+			continue
+		}
+		if sum == nil {
+			sum = v
+			continue
+		}
+		added, err := sum.Add(v)
+		if err != nil {
+			return nil, err
+		}
+		sum = added
+	}
+	return sum, nil
+}
+
+// ARRAY_AVG returns the average of non-NULL elements (same averaging rule as aggregate AVG), or NULL if none.
+func ARRAY_AVG(arr *ArrayValue) (Value, error) {
+	var sum Value
+	var n int64
+	for _, v := range arr.values {
+		if v == nil {
+			continue
+		}
+		n++
+		if sum == nil {
+			sum = v
+			continue
+		}
+		added, err := sum.Add(v)
+		if err != nil {
+			return nil, err
+		}
+		sum = added
+	}
+	if sum == nil || n == 0 {
+		return nil, nil
+	}
+	base, err := sum.ToFloat64()
+	if err != nil {
+		return nil, err
+	}
+	return FloatValue(base / float64(n)), nil
+}
+
+// ARRAY_MIN returns the minimum non-NULL element, or NULL if the array is empty or all NULL.
+func ARRAY_MIN(arr *ArrayValue) (Value, error) {
+	var min Value
+	for _, v := range arr.values {
+		if v == nil {
+			continue
+		}
+		if min == nil {
+			min = v
+			continue
+		}
+		isLess, err := v.LT(min)
+		if err != nil {
+			return nil, err
+		}
+		if isLess {
+			min = v
+		}
+	}
+	return min, nil
+}
+
+// ARRAY_MAX returns the maximum non-NULL element, or NULL if the array is empty or all NULL.
+func ARRAY_MAX(arr *ArrayValue) (Value, error) {
+	var max Value
+	for _, v := range arr.values {
+		if v == nil {
+			continue
+		}
+		if max == nil {
+			max = v
+			continue
+		}
+		isGreater, err := v.GT(max)
+		if err != nil {
+			return nil, err
+		}
+		if isGreater {
+			max = v
+		}
+	}
+	return max, nil
+}

@@ -198,6 +198,11 @@ var normalFuncs = []*FuncInfo{
 	{Name: "float64", BindFunc: bindDouble},
 	{Name: "double", BindFunc: bindDouble},
 	{Name: "json_type", BindFunc: bindJsonType},
+	{Name: "lax_int64", BindFunc: bindLaxInt64},
+	{Name: "lax_bool", BindFunc: bindLaxBool},
+	{Name: "lax_string", BindFunc: bindLaxString},
+	{Name: "lax_double", BindFunc: bindLaxDouble},
+	{Name: "lax_float64", BindFunc: bindLaxDouble},
 
 	// math functions
 
@@ -252,6 +257,10 @@ var normalFuncs = []*FuncInfo{
 	{Name: "generate_date_array", BindFunc: bindGenerateDateArray},
 	{Name: "generate_timestamp_array", BindFunc: bindGenerateTimestampArray},
 	{Name: "array_reverse", BindFunc: bindArrayReverse},
+	{Name: "array_sum", BindFunc: bindArraySum},
+	{Name: "array_avg", BindFunc: bindArrayAvg},
+	{Name: "array_min", BindFunc: bindArrayMin},
+	{Name: "array_max", BindFunc: bindArrayMax},
 	{Name: "make_array", BindFunc: bindMakeArray},
 	{Name: "make_struct", BindFunc: bindMakeStruct},
 

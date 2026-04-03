@@ -3272,6 +3272,26 @@ SELECT ARRAY (
 			expectedRows: [][]interface{}{{[]interface{}{}}},
 		},
 		{
+			name:         "array_sum and array_avg",
+			query:        `SELECT ARRAY_SUM([1, 2, 3]), ARRAY_AVG([1, 2, 3]), ARRAY_SUM([1, NULL, 3])`,
+			expectedRows: [][]interface{}{{int64(6), float64(2), int64(4)}},
+		},
+		{
+			name:         "array_sum empty",
+			query:        `SELECT ARRAY_SUM(ARRAY<INT64>[]), ARRAY_SUM([NULL, NULL])`,
+			expectedRows: [][]interface{}{{nil, nil}},
+		},
+		{
+			name:         "array_min and array_max",
+			query:        `SELECT ARRAY_MIN([3, 1, 2]), ARRAY_MAX([3, 1, 2])`,
+			expectedRows: [][]interface{}{{int64(1), int64(3)}},
+		},
+		{
+			name:         "lax json extractors",
+			query:        `SELECT LAX_INT64(JSON '"42"'), LAX_BOOL(JSON 'true'), LAX_DOUBLE(JSON '"3.5"'), LAX_STRING(JSON '"hi"')`,
+			expectedRows: [][]interface{}{{int64(42), true, float64(3.5), "hi"}},
+		},
+		{
 			name:         "array_slice mixed negative positive",
 			query:        `SELECT ARRAY_SLICE(['a', 'b', 'c', 'd', 'e'], -4, 3)`,
 			expectedRows: [][]interface{}{{[]interface{}{"b", "c", "d"}}},
