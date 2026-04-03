@@ -1754,6 +1754,62 @@ func bindJsonType(args ...Value) (Value, error) {
 	return JSON_TYPE(value)
 }
 
+func bindLaxInt64(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("LAX_INT64: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	jv, ok := args[0].(JsonValue)
+	if !ok {
+		return nil, fmt.Errorf("LAX_INT64: expected JSON value, got %T", args[0])
+	}
+	return LAX_INT64(jv)
+}
+
+func bindLaxBool(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("LAX_BOOL: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	jv, ok := args[0].(JsonValue)
+	if !ok {
+		return nil, fmt.Errorf("LAX_BOOL: expected JSON value, got %T", args[0])
+	}
+	return LAX_BOOL(jv)
+}
+
+func bindLaxString(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("LAX_STRING: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	jv, ok := args[0].(JsonValue)
+	if !ok {
+		return nil, fmt.Errorf("LAX_STRING: expected JSON value, got %T", args[0])
+	}
+	return LAX_STRING(jv)
+}
+
+func bindLaxDouble(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("LAX_DOUBLE: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	jv, ok := args[0].(JsonValue)
+	if !ok {
+		return nil, fmt.Errorf("LAX_DOUBLE: expected JSON value, got %T", args[0])
+	}
+	return LAX_DOUBLE(jv)
+}
+
 func bindAbs(args ...Value) (Value, error) {
 	if existsNull(args) {
 		return nil, nil
@@ -2975,6 +3031,62 @@ func bindArraySlice(args ...Value) (Value, error) {
 		return nil, err
 	}
 	return ARRAY_SLICE(arr, startOffset, endOffset)
+}
+
+func bindArraySum(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("ARRAY_SUM: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	arr, err := args[0].ToArray()
+	if err != nil {
+		return nil, err
+	}
+	return ARRAY_SUM(arr)
+}
+
+func bindArrayAvg(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("ARRAY_AVG: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	arr, err := args[0].ToArray()
+	if err != nil {
+		return nil, err
+	}
+	return ARRAY_AVG(arr)
+}
+
+func bindArrayMin(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("ARRAY_MIN: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	arr, err := args[0].ToArray()
+	if err != nil {
+		return nil, err
+	}
+	return ARRAY_MIN(arr)
+}
+
+func bindArrayMax(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("ARRAY_MAX: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	arr, err := args[0].ToArray()
+	if err != nil {
+		return nil, err
+	}
+	return ARRAY_MAX(arr)
 }
 
 func bindArrayLength(args ...Value) (Value, error) {

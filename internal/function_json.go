@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/goccy/go-json"
@@ -399,4 +400,121 @@ func TO_JSON_STRING(v Value, prettyPrint bool) (Value, error) {
 
 func JSON_TYPE(v JsonValue) (Value, error) {
 	return StringValue(v.Type()), nil
+}
+
+// LAX_INT64 coerces a JSON value to INT64; returns NULL when conversion is not possible.
+func LAX_INT64(j JsonValue) (Value, error) {
+	s := strings.TrimSpace(string(j))
+	if s == "" || s == "null" {
+		return nil, nil
+	}
+	var raw interface{}
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return nil, nil
+	}
+	return laxCoerceInt64(raw)
+}
+
+func laxCoerceInt64(raw interface{}) (Value, error) {
+	switch x := raw.(type) {
+	case float64:
+		return IntValue(int64(x)), nil
+	case string:
+		n, err := strconv.ParseInt(strings.TrimSpace(x), 10, 64)
+		if err != nil {
+			return nil, nil
+		}
+		return IntValue(n), nil
+	case bool:
+		if x {
+			return IntValue(1), nil
+		}
+		return IntValue(0), nil
+	default:
+		return nil, nil
+	}
+}
+
+// LAX_BOOL coerces a JSON value to BOOL; returns NULL when conversion is not possible.
+func LAX_BOOL(j JsonValue) (Value, error) {
+	s := strings.TrimSpace(string(j))
+	if s == "" || s == "null" {
+		return nil, nil
+	}
+	var raw interface{}
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return nil, nil
+	}
+	switch x := raw.(type) {
+	case bool:
+		return BoolValue(x), nil
+	case string:
+		switch strings.ToLower(strings.TrimSpace(x)) {
+		case "true", "t", "1", "yes", "y":
+			return BoolValue(true), nil
+		case "false", "f", "0", "no", "n":
+			return BoolValue(false), nil
+		default:
+			return nil, nil
+		}
+	case float64:
+		return BoolValue(x != 0), nil
+	default:
+		return nil, nil
+	}
+}
+
+// LAX_STRING coerces a JSON value to STRING (JSON text representation of scalars).
+func LAX_STRING(j JsonValue) (Value, error) {
+	s := strings.TrimSpace(string(j))
+	if s == "" || s == "null" {
+		return nil, nil
+	}
+	var raw interface{}
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return nil, nil
+	}
+	switch x := raw.(type) {
+	case string:
+		return StringValue(x), nil
+	case bool:
+		return StringValue(strconv.FormatBool(x)), nil
+	case float64:
+		return StringValue(strconv.FormatFloat(x, 'g', -1, 64)), nil
+	default:
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return nil, nil
+		}
+		return StringValue(string(b)), nil
+	}
+}
+
+// LAX_DOUBLE coerces a JSON value to DOUBLE; returns NULL when conversion is not possible.
+func LAX_DOUBLE(j JsonValue) (Value, error) {
+	s := strings.TrimSpace(string(j))
+	if s == "" || s == "null" {
+		return nil, nil
+	}
+	var raw interface{}
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return nil, nil
+	}
+	switch x := raw.(type) {
+	case float64:
+		return FloatValue(x), nil
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(x), 64)
+		if err != nil {
+			return nil, nil
+		}
+		return FloatValue(f), nil
+	case bool:
+		if x {
+			return FloatValue(1), nil
+		}
+		return FloatValue(0), nil
+	default:
+		return nil, nil
+	}
 }
