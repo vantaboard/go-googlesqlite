@@ -1724,7 +1724,8 @@ func bindJsonRemove(args ...Value) (Value, error) {
 }
 
 func bindJsonSet(args ...Value) (Value, error) {
-	if len(args) < 3 || len(args)%2 == 0 {
+	// JSON_SET(JSON, path, value[, path, value]..., create_if_missing => BOOL)
+	if len(args) < 4 || (len(args)-4)%2 != 0 {
 		return nil, fmt.Errorf("JSON_SET: invalid argument num %d", len(args))
 	}
 	if existsNull(args[:1]) {
@@ -1734,7 +1735,15 @@ func bindJsonSet(args ...Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("JSON_SET: expected JSON")
 	}
-	return JSON_SET(jv, args[1:]...)
+	last := args[len(args)-1]
+	if last == nil {
+		return jv, nil
+	}
+	createIfMissing, err := last.ToBool()
+	if err != nil {
+		return nil, err
+	}
+	return JSON_SET(jv, args[1:len(args)-1], createIfMissing)
 }
 
 func bindJsonStripNulls(args ...Value) (Value, error) {

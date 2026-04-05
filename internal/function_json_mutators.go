@@ -28,8 +28,9 @@ func JSON_REMOVE(j JsonValue, paths ...string) (Value, error) {
 	return JsonValue(out), nil
 }
 
-// JSON_SET sets values at path/value pairs.
-func JSON_SET(j JsonValue, pairs ...Value) (Value, error) {
+// JSON_SET sets values at path/value pairs. createIfMissing controls whether
+// missing path segments are created (matches ZetaSQL JSON_SET semantics).
+func JSON_SET(j JsonValue, pairs []Value, createIfMissing bool) (Value, error) {
 	if len(pairs)%2 != 0 {
 		return nil, fmt.Errorf("JSON_SET: expected path/value pairs")
 	}
@@ -46,7 +47,7 @@ func JSON_SET(j JsonValue, pairs ...Value) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := jsonSetAt(&root, segs, pairs[i+1]); err != nil {
+		if err := jsonSetAt(&root, segs, pairs[i+1], createIfMissing); err != nil {
 			return nil, err
 		}
 	}
@@ -128,7 +129,7 @@ func jsonRemoveAt(root *interface{}, segs []string) error {
 	return nil
 }
 
-func jsonSetAt(root *interface{}, segs []string, val Value) error {
+func jsonSetAt(root *interface{}, segs []string, val Value, createIfMissing bool) error {
 	if len(segs) == 0 {
 		return nil
 	}
@@ -152,10 +153,16 @@ func jsonSetAt(root *interface{}, segs []string, val Value) error {
 		}
 		child, exists := nm[key]
 		if !exists || child == nil {
+			if !createIfMissing {
+				return nil
+			}
 			nm[key] = map[string]interface{}{}
 			child = nm[key]
 		}
 		if _, ok := child.(map[string]interface{}); !ok {
+			if !createIfMissing {
+				return nil
+			}
 			nm[key] = map[string]interface{}{}
 			child = nm[key]
 		}
