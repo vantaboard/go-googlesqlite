@@ -97,6 +97,10 @@ func newAnalyzerOptions() (*zetasql.AnalyzerOptions, error) {
 		zetasql.LanguageFeature(14027),
 		zetasql.LanguageFeature(14028),
 		zetasql.LanguageFeature(14029),
+		// 2023.09.1 options.proto: singleton UNNEST alias, ARRAY_ZIP, multiway UNNEST
+		zetasql.LanguageFeature(14031),
+		zetasql.LanguageFeature(14032),
+		zetasql.LanguageFeature(14033),
 	})
 	langOpt.SetSupportedStatementKinds([]ast.Kind{
 		ast.BeginStmt,
