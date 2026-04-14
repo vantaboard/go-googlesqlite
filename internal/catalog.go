@@ -123,8 +123,6 @@ var MISSING_FUNCTIONS = []*FunctionSpec{
 		},
 		Return: &Type{SignatureKind: types.ArgTypeAny1},
 	},
-	// MIN_BY and MAX_BY are aliases for ANY_VALUE(x HAVING MIN/MAX y)
-	// https://github.com/goccy/bigquery-emulator/issues/388
 	{
 		IsTemp:      false,
 		NamePath:    []string{"min_by"},

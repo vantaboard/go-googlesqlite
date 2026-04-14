@@ -935,7 +935,6 @@ FROM Items`,
 				{"banana", "apple"},
 			},
 		},
-		// HAVING MAX/MIN tests - https://github.com/goccy/bigquery-emulator/issues/327
 		{
 			name: "any_value with having max",
 			query: `
@@ -7419,7 +7418,6 @@ ORDER BY count DESC`,
 				{map[string]interface{}{"tags": []interface{}{"tag3"}, "user_id": "user2"}, int64(1)},
 			},
 		},
-		// Regression test for https://github.com/goccy/bigquery-emulator/issues/436
 		{
 			name: "left join unnest with aggregate functions",
 			query: `
