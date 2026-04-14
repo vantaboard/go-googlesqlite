@@ -1,0 +1,9 @@
+go 1.26.0
+
+use (
+	.
+	../go-googlesql
+)
+
+// Copy to go.work for local development with a sibling go-googlesql checkout
+// (matches replace github.com/vantaboard/go-googlesql => ../go-googlesql in go.mod).
