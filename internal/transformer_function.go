@@ -218,6 +218,13 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 		if spec, exists := funcMap[function.Name]; exists {
 			return spec.CallSQL(ctx.Context(), function, args)
 		}
+		if analyzer := analyzerFromContext(ctx.Context()); analyzer != nil && analyzer.catalog != nil {
+			for _, spec := range analyzer.catalog.functions {
+				if spec.FuncName() == function.Name {
+					return spec.CallSQL(ctx.Context(), function, args)
+				}
+			}
+		}
 		// Default function call transformation
 		return &SQLExpression{
 			Type: ExpressionTypeFunction,

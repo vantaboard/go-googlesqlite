@@ -1623,7 +1623,7 @@ func (d DateValue) ToInt64() (int64, error) {
 }
 
 func (d DateValue) ToString() (string, error) {
-	return time.Time(d).Format("2006-01-02"), nil
+	return time.Time(d).UTC().Format("2006-01-02"), nil
 }
 
 func (d DateValue) ToApiString() (string, error) { return d.ToString() }
@@ -1666,7 +1666,7 @@ func (d DateValue) ToRat() (*big.Rat, error) {
 }
 
 func (d DateValue) Format(verb rune) string {
-	formatted := time.Time(d).Format("2006-01-02")
+	formatted := time.Time(d).UTC().Format("2006-01-02")
 	switch verb {
 	case 't':
 		return formatted
@@ -1677,7 +1677,7 @@ func (d DateValue) Format(verb rune) string {
 }
 
 func (d DateValue) Interface() interface{} {
-	return time.Time(d).Format("2006-01-02")
+	return time.Time(d).UTC().Format("2006-01-02")
 }
 
 const (
@@ -2510,7 +2510,7 @@ func parseTimestamp(timestamp string, loc *time.Location) (time.Time, error) {
 }
 
 func DateFromInt64Value(v int64) (time.Time, error) {
-	return time.Unix(0, 0).Add(time.Duration(v) * 24 * time.Hour), nil
+	return time.Unix(0, 0).UTC().Add(time.Duration(v) * 24 * time.Hour), nil
 }
 
 func TimestampFromFloatValue(f float64) (time.Time, error) {

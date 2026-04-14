@@ -115,26 +115,45 @@ func getFuncName(ctx context.Context, n ast.Node) (string, error) {
 	nodeMap := nodeMapFromContext(ctx)
 	found := nodeMap.FindNodeFromResolvedNode(n)
 	if len(found) == 0 {
+		if path := resolvedFunctionNamePath(n); len(path) != 0 {
+			return formatNameWithPath(namePathFromContext(ctx), path), nil
+		}
 		return "", fmt.Errorf("failed to find path node from function node %T", n)
 	}
-	var foundCallNode *parsed_ast.FunctionCallNode
-	for _, node := range found {
-		fcallNode, ok := node.(*parsed_ast.FunctionCallNode)
-		if !ok {
-			continue
-		}
-		foundCallNode = fcallNode
-		break
-	}
+	foundCallNode := findFunctionCallNode(found)
 	if foundCallNode == nil {
+		if path := resolvedFunctionNamePath(n); len(path) != 0 {
+			return formatNameWithPath(namePathFromContext(ctx), path), nil
+		}
 		return "", fmt.Errorf("failed to find function call node from %T", n)
 	}
 	path, err := getPathFromNode(foundCallNode.Function())
 	if err != nil {
+		if resolvedPath := resolvedFunctionNamePath(n); len(resolvedPath) != 0 {
+			return formatNameWithPath(namePathFromContext(ctx), resolvedPath), nil
+		}
 		return "", fmt.Errorf("failed to find path: %w", err)
 	}
-	namePath := namePathFromContext(ctx)
-	return namePath.format(path), nil
+	if resolvedPath := resolvedFunctionNamePath(n); len(resolvedPath) > len(path) {
+		path = resolvedPath
+	}
+	return formatNameWithPath(namePathFromContext(ctx), path), nil
+}
+
+func resolvedFunctionNamePath(node ast.Node) []string {
+	funcNode, ok := node.(*ast.BaseFunctionCallNode)
+	if !ok || funcNode.Function() == nil {
+		return nil
+	}
+	fullName := funcNode.Function().FullName(false)
+	if fullName != "" {
+		return strings.Split(fullName, ".")
+	}
+	path := funcNode.Function().FunctionNamePath()
+	if len(path) == 0 {
+		return nil
+	}
+	return path
 }
 
 func getZetasqliteFuncName(ctx context.Context, node *ast.BaseFunctionCallNode, isWindowFunc bool) (string, error) {
@@ -776,18 +795,104 @@ func getPathFromNode(n parsed_ast.Node) ([]string, error) {
 	return path, nil
 }
 
+func findFunctionCallNode(nodes []parsed_ast.Node) *parsed_ast.FunctionCallNode {
+	for _, node := range nodes {
+		for current := node; current != nil; current = current.Parent() {
+			if fcallNode, ok := current.(*parsed_ast.FunctionCallNode); ok {
+				return fcallNode
+			}
+		}
+	}
+	return nil
+}
+
+func findPathFromNodes(nodes []parsed_ast.Node) ([]string, error) {
+	var firstErr error
+	for _, node := range nodes {
+		for current := node; current != nil; current = current.Parent() {
+			path, err := getPathFromNode(current)
+			if err == nil {
+				return path, nil
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return nil, fmt.Errorf("failed to find path from parsed AST candidates")
+}
+
+func findTargetPathFromNodes(nodes []parsed_ast.Node) ([]string, error) {
+	var firstErr error
+	for _, node := range nodes {
+		for current := node; current != nil; current = current.Parent() {
+			switch current := current.(type) {
+			case *parsed_ast.InsertStatementNode:
+				path, err := getPathFromNode(current.TargetPath())
+				if err == nil {
+					return path, nil
+				}
+				if firstErr == nil {
+					firstErr = err
+				}
+			case *parsed_ast.TrucateStatementNode:
+				path, err := getPathFromNode(current.TargetPath())
+				if err == nil {
+					return path, nil
+				}
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return nil, fmt.Errorf("failed to find target path from parsed AST candidates")
+}
+
+func formatNameWithPath(namePath *NamePath, path []string) string {
+	if namePath == nil {
+		return formatPath(path)
+	}
+	return namePath.format(path)
+}
+
+func resolvedTableNamePath(node ast.Node) []string {
+	tableScan, ok := node.(*ast.TableScanNode)
+	if !ok || tableScan.Table() == nil {
+		return nil
+	}
+	fullName := tableScan.Table().FullName()
+	if fullName == "" {
+		fullName = tableScan.Table().Name()
+	}
+	if fullName == "" {
+		return nil
+	}
+	return strings.Split(fullName, ".")
+}
+
 func getTableName(ctx context.Context, n ast.Node) (string, error) {
 	nodeMap := nodeMapFromContext(ctx)
 	found := nodeMap.FindNodeFromResolvedNode(n)
-	if len(found) == 0 {
-		return "", fmt.Errorf("failed to find path node from table node %T", n)
+	if len(found) != 0 {
+		if path, err := findTargetPathFromNodes(found); err == nil {
+			return formatNameWithPath(namePathFromContext(ctx), path), nil
+		}
+		path, err := findPathFromNodes(found)
+		if err == nil {
+			return formatNameWithPath(namePathFromContext(ctx), path), nil
+		}
 	}
-	path, err := getPathFromNode(found[0])
-	if err != nil {
-		return "", fmt.Errorf("failed to find path: %w", err)
+	if path := resolvedTableNamePath(n); len(path) != 0 {
+		return formatNameWithPath(namePathFromContext(ctx), path), nil
 	}
-	namePath := namePathFromContext(ctx)
-	return namePath.format(path), nil
+	return "", fmt.Errorf("failed to find path node from table node %T", n)
 }
 
 // extractTableScanData extracts data from table scan nodes
