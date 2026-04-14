@@ -9,6 +9,8 @@ require (
 	modernc.org/sqlite v1.37.0
 )
 
+replace github.com/goccy/go-zetasql => ../go-zetasql
+
 require github.com/google/go-cmp v0.6.0
 
 require github.com/goccy/go-json v0.10.0
