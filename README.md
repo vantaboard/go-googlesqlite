@@ -29,7 +29,7 @@ CGO_ENABLED=1
 CXX=clang++
 ```
 
-For a full local stack (`go-googlesql`, `go-googlesqlite`, `bigquery-emulator` as sibling repos), add `replace` lines in `go.mod` (for example `replace github.com/vantaboard/go-googlesql => ../go-googlesql`). Emulator Docker builds use only that module's tree, so they rely on published versions unless you change the build context.
+For a full local stack (`go-googlesql`, `go-googlesqlite`, `bigquery-emulator` as sibling repos), copy [`go.work.dev`](go.work.dev) to `go.work` (or set `GOWORK` to that file). Local path overrides live in the workspace file, not in `go.mod`. Emulator Docker builds use only that module's tree, so they rely on published versions unless you change the build context.
 
 When exercising the whole stack, run **`go test` in each repo one at a time** (not in parallel) to avoid OOM from overlapping CGO builds, and set a **shared `GOCACHE`** (and optionally `GOMODCACHE`) as described in the [go-googlesql README](https://github.com/vantaboard/go-googlesql#development) so `go-googlesql` compile artifacts are reused.
 
