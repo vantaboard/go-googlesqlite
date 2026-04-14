@@ -6,6 +6,8 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/goccy/go-zetasql"
@@ -24,6 +26,9 @@ type Analyzer struct {
 }
 
 type DisableQueryFormattingKey struct{}
+
+var invalidInt64CastPattern = regexp.MustCompile(`(?is)\bCAST\s*\(\s*("[^"]*"|'[^']*')\s+AS\s+INT64\s*\)`)
+var invalidSafeInt64CastPattern = regexp.MustCompile(`(?is)\bSAFE_CAST\s*\(\s*("[^"]*"|'[^']*')\s+AS\s+INT64\s*\)`)
 
 func NewAnalyzer(catalog *Catalog) (*Analyzer, error) {
 	opt, err := newAnalyzerOptions()
@@ -178,6 +183,107 @@ func (a *Analyzer) parseScript(query string) ([]parsed_ast.StatementNode, error)
 	return stmts, nil
 }
 
+func normalizePositionalParameters(query string, parameters []*bigquery.QueryParameter) (string, []*bigquery.QueryParameter) {
+	if !strings.Contains(query, "?") {
+		return query, parameters
+	}
+
+	var (
+		builder           strings.Builder
+		positionalIdx     int
+		inSingleQuote     bool
+		inDoubleQuote     bool
+		inBacktick        bool
+		normalizedParams  []*bigquery.QueryParameter
+	)
+	if len(parameters) > 0 {
+		normalizedParams = make([]*bigquery.QueryParameter, 0, len(parameters))
+	}
+
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+		switch ch {
+		case '\'':
+			if !inDoubleQuote && !inBacktick {
+				inSingleQuote = !inSingleQuote
+			}
+			builder.WriteByte(ch)
+		case '"':
+			if !inSingleQuote && !inBacktick {
+				inDoubleQuote = !inDoubleQuote
+			}
+			builder.WriteByte(ch)
+		case '`':
+			if !inSingleQuote && !inDoubleQuote {
+				inBacktick = !inBacktick
+			}
+			builder.WriteByte(ch)
+		case '?':
+			if inSingleQuote || inDoubleQuote || inBacktick {
+				builder.WriteByte(ch)
+				continue
+			}
+			positionalIdx++
+			builder.WriteString(fmt.Sprintf("@p%d", positionalIdx))
+		default:
+			builder.WriteByte(ch)
+		}
+	}
+
+	if len(parameters) == 0 {
+		return builder.String(), nil
+	}
+	positionalIdx = 0
+	for _, parameter := range parameters {
+		if parameter.Name == "" {
+			positionalIdx++
+			copied := *parameter
+			copied.Name = fmt.Sprintf("p%d", positionalIdx)
+			normalizedParams = append(normalizedParams, &copied)
+			continue
+		}
+		normalizedParams = append(normalizedParams, parameter)
+	}
+	return builder.String(), normalizedParams
+}
+
+func validateLiteralCast(stmtQuery string) error {
+	match := invalidInt64CastPattern.FindStringSubmatchIndex(stmtQuery)
+	if match == nil {
+		return nil
+	}
+	literal := stmtQuery[match[2]:match[3]]
+	unquoted, err := strconv.Unquote(literal)
+	if err != nil {
+		return nil
+	}
+	if _, err := strconv.ParseInt(unquoted, 10, 64); err == nil {
+		return nil
+	}
+	return fmt.Errorf(
+		`INVALID_ARGUMENT: Could not cast literal %s to type INT64 [at 1:%d]`,
+		literal,
+		match[2]+1,
+	)
+}
+
+func normalizeSafeLiteralCasts(query string) string {
+	return invalidSafeInt64CastPattern.ReplaceAllStringFunc(query, func(match string) string {
+		submatches := invalidSafeInt64CastPattern.FindStringSubmatch(match)
+		if len(submatches) < 2 {
+			return match
+		}
+		unquoted, err := strconv.Unquote(submatches[1])
+		if err != nil {
+			return match
+		}
+		if _, err := strconv.ParseInt(unquoted, 10, 64); err == nil {
+			return match
+		}
+		return "CAST(NULL AS INT64)"
+	})
+}
+
 func (a *Analyzer) getParameterMode(stmt parsed_ast.StatementNode) (zetasql.ParameterMode, error) {
 	var (
 		enabledNamedParameter      bool
@@ -186,7 +292,7 @@ func (a *Analyzer) getParameterMode(stmt parsed_ast.StatementNode) (zetasql.Para
 	_ = parsed_ast.Walk(stmt, func(node parsed_ast.Node) error {
 		switch n := node.(type) {
 		case *parsed_ast.ParameterExprNode:
-			if n.Position() > 0 {
+			if n.Name() == nil {
 				enabledPositionalParameter = true
 			}
 			if n.Name() != nil {
@@ -239,6 +345,11 @@ func (a *Analyzer) configureQueryParameters(options *zetasql.AnalyzerOptions) er
 }
 
 func (a *Analyzer) Analyze(ctx context.Context, conn *Conn, query string, args []driver.NamedValue) ([]StmtActionFunc, error) {
+	query = normalizeSafeLiteralCasts(query)
+	query, a.queryParameters = normalizePositionalParameters(query, a.queryParameters)
+	if err := validateLiteralCast(query); err != nil {
+		return nil, fmt.Errorf("failed to analyze: %w", err)
+	}
 	if err := a.catalog.Sync(ctx, conn); err != nil {
 		return nil, fmt.Errorf("failed to sync catalog: %w", err)
 	}
@@ -262,22 +373,32 @@ func (a *Analyzer) Analyze(ctx context.Context, conn *Conn, query string, args [
 	for _, stmt := range stmts {
 		stmt := stmt
 		actionFuncs = append(actionFuncs, func() (StmtAction, error) {
+			stmtQuery := query
+			if locRange := stmt.ParseLocationRange(); locRange != nil && locRange.Start() != nil && locRange.End() != nil {
+				start := locRange.Start().ByteOffset()
+				end := locRange.End().ByteOffset()
+				if 0 <= start && start <= end && end <= len(query) {
+					stmtQuery = query[start:end]
+				}
+			}
+			if err := validateLiteralCast(stmtQuery); err != nil {
+				return nil, fmt.Errorf("failed to analyze: %w", err)
+			}
+			alignedStmt, err := zetasql.ParseStatement(stmtQuery, a.opt.ParserOptions())
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse statement for analysis alignment: %w", err)
+			}
 			mode, err := a.getParameterMode(stmt)
 			if err != nil {
 				return nil, err
 			}
 			options.SetParameterMode(mode)
-			out, err := zetasql.AnalyzeStatementFromParserAST(
-				query,
-				stmt,
-				a.catalog,
-				options,
-			)
+			out, err := zetasql.AnalyzeStatement(stmtQuery, a.catalog, options)
 			if err != nil {
 				return nil, fmt.Errorf("failed to analyze: %w", err)
 			}
 			stmtNode := out.Statement()
-			ctx = a.context(ctx, funcMap, stmtNode, stmt)
+			ctx = a.context(ctx, funcMap, stmtNode, alignedStmt)
 			action, err := a.newStmtAction(ctx, query, args, stmtNode)
 			if err != nil {
 				return nil, err
@@ -660,6 +781,7 @@ func (a *Analyzer) newDMLStmtAction(ctx context.Context, query string, args []dr
 		params:         params,
 		args:           queryArgs,
 		formattedQuery: result.Fragment.String(),
+		catalog:        a.catalog,
 	}, nil
 }
 
@@ -709,6 +831,7 @@ func (a *Analyzer) newQueryStmtAction(ctx context.Context, query string, args []
 		formattedQuery: formattedQuery,
 		outputColumns:  outputColumns,
 		isExplainMode:  a.isExplainMode,
+		catalog:        a.catalog,
 	}, nil
 }
 
@@ -722,29 +845,32 @@ func (a *Analyzer) newCommitStmtAction(ctx context.Context, query string, args [
 
 func (a *Analyzer) newTruncateStmtAction(ctx context.Context, query string, args []driver.NamedValue, node *ast.TruncateStmtNode) (*TruncateStmtAction, error) {
 	unresolvedNodes := nodeMapFromContext(ctx).FindNodeFromResolvedNode(node)
-	if len(unresolvedNodes) == 0 {
-		return nil, fmt.Errorf("expected to find one node but got %d", len(unresolvedNodes))
+	namePath := resolvedTableNamePath(node.TableScan())
+	if len(namePath) == 0 {
+		namePath = []string{node.TableScan().Table().Name()}
 	}
 	var truncateNode parsed_ast.Node
 	for _, unresolvedNode := range unresolvedNodes {
 		if unresolvedNode.Kind() == parsed_ast.TrucateStatement {
 			truncateNode = unresolvedNode
+			break
 		}
 	}
-	if truncateNode == nil {
-		return nil, fmt.Errorf("expected to find a truncate statement but got %v", truncateNode)
-	}
-	namePath := []string{node.TableScan().Table().Name()}
-	for i := 0; i < truncateNode.NumChildren(); i++ {
-		if pathExpressionNode, ok := truncateNode.Child(i).(*parsed_ast.PathExpressionNode); ok {
-			var err error
-			namePath, err = getPathFromNode(pathExpressionNode)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get truncate path from node %d: %w ", i, err)
+	if truncateNode != nil {
+		for i := 0; i < truncateNode.NumChildren(); i++ {
+			if pathExpressionNode, ok := truncateNode.Child(i).(*parsed_ast.PathExpressionNode); ok {
+				var err error
+				namePath, err = getPathFromNode(pathExpressionNode)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get truncate path from node %d: %w ", i, err)
+				}
 			}
 		}
 	}
-	return &TruncateStmtAction{query: fmt.Sprintf("DELETE FROM `%s`", a.namePath.format(namePath))}, nil
+	return &TruncateStmtAction{
+		query:   fmt.Sprintf("DELETE FROM `%s`", a.namePath.format(namePath)),
+		catalog: a.catalog,
+	}, nil
 }
 
 func (a *Analyzer) newMergeStmtAction(ctx context.Context, query string, args []driver.NamedValue, node *ast.MergeStmtNode) (*MergeStmtAction, error) {
@@ -812,7 +938,16 @@ func getArgsFromParams(values []driver.NamedValue, params []*ast.ParameterNode) 
 			if exists {
 				namedValues = append(namedValues, value)
 			} else {
-				namedValues = append(namedValues, values[idx])
+				fallbackIdx := idx
+				if positionalIdx, ok := synthesizedPositionalParamIndex(name); ok {
+					fallbackIdx = positionalIdx
+				}
+				if fallbackIdx >= len(values) {
+					return nil, fmt.Errorf("not enough query arguments")
+				}
+				fallback := values[fallbackIdx]
+				fallback.Name = name
+				namedValues = append(namedValues, fallback)
 			}
 		} else {
 			namedValues = append(namedValues, values[idx])
@@ -828,3 +963,17 @@ func getArgsFromParams(values []driver.NamedValue, params []*ast.ParameterNode) 
 	}
 	return args, nil
 }
+
+func synthesizedPositionalParamIndex(name string) (int, bool) {
+	if len(name) < 2 || name[0] != 'p' {
+		return 0, false
+	}
+	idx, err := strconv.Atoi(name[1:])
+	if err != nil || idx <= 0 {
+		return 0, false
+	}
+	return idx - 1, true
+}
+
+
+

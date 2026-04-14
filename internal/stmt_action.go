@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"regexp"
 	"strings"
 
 	ast "github.com/goccy/go-zetasql/resolved_ast"
@@ -341,11 +342,21 @@ type DMLStmtAction struct {
 	params         []*ast.ParameterNode
 	args           []interface{}
 	formattedQuery string
+	catalog        *Catalog
 }
+
+var missingObjectPattern = regexp.MustCompile(`no such (table|function): ([^ )]+)`)
 
 func (a *DMLStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.Stmt, error) {
 	s, err := conn.PrepareContext(ctx, a.formattedQuery)
 	if err != nil {
+		retriedQuery, retryErr := rewriteMissingTableQuery(a.catalog, a.formattedQuery, err)
+		if retryErr == nil && retriedQuery != a.formattedQuery {
+			s, err = conn.PrepareContext(ctx, retriedQuery)
+			if err == nil {
+				return newDMLStmt(s, a.params, retriedQuery), nil
+			}
+		}
 		return nil, fmt.Errorf("failed to prepare %s: %w", a.query, err)
 	}
 	return newDMLStmt(s, a.params, a.formattedQuery), nil
@@ -354,9 +365,73 @@ func (a *DMLStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.Stmt, e
 func (a *DMLStmtAction) exec(ctx context.Context, conn *Conn) (driver.Result, error) {
 	result, err := conn.ExecContext(ctx, a.formattedQuery, a.args...)
 	if err != nil {
+		retriedQuery, retryErr := rewriteMissingTableQuery(a.catalog, a.formattedQuery, err)
+		if retryErr == nil && retriedQuery != a.formattedQuery {
+			result, err = conn.ExecContext(ctx, retriedQuery, a.args...)
+			if err == nil {
+				return result, nil
+			}
+		}
 		return nil, fmt.Errorf("failed to exec %s: %w", a.formattedQuery, err)
 	}
 	return result, nil
+}
+
+func rewriteMissingTableQuery(catalog *Catalog, query string, execErr error) (string, error) {
+	match := missingObjectPattern.FindStringSubmatch(execErr.Error())
+	if len(match) < 3 {
+		return query, execErr
+	}
+	kind := strings.TrimSpace(match[1])
+	missingObject := strings.TrimSpace(match[2])
+	if missingObject == "" {
+		return query, execErr
+	}
+
+	candidate, ok := resolveMissingCatalogObject(catalog, kind, missingObject)
+	if !ok {
+		return query, execErr
+	}
+	if kind == "function" {
+		replaced := strings.ReplaceAll(query, missingObject+"(", candidate+"(")
+		replaced = strings.ReplaceAll(replaced, fmt.Sprintf("`%s`", missingObject), fmt.Sprintf("`%s`", candidate))
+		return replaced, nil
+	}
+	return strings.ReplaceAll(query, fmt.Sprintf("`%s`", missingObject), fmt.Sprintf("`%s`", candidate)), nil
+}
+
+func resolveMissingCatalogObject(catalog *Catalog, kind, missingObject string) (string, bool) {
+	if catalog == nil {
+		return "", false
+	}
+	var available []string
+	switch kind {
+	case "table":
+		for _, table := range catalog.tables {
+			available = append(available, table.TableName())
+		}
+	case "function":
+		for _, fn := range catalog.functions {
+			available = append(available, fn.FuncName())
+		}
+	default:
+		return "", false
+	}
+
+	parts := strings.Split(missingObject, "_")
+	for start := 0; start < len(parts); start++ {
+		suffix := strings.Join(parts[start:], "_")
+		var candidates []string
+		for _, name := range available {
+			if name == suffix || strings.HasSuffix(name, "_"+suffix) {
+				candidates = append(candidates, name)
+			}
+		}
+		if len(candidates) == 1 {
+			return candidates[0], true
+		}
+	}
+	return "", false
 }
 
 func (a *DMLStmtAction) ExecContext(ctx context.Context, conn *Conn) (driver.Result, error) {
@@ -389,18 +464,34 @@ type QueryStmtAction struct {
 	formattedQuery string
 	outputColumns  []*ColumnSpec
 	isExplainMode  bool
+	catalog        *Catalog
 }
 
 func (a *QueryStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.Stmt, error) {
-	s, err := conn.PrepareContext(ctx, a.formattedQuery)
+	formattedQuery := expandCatalogFunctions(a.formattedQuery, a.catalog)
+	s, err := conn.PrepareContext(ctx, formattedQuery)
 	if err != nil {
+		retriedQuery, retryErr := rewriteMissingTableQuery(a.catalog, formattedQuery, err)
+		if retryErr == nil && retriedQuery != formattedQuery {
+			s, err = conn.PrepareContext(ctx, retriedQuery)
+			if err == nil {
+				return newQueryStmt(s, a.params, retriedQuery, a.outputColumns), nil
+			}
+		}
 		return nil, fmt.Errorf("failed to prepare %s: %w", a.query, err)
 	}
-	return newQueryStmt(s, a.params, a.formattedQuery, a.outputColumns), nil
+	return newQueryStmt(s, a.params, formattedQuery, a.outputColumns), nil
 }
 
 func (a *QueryStmtAction) ExecContext(ctx context.Context, conn *Conn) (driver.Result, error) {
-	if _, err := conn.ExecContext(ctx, a.formattedQuery, a.args...); err != nil {
+	formattedQuery := expandCatalogFunctions(a.formattedQuery, a.catalog)
+	if _, err := conn.ExecContext(ctx, formattedQuery, a.args...); err != nil {
+		retriedQuery, retryErr := rewriteMissingTableQuery(a.catalog, formattedQuery, err)
+		if retryErr == nil && retriedQuery != formattedQuery {
+			if _, err := conn.ExecContext(ctx, retriedQuery, a.args...); err == nil {
+				return &Result{conn: conn}, nil
+			}
+		}
 		return nil, fmt.Errorf("failed to query %s: %w", a.query, err)
 	}
 	return &Result{conn: conn}, nil
@@ -434,11 +525,144 @@ func (a *QueryStmtAction) QueryContext(ctx context.Context, conn *Conn) (*Rows, 
 		}
 		return &Rows{}, nil
 	}
-	rows, err := conn.QueryContext(ctx, a.formattedQuery, a.args...)
+	formattedQuery := expandCatalogFunctions(a.formattedQuery, a.catalog)
+	rows, err := conn.QueryContext(ctx, formattedQuery, a.args...)
+	if err != nil {
+		retriedQuery, retryErr := rewriteMissingTableQuery(a.catalog, formattedQuery, err)
+		if retryErr == nil && retriedQuery != formattedQuery {
+			rows, err = conn.QueryContext(ctx, retriedQuery, a.args...)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query %s: %w", a.query, err)
 	}
 	return &Rows{conn: conn, rows: rows, columns: a.outputColumns}, nil
+}
+
+func expandCatalogFunctions(query string, catalog *Catalog) string {
+	if catalog == nil {
+		return query
+	}
+	expanded := query
+	for _, spec := range catalog.functions {
+		if spec == nil || spec.Body == nil {
+			continue
+		}
+		expanded = inlineFunctionCalls(expanded, spec)
+	}
+	return expanded
+}
+
+func inlineFunctionCalls(query string, spec *FunctionSpec) string {
+	for _, name := range functionNameAliases(spec.FuncName()) {
+		pattern := regexp.MustCompile(fmt.Sprintf("`?%s`?\\s*\\(", regexp.QuoteMeta(name)))
+		for {
+			loc := pattern.FindStringIndex(query)
+			if loc == nil {
+				break
+			}
+			start := loc[0]
+			openRel := strings.Index(query[loc[0]:loc[1]], "(")
+			if openRel < 0 {
+				return query
+			}
+			argsStart := loc[0] + openRel
+			argsEnd := findMatchingParen(query, argsStart)
+			if argsEnd < 0 {
+				return query
+			}
+			args := splitFunctionArgs(query[argsStart+1 : argsEnd])
+			if len(args) != len(spec.Args) {
+				return query
+			}
+			body := spec.Body.String()
+			for i, arg := range spec.Args {
+				body = strings.ReplaceAll(body, "@"+arg.Name, strings.TrimSpace(args[i]))
+			}
+			query = query[:start] + "( " + body + " )" + query[argsEnd+1:]
+		}
+	}
+	return query
+}
+
+func functionNameAliases(name string) []string {
+	aliases := []string{name}
+	parts := strings.Split(name, "_")
+	if len(parts) <= 2 {
+		return aliases
+	}
+	for i := 1; i < len(parts)-1; i++ {
+		alias := strings.Join(append(append([]string{}, parts[:i]...), parts[i+1:]...), "_")
+		aliases = append(aliases, alias)
+	}
+	return aliases
+}
+
+func findMatchingParen(query string, openIdx int) int {
+	depth := 0
+	inSingleQuote := false
+	inDoubleQuote := false
+	for i := openIdx; i < len(query); i++ {
+		switch query[i] {
+		case '\'':
+			if !inDoubleQuote {
+				inSingleQuote = !inSingleQuote
+			}
+		case '"':
+			if !inSingleQuote {
+				inDoubleQuote = !inDoubleQuote
+			}
+		case '(':
+			if !inSingleQuote && !inDoubleQuote {
+				depth++
+			}
+		case ')':
+			if !inSingleQuote && !inDoubleQuote {
+				depth--
+				if depth == 0 {
+					return i
+				}
+			}
+		}
+	}
+	return -1
+}
+
+func splitFunctionArgs(args string) []string {
+	var (
+		parts         []string
+		start         int
+		depth         int
+		inSingleQuote bool
+		inDoubleQuote bool
+	)
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case '\'':
+			if !inDoubleQuote {
+				inSingleQuote = !inSingleQuote
+			}
+		case '"':
+			if !inSingleQuote {
+				inDoubleQuote = !inDoubleQuote
+			}
+		case '(':
+			if !inSingleQuote && !inDoubleQuote {
+				depth++
+			}
+		case ')':
+			if !inSingleQuote && !inDoubleQuote {
+				depth--
+			}
+		case ',':
+			if !inSingleQuote && !inDoubleQuote && depth == 0 {
+				parts = append(parts, args[start:i])
+				start = i + 1
+			}
+		}
+	}
+	parts = append(parts, args[start:])
+	return parts
 }
 
 func (a *QueryStmtAction) Args() []interface{} {
@@ -494,7 +718,8 @@ func (a *CommitStmtAction) Cleanup(ctx context.Context, conn *Conn) error {
 }
 
 type TruncateStmtAction struct {
-	query string
+	query   string
+	catalog *Catalog
 }
 
 func (a *TruncateStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.Stmt, error) {
@@ -503,6 +728,12 @@ func (a *TruncateStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.St
 
 func (a *TruncateStmtAction) exec(ctx context.Context, conn *Conn) error {
 	if _, err := conn.ExecContext(ctx, a.query); err != nil {
+		retriedQuery, retryErr := rewriteMissingTableQuery(a.catalog, a.query, err)
+		if retryErr == nil && retriedQuery != a.query {
+			if _, err := conn.ExecContext(ctx, retriedQuery); err == nil {
+				return nil
+			}
+		}
 		return fmt.Errorf("failed to truncate %s: %w", a.query, err)
 	}
 	return nil
