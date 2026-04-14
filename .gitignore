@@ -25,3 +25,6 @@
 # Dependency directories (remove the comment below to include it)
 # vendor/
 .googlesqlite_history
+
+# Local Go workspace (template: go.work.dev)
+go.work
