@@ -20,8 +20,13 @@ require gonum.org/v1/gonum v0.11.0
 require (
 	cloud.google.com/go/bigquery v1.51.0
 	github.com/DataDog/go-hll v1.0.2
+	github.com/chzyer/readline v1.5.1
 	github.com/dop251/goja v0.0.0-20221118162653-d4bf6fde1b86
+	github.com/fatih/color v1.18.0
+	github.com/jessevdk/go-flags v1.6.1
+	github.com/olekukonko/tablewriter v0.0.5
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
+	golang.org/x/crypto v0.36.0
 	golang.org/x/net v0.37.0
 	golang.org/x/text v0.23.0
 	google.golang.org/api v0.114.0
@@ -35,6 +40,7 @@ require (
 	github.com/andybalholm/brotli v1.0.4 // indirect
 	github.com/apache/arrow/go/v11 v11.0.0 // indirect
 	github.com/apache/thrift v0.16.0 // indirect
+	github.com/clipperhouse/uax29/v2 v2.6.0 // indirect
 	github.com/dlclark/regexp2 v1.7.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
@@ -47,7 +53,9 @@ require (
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/klauspost/compress v1.15.9 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
+	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/minio/asm2plan9s v0.0.0-20200509001527-cdd76441f9d8 // indirect
 	github.com/minio/c2goasm v0.0.0-20190812172519-36a3d3bbc4f3 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
@@ -61,6 +69,7 @@ require (
 	golang.org/x/oauth2 v0.6.0 // indirect
 	golang.org/x/sync v0.12.0 // indirect
 	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/term v0.30.0 // indirect
 	golang.org/x/tools v0.31.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
