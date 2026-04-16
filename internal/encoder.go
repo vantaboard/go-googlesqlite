@@ -633,7 +633,7 @@ func valueLayoutFromValue(v Value) (*ValueLayout, error) {
 			Body:   base64.StdEncoding.EncodeToString([]byte(vv)),
 		}, nil
 	case *NumericValue:
-		b, err := vv.Rat.MarshalText()
+		b, err := vv.MarshalText()
 		if err != nil {
 			return nil, err
 		}

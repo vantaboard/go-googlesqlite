@@ -752,9 +752,9 @@ func (nv *NumericValue) ToInt64() (int64, error) {
 func (nv *NumericValue) toString() string {
 	var v string
 	if nv.isBigNumeric {
-		v = nv.Rat.FloatString(38)
+		v = nv.FloatString(38)
 	} else {
-		v = nv.Rat.FloatString(9)
+		v = nv.FloatString(9)
 	}
 	v = strings.TrimRight(v, "0")
 	v = strings.TrimRight(v, ".")
@@ -774,18 +774,20 @@ func (nv *NumericValue) ToBytes() ([]byte, error) {
 }
 
 func (nv *NumericValue) ToFloat64() (float64, error) {
-	f, _ := nv.Rat.Float64()
+	f, _ := nv.Float64()
 	return f, nil
 }
 
 func (nv *NumericValue) ToBool() (bool, error) {
 	v := nv.Rat.Num().Int64()
-	if v == 1 {
+	switch v {
+	case 1:
 		return true, nil
-	} else if v == 0 {
+	case 0:
 		return false, nil
+	default:
+		return false, fmt.Errorf("failed to convert numeric value to bool type")
 	}
-	return false, fmt.Errorf("failed to convert numeric value to bool type")
 }
 
 func (nv *NumericValue) ToArray() (*ArrayValue, error) {
@@ -813,7 +815,7 @@ func (nv *NumericValue) Format(verb rune) string {
 }
 
 func (nv *NumericValue) Interface() interface{} {
-	return nv.Rat.String()
+	return nv.String()
 }
 
 type BoolValue bool
@@ -1436,7 +1438,7 @@ func (sv *StructValue) ToString() (string, error) {
 }
 
 func (sv *StructValue) ToApiString() (string, error) {
-	return "", fmt.Errorf("Structs do not have string-based API representations %v", "")
+	return "", fmt.Errorf("structs do not have string-based API representations %v", "")
 }
 
 func (sv *StructValue) ToBytes() ([]byte, error) {
