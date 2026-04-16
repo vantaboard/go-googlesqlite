@@ -53,11 +53,12 @@ jobs:
           version: 3.x
           # Avoid unauthenticated GitHub API rate limits on shared runner IPs (macOS often hits this first).
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install clang (Linux)
+      - name: Install C/C++ toolchain (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang
+          # clang alone does not ship libstdc++ C++ headers; clang++ needs them for CGO (e.g. <chrono> in Abseil).
+          sudo apt-get install -y --no-install-recommends clang g++
       - name: Install bazelisk
         run: |
           go install github.com/bazelbuild/bazelisk@v1.20.0
