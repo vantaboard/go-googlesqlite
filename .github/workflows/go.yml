@@ -11,6 +11,8 @@ defaults:
 
 env:
   CGO_ENABLED: "1"
+  CC: clang
+  CXX: clang++
 
 jobs:
   ci:
@@ -55,18 +57,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          # clang alone does not ship libstdc++ C++ headers; clang++ can still fail to find <chrono> for CGO.
-          # Use GCC as CC/CXX on Linux so libstdc++ headers and driver stay matched (see Configure CGO compilers).
-          sudo apt-get install -y --no-install-recommends clang build-essential
-      - name: Configure CGO compilers
-        run: |
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
-            echo "CC=gcc" >> "$GITHUB_ENV"
-            echo "CXX=g++" >> "$GITHUB_ENV"
-          else
-            echo "CC=clang" >> "$GITHUB_ENV"
-            echo "CXX=clang++" >> "$GITHUB_ENV"
-          fi
+          # Stack uses -stdlib=libc++ (go-googlesql-env.sh). clang alone has no libc++ headers — need LLVM libc++ dev.
+          sudo apt-get install -y --no-install-recommends clang build-essential libc++-dev libc++abi-dev
       - name: Install bazelisk
         run: |
           go install github.com/bazelbuild/bazelisk@v1.20.0
