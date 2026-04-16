@@ -72,7 +72,7 @@ jobs:
       - name: Ensure Bazel cache directory exists
         run: mkdir -p "$HOME/.cache/bazel"
       - name: Cache Bazel
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/bazel
           key: ${{ runner.os }}-bazel-googlesql-${{ hashFiles('go-googlesql/internal/cmd/updater/googlesql.ref', 'go-googlesql/internal/cmd/updater/Dockerfile', 'go-googlesql/go.mod', 'go-googlesql/go.sum') }}
