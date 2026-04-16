@@ -31,7 +31,7 @@ tasks:
         set -euo pipefail
         source .envrc
         PKGS=$(go list -tags "$GOOGLESQL_BUILD_TAGS" ./... | grep -v cmd | grep -v benchmarks)
-        COVER_PKGS=$(echo "$PKGS" | awk -v pkg="$PKG" '{ gsub(pkg, "."); print }' | paste -sd, -)
+        COVER_PKGS=$(echo "$PKGS" | awk -v pkg='{{.PKG}}' '{ gsub(pkg, "."); print }' | paste -sd, -)
         go test -tags "$GOOGLESQL_BUILD_TAGS" -coverpkg="$COVER_PKGS" -coverprofile=cover.out ./...
 
   cover:html:
