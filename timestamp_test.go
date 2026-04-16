@@ -1,10 +1,10 @@
-package zetasqlite_test
+package googlesqlite_test
 
 import (
-	"github.com/goccy/go-zetasqlite"
-	"os"
 	"testing"
 	"time"
+
+	"github.com/vantaboard/go-googlesqlite"
 )
 
 func TestTimestamp(t *testing.T) {
@@ -17,9 +17,9 @@ func TestTimestamp(t *testing.T) {
 		{name: "max does not round", timestamp: "2534023007999.999999", expected: "9999-12-31T23:59:59.999999999Z"},
 		{name: "microsecond places are handled", timestamp: "0.1", expected: "1970-01-01T00:00:00.100000000Z"},
 	} {
-		os.Setenv("TZ", "UTC")
 		t.Run(test.name, func(t *testing.T) {
-			ti, err := zetasqlite.TimeFromTimestampValue(test.timestamp)
+			t.Setenv("TZ", "UTC")
+			ti, err := googlesqlite.TimeFromTimestampValue(test.timestamp)
 			if err != nil {
 				t.Fatalf("%s", err)
 			}

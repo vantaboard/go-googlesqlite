@@ -4,21 +4,21 @@ import (
 	"fmt"
 )
 
-// ArrayScanTransformer handles array scan (UNNEST operations) transformations from ZetaSQL to SQLite.
+// ArrayScanTransformer handles array scan (UNNEST operations) transformations from GoogleSQL to SQLite.
 //
-// In BigQuery/ZetaSQL, array scans represent UNNEST operations that flatten array values
+// In BigQuery/GoogleSQL, array scans represent UNNEST operations that flatten array values
 // into individual rows. This enables queries to iterate over array elements as if they
 // were rows in a table, with optional position/offset information and join conditions.
 //
-// The transformer converts ZetaSQL ArrayScan nodes by:
+// The transformer converts GoogleSQL ArrayScan nodes by:
 // - Transforming array expressions through the coordinator
-// - Using SQLite's json_each() table function with zetasqlite_decode_array() for UNNEST
+// - Using SQLite's json_each() table function with googlesqlite_decode_array() for UNNEST
 // - Handling correlated arrays with proper JOIN semantics (INNER vs LEFT)
 // - Managing element and offset column availability in the fragment context
 // - Supporting both standalone UNNEST and UNNEST with input scans
 //
 // The json_each() approach provides 'key' (offset) and 'value' (element) columns
-// that map to ZetaSQL's array element and offset semantics in SQLite.
+// that map to GoogleSQL's array element and offset semantics in SQLite.
 type ArrayScanTransformer struct {
 	coordinator Coordinator
 }
@@ -55,14 +55,14 @@ func (t *ArrayScanTransformer) Transform(data ScanData, ctx TransformContext) (*
 		return nil, fmt.Errorf("failed to transform array expression: %w", err)
 	}
 
-	// Create the json_each table function call with zetasqlite_decode_array
+	// Create the json_each table function call with googlesqlite_decode_array
 	jsonEachFromItem := &FromItem{
 		Type: FromItemTypeTableFunction,
 		TableFunction: &TableFunction{
 			Name: "json_each",
 			Arguments: []*SQLExpression{
 				NewFunctionExpression(
-					"zetasqlite_decode_array",
+					"googlesqlite_decode_array",
 					arrayExpr,
 				),
 			},
@@ -71,7 +71,7 @@ func (t *ArrayScanTransformer) Transform(data ScanData, ctx TransformContext) (*
 	}
 
 	// The element / key columns must be made available prior to the JoinExpr being transformed
-	// since they reference return values from SQLite's`json_each` which do not exist in ZetaSQL
+	// since they reference return values from SQLite's`json_each` which do not exist in GoogleSQL
 	ctx.FragmentContext().AddAvailableColumn(arrayData.ElementColumn.ID, &ColumnInfo{
 		ID:   arrayData.ElementColumn.ID,
 		Name: "value",

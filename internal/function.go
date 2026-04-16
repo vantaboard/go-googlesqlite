@@ -394,6 +394,51 @@ func NULLIF(expr, exprToMatch Value) (Value, error) {
 	return expr, nil
 }
 
+// NULLIFZERO returns NULL when the argument is zero, otherwise the argument.
+func NULLIFZERO(v Value) (Value, error) {
+	if v == nil {
+		return nil, nil
+	}
+	z, err := isZeroScalar(v)
+	if err != nil {
+		return nil, err
+	}
+	if z {
+		return nil, nil
+	}
+	return v, nil
+}
+
+// ZEROIFNULL returns 0 when the argument is NULL, otherwise the argument.
+func ZEROIFNULL(v Value) (Value, error) {
+	if v != nil {
+		return v, nil
+	}
+	return IntValue(0), nil
+}
+
+func isZeroScalar(v Value) (bool, error) {
+	switch x := v.(type) {
+	case IntValue:
+		return x == 0, nil
+	case FloatValue:
+		return float64(x) == 0, nil
+	case *NumericValue:
+		return x.Sign() == 0, nil
+	default:
+		if r, err := v.ToRat(); err == nil {
+			return r.Sign() == 0, nil
+		}
+		if f, err := v.ToFloat64(); err == nil {
+			return f == 0, nil
+		}
+		if i, err := v.ToInt64(); err == nil {
+			return i == 0, nil
+		}
+		return false, fmt.Errorf("NULLIFZERO: unsupported type %T", v)
+	}
+}
+
 func MAKE_ARRAY(args ...Value) (Value, error) {
 	return &ArrayValue{values: args}, nil
 }
@@ -517,13 +562,13 @@ func GENERATE_UUID() (Value, error) {
 }
 
 func CAST(expr Value, fromType, toType *Type, isSafeCast bool) (Value, error) {
-	from, err := fromType.ToZetaSQLType()
+	from, err := fromType.ToGoogleSQLType()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get zetasql type from cast base type: %w", err)
+		return nil, fmt.Errorf("failed to get GoogleSQL type from cast base type: %w", err)
 	}
-	to, err := toType.ToZetaSQLType()
+	to, err := toType.ToGoogleSQLType()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get zetasql type from cast target type: %w", err)
+		return nil, fmt.Errorf("failed to get GoogleSQL type from cast target type: %w", err)
 	}
 	fromValue, err := CastValue(from, expr)
 	if err != nil {

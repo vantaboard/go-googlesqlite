@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"strconv"
+	"strings"
 
 	"github.com/goccy/go-json"
 )
@@ -324,6 +326,97 @@ func TO_JSON(v Value, stringifyWideNumbers bool) (Value, error) {
 	return JsonValue(s), nil
 }
 
+// JSON_OBJECT builds a JSON object using the same per-value JSON encoding as TO_JSON.
+// Supports JSON_OBJECT(k1, v1, ...) and JSON_OBJECT(ARRAY<STRING> keys, ARRAY<ANY> values).
+func JSON_OBJECT(args []Value) (Value, error) {
+	if len(args) == 2 {
+		if keysArr, ok := args[0].(*ArrayValue); ok {
+			if valsArr, ok2 := args[1].(*ArrayValue); ok2 {
+				return jsonObjectFromArrays(keysArr, valsArr)
+			}
+		}
+	}
+	if len(args)%2 != 0 {
+		return nil, fmt.Errorf("JSON_OBJECT: expected even number of key/value arguments")
+	}
+	return jsonObjectFromPairs(args)
+}
+
+func jsonObjectFromArrays(keysArr, valsArr *ArrayValue) (Value, error) {
+	if len(keysArr.values) != len(valsArr.values) {
+		return nil, fmt.Errorf("JSON_OBJECT: number of keys and values must match")
+	}
+	pairs := make([]Value, 0, len(keysArr.values)*2)
+	for i := range keysArr.values {
+		pairs = append(pairs, keysArr.values[i], valsArr.values[i])
+	}
+	return jsonObjectFromPairs(pairs)
+}
+
+// jsonObjectFromPairs builds a JSON object. Duplicate keys keep the first value (GoogleSQL / BigQuery semantics).
+func jsonObjectFromPairs(pairs []Value) (Value, error) {
+	var b strings.Builder
+	b.WriteByte('{')
+	seen := make(map[string]struct{})
+	first := true
+	for i := 0; i < len(pairs); i += 2 {
+		if pairs[i] == nil {
+			return nil, fmt.Errorf("JSON_OBJECT: key cannot be NULL")
+		}
+		keyStr, err := pairs[i].ToString()
+		if err != nil {
+			return nil, fmt.Errorf("JSON_OBJECT: key: %w", err)
+		}
+		if _, dup := seen[keyStr]; dup {
+			continue
+		}
+		seen[keyStr] = struct{}{}
+		if !first {
+			b.WriteByte(',')
+		}
+		first = false
+		keyJSON, err := json.Marshal(keyStr)
+		if err != nil {
+			return nil, err
+		}
+		b.Write(keyJSON)
+		b.WriteByte(':')
+		if pairs[i+1] == nil {
+			b.WriteString("null")
+			continue
+		}
+		vj, err := pairs[i+1].ToJSON()
+		if err != nil {
+			return nil, err
+		}
+		b.WriteString(vj)
+	}
+	b.WriteByte('}')
+	return JsonValue(b.String()), nil
+}
+
+// JSON_ARRAY builds a JSON array from values using the same per-element encoding as TO_JSON.
+func JSON_ARRAY(args []Value) (Value, error) {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, arg := range args {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		if arg == nil {
+			b.WriteString("null")
+			continue
+		}
+		vj, err := arg.ToJSON()
+		if err != nil {
+			return nil, fmt.Errorf("JSON_ARRAY: %w", err)
+		}
+		b.WriteString(vj)
+	}
+	b.WriteByte(']')
+	return JsonValue(b.String()), nil
+}
+
 func TO_JSON_STRING(v Value, prettyPrint bool) (Value, error) {
 	if v == nil {
 		return StringValue(`null`), nil
@@ -337,4 +430,121 @@ func TO_JSON_STRING(v Value, prettyPrint bool) (Value, error) {
 
 func JSON_TYPE(v JsonValue) (Value, error) {
 	return StringValue(v.Type()), nil
+}
+
+// LAX_INT64 coerces a JSON value to INT64; returns NULL when conversion is not possible.
+func LAX_INT64(j JsonValue) (Value, error) {
+	s := strings.TrimSpace(string(j))
+	if s == "" || s == "null" {
+		return nil, nil
+	}
+	var raw interface{}
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return nil, nil
+	}
+	return laxCoerceInt64(raw)
+}
+
+func laxCoerceInt64(raw interface{}) (Value, error) {
+	switch x := raw.(type) {
+	case float64:
+		return IntValue(int64(x)), nil
+	case string:
+		n, err := strconv.ParseInt(strings.TrimSpace(x), 10, 64)
+		if err != nil {
+			return nil, nil
+		}
+		return IntValue(n), nil
+	case bool:
+		if x {
+			return IntValue(1), nil
+		}
+		return IntValue(0), nil
+	default:
+		return nil, nil
+	}
+}
+
+// LAX_BOOL coerces a JSON value to BOOL; returns NULL when conversion is not possible.
+func LAX_BOOL(j JsonValue) (Value, error) {
+	s := strings.TrimSpace(string(j))
+	if s == "" || s == "null" {
+		return nil, nil
+	}
+	var raw interface{}
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return nil, nil
+	}
+	switch x := raw.(type) {
+	case bool:
+		return BoolValue(x), nil
+	case string:
+		switch strings.ToLower(strings.TrimSpace(x)) {
+		case "true", "t", "1", "yes", "y":
+			return BoolValue(true), nil
+		case "false", "f", "0", "no", "n":
+			return BoolValue(false), nil
+		default:
+			return nil, nil
+		}
+	case float64:
+		return BoolValue(x != 0), nil
+	default:
+		return nil, nil
+	}
+}
+
+// LAX_STRING coerces a JSON value to STRING (JSON text representation of scalars).
+func LAX_STRING(j JsonValue) (Value, error) {
+	s := strings.TrimSpace(string(j))
+	if s == "" || s == "null" {
+		return nil, nil
+	}
+	var raw interface{}
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return nil, nil
+	}
+	switch x := raw.(type) {
+	case string:
+		return StringValue(x), nil
+	case bool:
+		return StringValue(strconv.FormatBool(x)), nil
+	case float64:
+		return StringValue(strconv.FormatFloat(x, 'g', -1, 64)), nil
+	default:
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return nil, nil
+		}
+		return StringValue(string(b)), nil
+	}
+}
+
+// LAX_DOUBLE coerces a JSON value to DOUBLE; returns NULL when conversion is not possible.
+func LAX_DOUBLE(j JsonValue) (Value, error) {
+	s := strings.TrimSpace(string(j))
+	if s == "" || s == "null" {
+		return nil, nil
+	}
+	var raw interface{}
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return nil, nil
+	}
+	switch x := raw.(type) {
+	case float64:
+		return FloatValue(x), nil
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(x), 64)
+		if err != nil {
+			return nil, nil
+		}
+		return FloatValue(f), nil
+	case bool:
+		if x {
+			return FloatValue(1), nil
+		}
+		return FloatValue(0), nil
+	default:
+		return nil, nil
+	}
 }

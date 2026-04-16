@@ -6,12 +6,14 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
-	"github.com/goccy/go-zetasql"
-	parsed_ast "github.com/goccy/go-zetasql/ast"
-	ast "github.com/goccy/go-zetasql/resolved_ast"
-	"github.com/goccy/go-zetasql/types"
+	"github.com/vantaboard/go-googlesql"
+	parsed_ast "github.com/vantaboard/go-googlesql/ast"
+	ast "github.com/vantaboard/go-googlesql/resolved_ast"
+	"github.com/vantaboard/go-googlesql/types"
 )
 
 type Analyzer struct {
@@ -19,11 +21,14 @@ type Analyzer struct {
 	isAutoIndexMode bool
 	isExplainMode   bool
 	catalog         *Catalog
-	opt             *zetasql.AnalyzerOptions
+	opt             *googlesql.AnalyzerOptions
 	queryParameters []*bigquery.QueryParameter
 }
 
 type DisableQueryFormattingKey struct{}
+
+var invalidInt64CastPattern = regexp.MustCompile(`(?is)\bCAST\s*\(\s*("[^"]*"|'[^']*')\s+AS\s+INT64\s*\)`)
+var invalidSafeInt64CastPattern = regexp.MustCompile(`(?is)\bSAFE_CAST\s*\(\s*("[^"]*"|'[^']*')\s+AS\s+INT64\s*\)`)
 
 func NewAnalyzer(catalog *Catalog) (*Analyzer, error) {
 	opt, err := newAnalyzerOptions()
@@ -37,54 +42,66 @@ func NewAnalyzer(catalog *Catalog) (*Analyzer, error) {
 	}, nil
 }
 
-func newAnalyzerOptions() (*zetasql.AnalyzerOptions, error) {
-	langOpt := zetasql.NewLanguageOptions()
-	langOpt.SetNameResolutionMode(zetasql.NameResolutionDefault)
+func newAnalyzerOptions() (*googlesql.AnalyzerOptions, error) {
+	langOpt := googlesql.NewLanguageOptions()
+	langOpt.SetNameResolutionMode(googlesql.NameResolutionDefault)
 	langOpt.SetProductMode(types.ProductInternal)
-	langOpt.SetEnabledLanguageFeatures([]zetasql.LanguageFeature{
-		zetasql.FeatureAnalyticFunctions,
-		zetasql.FeatureNamedArguments,
-		zetasql.FeatureNumericType,
-		zetasql.FeatureBignumericType,
-		zetasql.FeatureV13DecimalAlias,
-		zetasql.FeatureCreateTableNotNull,
-		zetasql.FeatureParameterizedTypes,
-		zetasql.FeatureTablesample,
-		zetasql.FeatureTimestampNanos,
-		zetasql.FeatureV11HavingInAggregate,
-		zetasql.FeatureV11NullHandlingModifierInAggregate,
-		zetasql.FeatureV11NullHandlingModifierInAnalytic,
-		zetasql.FeatureV11OrderByCollate,
-		zetasql.FeatureV11SelectStarExceptReplace,
-		zetasql.FeatureV12SafeFunctionCall,
-		zetasql.FeatureJsonType,
-		zetasql.FeatureJsonArrayFunctions,
-		zetasql.FeatureJsonStrictNumberParsing,
-		zetasql.FeatureV13IsDistinct,
-		zetasql.FeatureV13FormatInCast,
-		zetasql.FeatureV13DateArithmetics,
-		zetasql.FeatureV11OrderByInAggregate,
-		zetasql.FeatureV11LimitInAggregate,
-		zetasql.FeatureV13DateTimeConstructors,
-		zetasql.FeatureV13ExtendedDateTimeSignatures,
-		zetasql.FeatureV12CivilTime,
-		zetasql.FeatureV12WeekWithWeekday,
-		zetasql.FeatureIntervalType,
-		zetasql.FeatureGroupByRollup,
-		zetasql.FeatureV13NullsFirstLastInOrderBy,
-		zetasql.FeatureV13Qualify,
-		zetasql.FeatureV13AllowDashesInTableName,
-		zetasql.FeatureGeography,
-		zetasql.FeatureV13ExtendedGeographyParsers,
-		zetasql.FeatureTemplateFunctions,
-		zetasql.FeatureV11WithOnSubquery,
-		zetasql.FeatureV13Pivot,
-		zetasql.FeatureV13Unpivot,
-		zetasql.FeatureDMLUpdateWithJoin,
-		zetasql.FeatureV13OmitInsertColumnList,
-		zetasql.FeatureV13WithRecursive,
-		zetasql.FeatureV12GroupByArray,
-		zetasql.FeatureV12GroupByStruct,
+	langOpt.SetEnabledLanguageFeatures([]googlesql.LanguageFeature{
+		googlesql.FeatureAnalyticFunctions,
+		googlesql.FeatureNamedArguments,
+		googlesql.FeatureNumericType,
+		googlesql.FeatureBignumericType,
+		googlesql.FeatureV13DecimalAlias,
+		googlesql.FeatureCreateTableNotNull,
+		googlesql.FeatureParameterizedTypes,
+		googlesql.FeatureTablesample,
+		googlesql.FeatureTimestampNanos,
+		googlesql.FeatureV11HavingInAggregate,
+		googlesql.FeatureV11NullHandlingModifierInAggregate,
+		googlesql.FeatureV11NullHandlingModifierInAnalytic,
+		googlesql.FeatureV11OrderByCollate,
+		googlesql.FeatureV11SelectStarExceptReplace,
+		googlesql.FeatureV12SafeFunctionCall,
+		googlesql.FeatureJsonType,
+		googlesql.FeatureJsonArrayFunctions,
+		googlesql.FeatureJsonConstructorFunctions,
+		googlesql.FeatureJsonMutatorFunctions,
+		googlesql.FeatureJsonKeysFunction,
+		googlesql.FeatureJsonLaxValueExtractionFunctions,
+		googlesql.FeatureJsonStrictNumberParsing,
+		googlesql.FeatureV13IsDistinct,
+		googlesql.FeatureV13FormatInCast,
+		googlesql.FeatureV13DateArithmetics,
+		googlesql.FeatureV11OrderByInAggregate,
+		googlesql.FeatureV11LimitInAggregate,
+		googlesql.FeatureV13DateTimeConstructors,
+		googlesql.FeatureV13ExtendedDateTimeSignatures,
+		googlesql.FeatureV12CivilTime,
+		googlesql.FeatureV12WeekWithWeekday,
+		googlesql.FeatureIntervalType,
+		googlesql.FeatureGroupByRollup,
+		googlesql.FeatureV13NullsFirstLastInOrderBy,
+		googlesql.FeatureV13Qualify,
+		googlesql.FeatureV13AllowDashesInTableName,
+		googlesql.FeatureGeography,
+		googlesql.FeatureV13ExtendedGeographyParsers,
+		googlesql.FeatureTemplateFunctions,
+		googlesql.FeatureV11WithOnSubquery,
+		googlesql.FeatureV13Pivot,
+		googlesql.FeatureV13Unpivot,
+		googlesql.FeatureDMLUpdateWithJoin,
+		googlesql.FeatureV13OmitInsertColumnList,
+		googlesql.FeatureV13WithRecursive,
+		googlesql.FeatureV12GroupByArray,
+		googlesql.FeatureV12GroupByStruct,
+		// v1.4 builtins (numeric ids until named in go-googlesql enum): FIRST/LAST N, NULLIFZERO/ZEROIFNULL, PI
+		googlesql.LanguageFeature(14027),
+		googlesql.LanguageFeature(14028),
+		googlesql.LanguageFeature(14029),
+		// 2023.09.1 options.proto: singleton UNNEST alias, ARRAY_ZIP, multiway UNNEST
+		googlesql.LanguageFeature(14031),
+		googlesql.LanguageFeature(14032),
+		googlesql.LanguageFeature(14033),
 	})
 	langOpt.SetSupportedStatementKinds([]ast.Kind{
 		ast.BeginStmt,
@@ -107,15 +124,15 @@ func newAnalyzerOptions() (*zetasql.AnalyzerOptions, error) {
 		ast.CreateRowAccessPolicyStmt,
 	})
 	// Enable QUALIFY without WHERE
-	//https://github.com/google/zetasql/issues/124
+	//https://github.com/google/googlesql/issues/124
 	err := langOpt.EnableReservableKeyword("QUALIFY", true)
 	if err != nil {
 		return nil, err
 	}
-	opt := zetasql.NewAnalyzerOptions()
+	opt := googlesql.NewAnalyzerOptions()
 	opt.SetAllowUndeclaredParameters(true)
 	opt.SetLanguage(langOpt)
-	opt.SetParseLocationRecordType(zetasql.ParseLocationRecordFullNodeScope)
+	opt.SetParseLocationRecordType(googlesql.ParseLocationRecordFullNodeScope)
 	return opt, nil
 }
 
@@ -158,10 +175,10 @@ func (a *Analyzer) AddNamePath(path string) error {
 }
 
 func (a *Analyzer) parseScript(query string) ([]parsed_ast.StatementNode, error) {
-	loc := zetasql.NewParseResumeLocation(query)
+	loc := googlesql.NewParseResumeLocation(query)
 	var stmts []parsed_ast.StatementNode
 	for {
-		stmt, isEnd, err := zetasql.ParseNextScriptStatement(loc, a.opt.ParserOptions())
+		stmt, isEnd, err := googlesql.ParseNextScriptStatement(loc, a.opt.ParserOptions())
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse statement: %w", err)
 		}
@@ -178,7 +195,108 @@ func (a *Analyzer) parseScript(query string) ([]parsed_ast.StatementNode, error)
 	return stmts, nil
 }
 
-func (a *Analyzer) getParameterMode(stmt parsed_ast.StatementNode) (zetasql.ParameterMode, error) {
+func normalizePositionalParameters(query string, parameters []*bigquery.QueryParameter) (string, []*bigquery.QueryParameter) {
+	if !strings.Contains(query, "?") {
+		return query, parameters
+	}
+
+	var (
+		builder          strings.Builder
+		positionalIdx    int
+		inSingleQuote    bool
+		inDoubleQuote    bool
+		inBacktick       bool
+		normalizedParams []*bigquery.QueryParameter
+	)
+	if len(parameters) > 0 {
+		normalizedParams = make([]*bigquery.QueryParameter, 0, len(parameters))
+	}
+
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+		switch ch {
+		case '\'':
+			if !inDoubleQuote && !inBacktick {
+				inSingleQuote = !inSingleQuote
+			}
+			builder.WriteByte(ch)
+		case '"':
+			if !inSingleQuote && !inBacktick {
+				inDoubleQuote = !inDoubleQuote
+			}
+			builder.WriteByte(ch)
+		case '`':
+			if !inSingleQuote && !inDoubleQuote {
+				inBacktick = !inBacktick
+			}
+			builder.WriteByte(ch)
+		case '?':
+			if inSingleQuote || inDoubleQuote || inBacktick {
+				builder.WriteByte(ch)
+				continue
+			}
+			positionalIdx++
+			_, _ = fmt.Fprintf(&builder, "@p%d", positionalIdx)
+		default:
+			builder.WriteByte(ch)
+		}
+	}
+
+	if len(parameters) == 0 {
+		return builder.String(), nil
+	}
+	positionalIdx = 0
+	for _, parameter := range parameters {
+		if parameter.Name == "" {
+			positionalIdx++
+			copied := *parameter
+			copied.Name = fmt.Sprintf("p%d", positionalIdx)
+			normalizedParams = append(normalizedParams, &copied)
+			continue
+		}
+		normalizedParams = append(normalizedParams, parameter)
+	}
+	return builder.String(), normalizedParams
+}
+
+func validateLiteralCast(stmtQuery string) error {
+	match := invalidInt64CastPattern.FindStringSubmatchIndex(stmtQuery)
+	if match == nil {
+		return nil
+	}
+	literal := stmtQuery[match[2]:match[3]]
+	unquoted, err := strconv.Unquote(literal)
+	if err != nil {
+		return nil
+	}
+	if _, err := strconv.ParseInt(unquoted, 10, 64); err == nil {
+		return nil
+	}
+	return fmt.Errorf(
+		`INVALID_ARGUMENT: Could not cast literal %s to type INT64 [at 1:%d]`,
+		literal,
+		match[2]+1,
+	)
+}
+
+func normalizeSafeLiteralCasts(query string) string {
+	return invalidSafeInt64CastPattern.ReplaceAllStringFunc(query, func(match string) string {
+		submatches := invalidSafeInt64CastPattern.FindStringSubmatch(match)
+		if len(submatches) < 2 {
+			return match
+		}
+		unquoted, err := strconv.Unquote(submatches[1])
+		if err != nil {
+			return match
+		}
+		if _, err := strconv.ParseInt(unquoted, 10, 64); err == nil {
+			return match
+		}
+		return "CAST(NULL AS INT64)"
+	})
+}
+
+func (a *Analyzer) getParameterMode(stmt parsed_ast.StatementNode) (googlesql.ParameterMode, error) {
 	var (
 		enabledNamedParameter      bool
 		enabledPositionalParameter bool
@@ -186,7 +304,7 @@ func (a *Analyzer) getParameterMode(stmt parsed_ast.StatementNode) (zetasql.Para
 	_ = parsed_ast.Walk(stmt, func(node parsed_ast.Node) error {
 		switch n := node.(type) {
 		case *parsed_ast.ParameterExprNode:
-			if n.Position() > 0 {
+			if n.Name() == nil {
 				enabledPositionalParameter = true
 			}
 			if n.Name() != nil {
@@ -196,18 +314,18 @@ func (a *Analyzer) getParameterMode(stmt parsed_ast.StatementNode) (zetasql.Para
 		return nil
 	})
 	if enabledNamedParameter && enabledPositionalParameter {
-		return zetasql.ParameterNone, fmt.Errorf("named parameter and positional parameter cannot be used together")
+		return googlesql.ParameterNone, fmt.Errorf("named parameter and positional parameter cannot be used together")
 	}
 
 	if enabledPositionalParameter {
-		return zetasql.ParameterPositional, nil
+		return googlesql.ParameterPositional, nil
 	}
-	return zetasql.ParameterNamed, nil
+	return googlesql.ParameterNamed, nil
 }
 
 type StmtActionFunc func() (StmtAction, error)
 
-func (a *Analyzer) configureQueryParameters(options *zetasql.AnalyzerOptions) error {
+func (a *Analyzer) configureQueryParameters(options *googlesql.AnalyzerOptions) error {
 	parameters := a.PopQueryParameters()
 	if parameters == nil {
 		return nil
@@ -218,7 +336,7 @@ func (a *Analyzer) configureQueryParameters(options *zetasql.AnalyzerOptions) er
 	options.SetAllowUndeclaredParameters(false)
 
 	for _, parameter := range parameters {
-		parameterType, err := ZetaSQLTypeFromBigQueryType(parameter.ParameterType)
+		parameterType, err := GoogleSQLTypeFromBigQueryType(parameter.ParameterType)
 		if err != nil {
 			return err
 		}
@@ -239,6 +357,11 @@ func (a *Analyzer) configureQueryParameters(options *zetasql.AnalyzerOptions) er
 }
 
 func (a *Analyzer) Analyze(ctx context.Context, conn *Conn, query string, args []driver.NamedValue) ([]StmtActionFunc, error) {
+	query = normalizeSafeLiteralCasts(query)
+	query, a.queryParameters = normalizePositionalParameters(query, a.queryParameters)
+	if err := validateLiteralCast(query); err != nil {
+		return nil, fmt.Errorf("failed to analyze: %w", err)
+	}
 	if err := a.catalog.Sync(ctx, conn); err != nil {
 		return nil, fmt.Errorf("failed to sync catalog: %w", err)
 	}
@@ -262,27 +385,37 @@ func (a *Analyzer) Analyze(ctx context.Context, conn *Conn, query string, args [
 	for _, stmt := range stmts {
 		stmt := stmt
 		actionFuncs = append(actionFuncs, func() (StmtAction, error) {
+			stmtQuery := query
+			if locRange := stmt.ParseLocationRange(); locRange != nil && locRange.Start() != nil && locRange.End() != nil {
+				start := locRange.Start().ByteOffset()
+				end := locRange.End().ByteOffset()
+				if 0 <= start && start <= end && end <= len(query) {
+					stmtQuery = query[start:end]
+				}
+			}
+			if err := validateLiteralCast(stmtQuery); err != nil {
+				return nil, fmt.Errorf("failed to analyze: %w", err)
+			}
+			alignedStmt, err := googlesql.ParseStatement(stmtQuery, a.opt.ParserOptions())
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse statement for analysis alignment: %w", err)
+			}
 			mode, err := a.getParameterMode(stmt)
 			if err != nil {
 				return nil, err
 			}
 			options.SetParameterMode(mode)
-			out, err := zetasql.AnalyzeStatementFromParserAST(
-				query,
-				stmt,
-				a.catalog,
-				options,
-			)
+			out, err := googlesql.AnalyzeStatement(stmtQuery, a.catalog, options)
 			if err != nil {
 				return nil, fmt.Errorf("failed to analyze: %w", err)
 			}
 			stmtNode := out.Statement()
-			ctx = a.context(ctx, funcMap, stmtNode, stmt)
+			ctx = a.context(ctx, funcMap, stmtNode, alignedStmt)
 			action, err := a.newStmtAction(ctx, query, args, stmtNode)
 			if err != nil {
 				return nil, err
 			}
-			if mode == zetasql.ParameterPositional {
+			if mode == googlesql.ParameterPositional {
 				args = args[len(action.Args()):]
 			}
 			return action, nil
@@ -291,10 +424,10 @@ func (a *Analyzer) Analyze(ctx context.Context, conn *Conn, query string, args [
 	return actionFuncs, nil
 }
 
-func ZetaSQLTypeFromBigQueryType(t *bigquery.QueryParameterType) (types.Type, error) {
-	// Generates ZetaSQL annotated types from a list of bigquery query parameters
+func GoogleSQLTypeFromBigQueryType(t *bigquery.QueryParameterType) (types.Type, error) {
+	// Generates GoogleSQL annotated types from a list of bigquery query parameters
 	if t.Type == "ARRAY" {
-		element, err := ZetaSQLTypeFromBigQueryType(t.ArrayType)
+		element, err := GoogleSQLTypeFromBigQueryType(t.ArrayType)
 		if err != nil {
 			return nil, err
 		}
@@ -304,7 +437,7 @@ func ZetaSQLTypeFromBigQueryType(t *bigquery.QueryParameterType) (types.Type, er
 	if t.Type == "STRUCT" {
 		fields := []*types.StructField{}
 		for _, field := range t.StructTypes {
-			element, err := ZetaSQLTypeFromBigQueryType(field.Type)
+			element, err := GoogleSQLTypeFromBigQueryType(field.Type)
 			if err != nil {
 				return nil, err
 			}
@@ -314,48 +447,48 @@ func ZetaSQLTypeFromBigQueryType(t *bigquery.QueryParameterType) (types.Type, er
 		return types.NewStructType(fields)
 	}
 
-	var zetasqlType types.Type
+	var googlesqlType types.Type
 	switch t.Type {
 	case "INT32":
-		zetasqlType = types.Int32Type()
+		googlesqlType = types.Int32Type()
 	case "INT64":
-		zetasqlType = types.Int64Type()
+		googlesqlType = types.Int64Type()
 	case "UINT32":
-		zetasqlType = types.Uint32Type()
+		googlesqlType = types.Uint32Type()
 	case "UINT64":
-		zetasqlType = types.Uint64Type()
+		googlesqlType = types.Uint64Type()
 	case "BOOL":
-		zetasqlType = types.BoolType()
+		googlesqlType = types.BoolType()
 	case "FLOAT", "FLOAT32":
-		zetasqlType = types.FloatType()
+		googlesqlType = types.FloatType()
 	case "FLOAT64", "DOUBLE":
-		zetasqlType = types.DoubleType()
+		googlesqlType = types.DoubleType()
 	case "STRING":
-		zetasqlType = types.StringType()
+		googlesqlType = types.StringType()
 	case "BYTES":
-		zetasqlType = types.BytesType()
+		googlesqlType = types.BytesType()
 	case "DATE":
-		zetasqlType = types.DateType()
+		googlesqlType = types.DateType()
 	case "TIMESTAMP":
-		zetasqlType = types.TimestampType()
+		googlesqlType = types.TimestampType()
 	case "TIME":
-		zetasqlType = types.TimeType()
+		googlesqlType = types.TimeType()
 	case "DATETIME":
-		zetasqlType = types.DatetimeType()
+		googlesqlType = types.DatetimeType()
 	case "GEOGRAPHY":
-		zetasqlType = types.GeographyType()
+		googlesqlType = types.GeographyType()
 	case "NUMERIC", "DECIMAL":
-		zetasqlType = types.NumericType()
+		googlesqlType = types.NumericType()
 	case "BIGDECIMAL", "BIGNUMERIC":
-		zetasqlType = types.BigNumericType()
+		googlesqlType = types.BigNumericType()
 	case "JSON":
-		zetasqlType = types.JsonType()
+		googlesqlType = types.JsonType()
 	case "INTERVAL":
-		zetasqlType = types.IntervalType()
+		googlesqlType = types.IntervalType()
 	default:
 		return nil, fmt.Errorf("unsupported query parameter type: %s", t.Type)
 	}
-	return zetasqlType, nil
+	return googlesqlType, nil
 
 }
 
@@ -367,12 +500,12 @@ func (a *Analyzer) context(
 	ctx = withAnalyzer(ctx, a)
 	ctx = withNamePath(ctx, a.namePath)
 	ctx = withFuncMap(ctx, funcMap)
-	ctx = withNodeMap(ctx, zetasql.NewNodeMap(stmtNode, stmt))
+	ctx = withNodeMap(ctx, googlesql.NewNodeMap(stmtNode, stmt))
 	return ctx
 }
 
 func (a *Analyzer) analyzeTemplatedFunctionWithRuntimeArgument(ctx context.Context, query string) (*FunctionSpec, error) {
-	out, err := zetasql.AnalyzeStatement(query, a.catalog, a.opt)
+	out, err := googlesql.AnalyzeStatement(query, a.catalog, a.opt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze: %w", err)
 	}
@@ -537,7 +670,7 @@ var inferTypes = []string{
 func (a *Analyzer) inferTemplatedTypeByRealType(query string, node *ast.CreateFunctionStmtNode) ([]*ast.CreateFunctionStmtNode, error) {
 	var stmts []*ast.CreateFunctionStmtNode
 	for _, typ := range inferTypes {
-		if out, err := zetasql.AnalyzeStatement(a.buildScalarTypeFuncFromTemplatedFunc(node, typ), a.catalog, a.opt); err == nil {
+		if out, err := googlesql.AnalyzeStatement(a.buildScalarTypeFuncFromTemplatedFunc(node, typ), a.catalog, a.opt); err == nil {
 			stmts = append(stmts, out.Statement().(*ast.CreateFunctionStmtNode))
 		}
 	}
@@ -545,7 +678,7 @@ func (a *Analyzer) inferTemplatedTypeByRealType(query string, node *ast.CreateFu
 		return stmts, nil
 	}
 	for _, typ := range inferTypes {
-		if out, err := zetasql.AnalyzeStatement(a.buildArrayTypeFuncFromTemplatedFunc(node, typ), a.catalog, a.opt); err == nil {
+		if out, err := googlesql.AnalyzeStatement(a.buildArrayTypeFuncFromTemplatedFunc(node, typ), a.catalog, a.opt); err == nil {
 			stmts = append(stmts, out.Statement().(*ast.CreateFunctionStmtNode))
 		}
 	}
@@ -566,7 +699,7 @@ func (a *Analyzer) buildScalarTypeFuncFromTemplatedFunc(node *ast.CreateFunction
 		args = append(args, fmt.Sprintf("%s %s", arg.ArgumentName(), typ))
 	}
 	return fmt.Sprintf(
-		"CREATE TEMP FUNCTION __zetasqlite_func__(%s) as (%s)",
+		"CREATE TEMP FUNCTION __googlesqlite_func__(%s) as (%s)",
 		strings.Join(args, ","),
 		node.Code(),
 	)
@@ -583,7 +716,7 @@ func (a *Analyzer) buildArrayTypeFuncFromTemplatedFunc(node *ast.CreateFunctionS
 		args = append(args, fmt.Sprintf("%s %s", arg.ArgumentName(), typ))
 	}
 	return fmt.Sprintf(
-		"CREATE TEMP FUNCTION __zetasqlite_func__(%s) as (%s)",
+		"CREATE TEMP FUNCTION __googlesqlite_func__(%s) as (%s)",
 		strings.Join(args, ","),
 		node.Code(),
 	)
@@ -660,6 +793,7 @@ func (a *Analyzer) newDMLStmtAction(ctx context.Context, query string, args []dr
 		params:         params,
 		args:           queryArgs,
 		formattedQuery: result.Fragment.String(),
+		catalog:        a.catalog,
 	}, nil
 }
 
@@ -675,7 +809,7 @@ func (a *Analyzer) newQueryStmtAction(ctx context.Context, query string, args []
 	params := getParamsFromNode(node)
 	if disabledFormatting, ok := ctx.Value(DisableQueryFormattingKey{}).(bool); ok && disabledFormatting {
 		formattedQuery = query
-		// ZetaSQL will always lowercase parameter names, so we must match it in the query
+		// GoogleSQL will always lowercase parameter names, so we must match it in the query
 		queryBytes := []byte(query)
 		for _, param := range params {
 			location := param.ParseLocationRange()
@@ -709,6 +843,7 @@ func (a *Analyzer) newQueryStmtAction(ctx context.Context, query string, args []
 		formattedQuery: formattedQuery,
 		outputColumns:  outputColumns,
 		isExplainMode:  a.isExplainMode,
+		catalog:        a.catalog,
 	}, nil
 }
 
@@ -722,29 +857,32 @@ func (a *Analyzer) newCommitStmtAction(ctx context.Context, query string, args [
 
 func (a *Analyzer) newTruncateStmtAction(ctx context.Context, query string, args []driver.NamedValue, node *ast.TruncateStmtNode) (*TruncateStmtAction, error) {
 	unresolvedNodes := nodeMapFromContext(ctx).FindNodeFromResolvedNode(node)
-	if len(unresolvedNodes) == 0 {
-		return nil, fmt.Errorf("expected to find one node but got %d", len(unresolvedNodes))
+	namePath := resolvedTableNamePath(node.TableScan())
+	if len(namePath) == 0 {
+		namePath = []string{node.TableScan().Table().Name()}
 	}
 	var truncateNode parsed_ast.Node
 	for _, unresolvedNode := range unresolvedNodes {
 		if unresolvedNode.Kind() == parsed_ast.TrucateStatement {
 			truncateNode = unresolvedNode
+			break
 		}
 	}
-	if truncateNode == nil {
-		return nil, fmt.Errorf("expected to find a truncate statement but got %v", truncateNode)
-	}
-	namePath := []string{node.TableScan().Table().Name()}
-	for i := 0; i < truncateNode.NumChildren(); i++ {
-		if pathExpressionNode, ok := truncateNode.Child(i).(*parsed_ast.PathExpressionNode); ok {
-			var err error
-			namePath, err = getPathFromNode(pathExpressionNode)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get truncate path from node %d: %w ", i, err)
+	if truncateNode != nil {
+		for i := 0; i < truncateNode.NumChildren(); i++ {
+			if pathExpressionNode, ok := truncateNode.Child(i).(*parsed_ast.PathExpressionNode); ok {
+				var err error
+				namePath, err = getPathFromNode(pathExpressionNode)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get truncate path from node %d: %w ", i, err)
+				}
 			}
 		}
 	}
-	return &TruncateStmtAction{query: fmt.Sprintf("DELETE FROM `%s`", a.namePath.format(namePath))}, nil
+	return &TruncateStmtAction{
+		query:   fmt.Sprintf("DELETE FROM `%s`", a.namePath.format(namePath)),
+		catalog: a.catalog,
+	}, nil
 }
 
 func (a *Analyzer) newMergeStmtAction(ctx context.Context, query string, args []driver.NamedValue, node *ast.MergeStmtNode) (*MergeStmtAction, error) {
@@ -812,7 +950,16 @@ func getArgsFromParams(values []driver.NamedValue, params []*ast.ParameterNode) 
 			if exists {
 				namedValues = append(namedValues, value)
 			} else {
-				namedValues = append(namedValues, values[idx])
+				fallbackIdx := idx
+				if positionalIdx, ok := synthesizedPositionalParamIndex(name); ok {
+					fallbackIdx = positionalIdx
+				}
+				if fallbackIdx >= len(values) {
+					return nil, fmt.Errorf("not enough query arguments")
+				}
+				fallback := values[fallbackIdx]
+				fallback.Name = name
+				namedValues = append(namedValues, fallback)
 			}
 		} else {
 			namedValues = append(namedValues, values[idx])
@@ -827,4 +974,15 @@ func getArgsFromParams(values []driver.NamedValue, params []*ast.ParameterNode) 
 		args = append(args, newNamedValue)
 	}
 	return args, nil
+}
+
+func synthesizedPositionalParamIndex(name string) (int, bool) {
+	if len(name) < 2 || name[0] != 'p' {
+		return 0, false
+	}
+	idx, err := strconv.Atoi(name[1:])
+	if err != nil || idx <= 0 {
+		return 0, false
+	}
+	return idx - 1, true
 }

@@ -4,13 +4,13 @@ import (
 	"fmt"
 )
 
-// AnalyticScanTransformer handles analytic scan (window function) transformations from ZetaSQL to SQLite.
+// AnalyticScanTransformer handles analytic scan (window function) transformations from GoogleSQL to SQLite.
 //
-// In BigQuery/ZetaSQL, analytic scans represent window functions that compute values over
+// In BigQuery/GoogleSQL, analytic scans represent window functions that compute values over
 // a set of rows related to the current row. This includes functions like ROW_NUMBER(),
 // RANK(), LAG(), LEAD(), SUM() OVER(), etc. with PARTITION BY and ORDER BY clauses.
 //
-// The transformer converts ZetaSQL AnalyticScan nodes by:
+// The transformer converts GoogleSQL AnalyticScan nodes by:
 // - Recursively transforming the input scan that provides the base data
 // - Pre-transforming all window function expressions before column registration
 // - Creating SELECT list with both passthrough columns and computed window functions
@@ -101,11 +101,11 @@ func (t *AnalyticScanTransformer) Transform(data ScanData, ctx TransformContext)
 		if funcData.Expression.Type == ExpressionTypeFunction && funcData.Expression.Function != nil && funcData.Expression.Function.WindowSpec != nil {
 			windowSpec := funcData.Expression.Function.WindowSpec
 
-			// Add PARTITION BY expressions first (use unqualified column names with zetasqlite_collate)
+			// Add PARTITION BY expressions first (use unqualified column names with googlesqlite_collate)
 			for _, partData := range windowSpec.PartitionBy {
 				if partData.Type == ExpressionTypeColumn && partData.Column != nil {
 					expr := ctx.FragmentContext().GetQualifiedColumnExpression(partData.Column.ColumnID)
-					expr.Collation = "zetasqlite_collate"
+					expr.Collation = "googlesqlite_collate"
 					orderByItems = append(orderByItems, &OrderByItem{
 						Expression: expr,
 						Direction:  "ASC",
@@ -113,7 +113,7 @@ func (t *AnalyticScanTransformer) Transform(data ScanData, ctx TransformContext)
 				}
 			}
 
-			// Add ORDER BY expressions (use unqualified column names with zetasqlite_collate)
+			// Add ORDER BY expressions (use unqualified column names with googlesqlite_collate)
 			for _, orderData := range windowSpec.OrderBy {
 				if orderData.Expression.Type == ExpressionTypeColumn && orderData.Expression.Column != nil {
 					expr := ctx.FragmentContext().GetQualifiedColumnExpression(orderData.Expression.Column.ColumnID)
@@ -121,7 +121,7 @@ func (t *AnalyticScanTransformer) Transform(data ScanData, ctx TransformContext)
 					if orderData.IsDescending {
 						direction = "DESC"
 					}
-					expr.Collation = "zetasqlite_collate"
+					expr.Collation = "googlesqlite_collate"
 					orderByItems = append(orderByItems, &OrderByItem{
 						Expression: expr,
 						Direction:  direction,

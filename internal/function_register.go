@@ -192,10 +192,22 @@ var normalFuncs = []*FuncInfo{
 	{Name: "parse_json", BindFunc: bindParseJson},
 	{Name: "to_json", BindFunc: bindToJson},
 	{Name: "to_json_string", BindFunc: bindToJsonString},
+	{Name: "json_object", BindFunc: bindJsonObject},
+	{Name: "json_array", BindFunc: bindJsonArray},
+	{Name: "json_remove", BindFunc: bindJsonRemove},
+	{Name: "json_set", BindFunc: bindJsonSet},
+	{Name: "json_keys", BindFunc: bindJsonKeys},
+	{Name: "json_strip_nulls", BindFunc: bindJsonStripNulls},
 	{Name: "bool", BindFunc: bindBool},
 	{Name: "int64", BindFunc: bindInt64},
+	{Name: "float64", BindFunc: bindDouble},
 	{Name: "double", BindFunc: bindDouble},
 	{Name: "json_type", BindFunc: bindJsonType},
+	{Name: "lax_int64", BindFunc: bindLaxInt64},
+	{Name: "lax_bool", BindFunc: bindLaxBool},
+	{Name: "lax_string", BindFunc: bindLaxString},
+	{Name: "lax_double", BindFunc: bindLaxDouble},
+	{Name: "lax_float64", BindFunc: bindLaxDouble},
 
 	// math functions
 
@@ -234,19 +246,35 @@ var normalFuncs = []*FuncInfo{
 	{Name: "atan", BindFunc: bindAtan},
 	{Name: "atanh", BindFunc: bindAtanh},
 	{Name: "atan2", BindFunc: bindAtan2},
+	{Name: "coth", BindFunc: bindCoth},
+	{Name: "sech", BindFunc: bindSech},
+	{Name: "csch", BindFunc: bindCsch},
 	{Name: "range_bucket", BindFunc: bindRangeBucket},
+	{Name: "pi", BindFunc: bindPi},
+	{Name: "pi_numeric", BindFunc: bindPiNumeric},
+	{Name: "pi_bignumeric", BindFunc: bindPiBignumeric},
+	{Name: "nullifzero", BindFunc: bindNullIfZero},
+	{Name: "zeroifnull", BindFunc: bindZeroIfNull},
 
 	// array functions
 	{Name: "array_concat", BindFunc: bindArrayConcat},
 	{Name: "array_first", BindFunc: bindArrayFirst},
 	{Name: "array_last", BindFunc: bindArrayLast},
 	{Name: "array_slice", BindFunc: bindArraySlice},
+	{Name: "array_first_n", BindFunc: bindArrayFirstN},
+	{Name: "array_last_n", BindFunc: bindArrayLastN},
+	{Name: "array_remove_first_n", BindFunc: bindArrayRemoveFirstN},
+	{Name: "array_remove_last_n", BindFunc: bindArrayRemoveLastN},
 	{Name: "array_length", BindFunc: bindArrayLength},
 	{Name: "array_to_string", BindFunc: bindArrayToString},
 	{Name: "generate_array", BindFunc: bindGenerateArray},
 	{Name: "generate_date_array", BindFunc: bindGenerateDateArray},
 	{Name: "generate_timestamp_array", BindFunc: bindGenerateTimestampArray},
 	{Name: "array_reverse", BindFunc: bindArrayReverse},
+	{Name: "array_sum", BindFunc: bindArraySum},
+	{Name: "array_avg", BindFunc: bindArrayAvg},
+	{Name: "array_min", BindFunc: bindArrayMin},
+	{Name: "array_max", BindFunc: bindArrayMax},
 	{Name: "make_array", BindFunc: bindMakeArray},
 	{Name: "make_struct", BindFunc: bindMakeStruct},
 
@@ -390,10 +418,10 @@ var (
 		"current_time":      struct{}{},
 		"current_timestamp": struct{}{},
 
-		"zetasqlite_current_date":      struct{}{},
-		"zetasqlite_current_datetime":  struct{}{},
-		"zetasqlite_current_time":      struct{}{},
-		"zetasqlite_current_timestamp": struct{}{},
+		"googlesqlite_current_date":      struct{}{},
+		"googlesqlite_current_datetime":  struct{}{},
+		"googlesqlite_current_time":      struct{}{},
+		"googlesqlite_current_timestamp": struct{}{},
 	}
 )
 
@@ -426,7 +454,7 @@ func RegisterFunctions() error {
 		return onceErr
 	}
 
-	if err := sqlite.RegisterFunction("zetasqlite_decode_array",
+	if err := sqlite.RegisterFunction("googlesqlite_decode_array",
 		&sqlite.FunctionImpl{
 			Deterministic: true,
 			NArgs:         -1,
@@ -461,7 +489,7 @@ func RegisterFunctions() error {
 		return fmt.Errorf("failed to register decode_array function: %w", err)
 	}
 
-	if err := sqlite.RegisterFunction("zetasqlite_group_by", &sqlite.FunctionImpl{
+	if err := sqlite.RegisterFunction("googlesqlite_group_by", &sqlite.FunctionImpl{
 		Deterministic: true,
 		NArgs:         -1,
 		Scalar: func(ctx *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
@@ -493,10 +521,10 @@ func RegisterFunctions() error {
 			return strings.Join(elems, "||"), nil
 		},
 	}); err != nil {
-		return fmt.Errorf("failed to register function zetasqlite_group_by: %w", err)
+		return fmt.Errorf("failed to register function googlesqlite_group_by: %w", err)
 	}
 
-	sqlite.MustRegisterCollationUtf8("zetasqlite_collate", func(a, b string) int {
+	sqlite.MustRegisterCollationUtf8("googlesqlite_collate", func(a, b string) int {
 		va, _ := DecodeValue(a)
 		vb, _ := DecodeValue(b)
 		eq, _ := va.EQ(vb)
@@ -546,7 +574,7 @@ func RegisterFunctions() error {
 
 func setupNormalFuncMap(info *FuncInfo) error {
 	normalFuncMap[info.Name] = &NameAndFunc{
-		Name: fmt.Sprintf("zetasqlite_%s", info.Name),
+		Name: fmt.Sprintf("googlesqlite_%s", info.Name),
 		Func: func(ctx *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 			values, err := convertArgs(args)
 			if err != nil {
@@ -562,7 +590,7 @@ func setupNormalFuncMap(info *FuncInfo) error {
 
 	safeName := fmt.Sprintf("safe_%s", info.Name)
 	normalFuncMap[safeName] = &NameAndFunc{
-		Name: fmt.Sprintf("zetasqlite_%s", safeName),
+		Name: fmt.Sprintf("googlesqlite_%s", safeName),
 		Func: func(ctx *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 			values, err := convertArgs(args)
 			if err != nil {
@@ -577,7 +605,7 @@ func setupNormalFuncMap(info *FuncInfo) error {
 			if err != nil {
 				// Note, this should only suppress semantic errors based on the
 				// input data. See
-				// https://github.com/google/zetasql/blob/master/docs/resolved_ast.md#resolvedfunctioncallbase
+				// https://github.com/google/googlesql/blob/master/docs/resolved_ast.md#resolvedfunctioncallbase
 				return nil, nil
 			}
 			return EncodeValue(ret)
@@ -588,7 +616,7 @@ func setupNormalFuncMap(info *FuncInfo) error {
 
 func setupAggregateFuncMap(info *AggregateFuncInfo) error {
 	aggregateFuncMap[info.Name] = append(aggregateFuncMap[info.Name], &AggregateNameAndFunc{
-		Name:          fmt.Sprintf("zetasqlite_%s", info.Name),
+		Name:          fmt.Sprintf("googlesqlite_%s", info.Name),
 		MakeAggregate: info.BindFunc(),
 	})
 	return nil
@@ -596,7 +624,7 @@ func setupAggregateFuncMap(info *AggregateFuncInfo) error {
 
 func setupWindowFuncMap(info *WindowFuncInfo) error {
 	windowFuncMap[info.Name] = append(windowFuncMap[info.Name], &AggregateNameAndFunc{
-		Name:          fmt.Sprintf("zetasqlite_window_%s", info.Name),
+		Name:          fmt.Sprintf("googlesqlite_window_%s", info.Name),
 		MakeAggregate: info.BindFunc(),
 	})
 	return nil

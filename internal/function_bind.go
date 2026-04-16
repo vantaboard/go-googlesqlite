@@ -4,6 +4,9 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"math"
+	"strings"
+
 	"github.com/goccy/go-json"
 	"modernc.org/sqlite"
 )
@@ -1673,21 +1676,161 @@ func bindParseJson(args ...Value) (Value, error) {
 }
 
 func bindToJson(args ...Value) (Value, error) {
-	if len(args) != 1 && len(args) != 2 {
+	if len(args) != 1 && len(args) != 2 && len(args) != 3 {
 		return nil, fmt.Errorf("TO_JSON: invalid argument num %d", len(args))
 	}
-	if existsNull(args) {
+	if args[0] == nil {
 		return nil, nil
 	}
 	var stringifyWideNumbers bool
-	if len(args) == 2 {
+	if len(args) >= 2 && args[1] != nil {
 		b, err := args[1].ToBool()
 		if err != nil {
 			return nil, err
 		}
 		stringifyWideNumbers = b
 	}
+	// Optional third named arg when FEATURE_TO_JSON_UNSUPPORTED_FIELDS is enabled
+	// (UnsupportedFields enum). Full encoding parity is not implemented yet.
+
 	return TO_JSON(args[0], stringifyWideNumbers)
+}
+
+func bindJsonObject(args ...Value) (Value, error) {
+	return JSON_OBJECT(args)
+}
+
+func bindJsonArray(args ...Value) (Value, error) {
+	return JSON_ARRAY(args)
+}
+
+func bindJsonRemove(args ...Value) (Value, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("JSON_REMOVE: invalid argument num %d", len(args))
+	}
+	if existsNull(args[:1]) {
+		return nil, nil
+	}
+	jv, ok := args[0].(JsonValue)
+	if !ok {
+		return nil, fmt.Errorf("JSON_REMOVE: expected JSON")
+	}
+	paths := make([]string, 0, len(args)-1)
+	for _, a := range args[1:] {
+		if a == nil {
+			return nil, nil
+		}
+		s, err := a.ToString()
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, s)
+	}
+	return JSON_REMOVE(jv, paths...)
+}
+
+func bindJsonSet(args ...Value) (Value, error) {
+	// JSON_SET(JSON, path, value[, path, value]... [, create_if_missing BOOL])
+	// GoogleSQL: json_set(json, string, any[, string, any, ...]); optional trailing BOOL.
+	if len(args) < 3 {
+		return nil, fmt.Errorf("JSON_SET: invalid argument num %d", len(args))
+	}
+	if existsNull(args[:1]) {
+		return nil, nil
+	}
+	jv, ok := args[0].(JsonValue)
+	if !ok {
+		return nil, fmt.Errorf("JSON_SET: expected JSON")
+	}
+	var pairs []Value
+	createIfMissing := true
+	if len(args)%2 == 0 {
+		// Even total count: trailing create_if_missing BOOL after path/value pairs.
+		last := args[len(args)-1]
+		if last == nil {
+			return jv, nil
+		}
+		var err error
+		createIfMissing, err = last.ToBool()
+		if err != nil {
+			return nil, err
+		}
+		pairs = args[1 : len(args)-1]
+	} else {
+		pairs = args[1:]
+	}
+	if len(pairs)%2 != 0 {
+		return nil, fmt.Errorf("JSON_SET: invalid argument num %d", len(args))
+	}
+	return JSON_SET(jv, pairs, createIfMissing)
+}
+
+func bindJsonStripNulls(args ...Value) (Value, error) {
+	if len(args) < 1 || len(args) > 4 {
+		return nil, fmt.Errorf("JSON_STRIP_NULLS: invalid argument num %d", len(args))
+	}
+	if existsNull(args[:1]) {
+		return nil, nil
+	}
+	jv, ok := args[0].(JsonValue)
+	if !ok {
+		return nil, fmt.Errorf("JSON_STRIP_NULLS: expected JSON")
+	}
+	return JSON_STRIP_NULLS(jv)
+}
+
+func bindJsonKeys(args ...Value) (Value, error) {
+	// JSON_KEYS(JSON[, INT64 max_depth][, STRING mode])
+	if len(args) < 1 || len(args) > 3 {
+		return nil, fmt.Errorf("JSON_KEYS: invalid argument num %d", len(args))
+	}
+	if existsNull(args[:1]) {
+		return nil, nil
+	}
+	jv, ok := args[0].(JsonValue)
+	if !ok {
+		return nil, fmt.Errorf("JSON_KEYS: expected JSON")
+	}
+	maxDepth := int64(math.MaxInt64)
+	if len(args) >= 2 && args[1] != nil {
+		var err error
+		maxDepth, err = args[1].ToInt64()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if maxDepth <= 0 {
+		return nil, fmt.Errorf("max_depth must be positive")
+	}
+	if len(args) >= 3 && args[2] == nil {
+		return nil, nil
+	}
+	modeStr := "strict"
+	if len(args) >= 3 {
+		var err error
+		modeStr, err = args[2].ToString()
+		if err != nil {
+			return nil, err
+		}
+	}
+	mode, err := parseJsonKeysMode(modeStr)
+	if err != nil {
+		return nil, err
+	}
+	return JSON_KEYS(jv, maxDepth, mode)
+}
+
+func parseJsonKeysMode(s string) (jsonKeysMode, error) {
+	switch {
+	case strings.EqualFold(s, "strict"):
+		return jsonKeysModeStrict, nil
+	case strings.EqualFold(s, "lax"):
+		return jsonKeysModeLax, nil
+	case strings.EqualFold(s, "lax recursive"):
+		return jsonKeysModeLaxRecursive, nil
+	default:
+		return 0, fmt.Errorf("invalid JSON mode specified")
+	}
 }
 
 func bindToJsonString(args ...Value) (Value, error) {
@@ -1748,6 +1891,62 @@ func bindJsonType(args ...Value) (Value, error) {
 		return nil, fmt.Errorf("JSON_TYPE: failed to convert %T to JSON value", args[0])
 	}
 	return JSON_TYPE(value)
+}
+
+func bindLaxInt64(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("LAX_INT64: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	jv, ok := args[0].(JsonValue)
+	if !ok {
+		return nil, fmt.Errorf("LAX_INT64: expected JSON value, got %T", args[0])
+	}
+	return LAX_INT64(jv)
+}
+
+func bindLaxBool(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("LAX_BOOL: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	jv, ok := args[0].(JsonValue)
+	if !ok {
+		return nil, fmt.Errorf("LAX_BOOL: expected JSON value, got %T", args[0])
+	}
+	return LAX_BOOL(jv)
+}
+
+func bindLaxString(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("LAX_STRING: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	jv, ok := args[0].(JsonValue)
+	if !ok {
+		return nil, fmt.Errorf("LAX_STRING: expected JSON value, got %T", args[0])
+	}
+	return LAX_STRING(jv)
+}
+
+func bindLaxDouble(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("LAX_DOUBLE: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	jv, ok := args[0].(JsonValue)
+	if !ok {
+		return nil, fmt.Errorf("LAX_DOUBLE: expected JSON value, got %T", args[0])
+	}
+	return LAX_DOUBLE(jv)
 }
 
 func bindAbs(args ...Value) (Value, error) {
@@ -2023,6 +2222,27 @@ func bindAtanh(args ...Value) (Value, error) {
 		return nil, nil
 	}
 	return ATANH(args[0])
+}
+
+func bindCoth(args ...Value) (Value, error) {
+	if existsNull(args) {
+		return nil, nil
+	}
+	return COTH(args[0])
+}
+
+func bindSech(args ...Value) (Value, error) {
+	if existsNull(args) {
+		return nil, nil
+	}
+	return SECH(args[0])
+}
+
+func bindCsch(args ...Value) (Value, error) {
+	if existsNull(args) {
+		return nil, nil
+	}
+	return CSCH(args[0])
 }
 
 func bindAtan2(args ...Value) (Value, error) {
@@ -2950,6 +3170,172 @@ func bindArraySlice(args ...Value) (Value, error) {
 		return nil, err
 	}
 	return ARRAY_SLICE(arr, startOffset, endOffset)
+}
+
+func bindArrayFirstN(args ...Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("ARRAY_FIRST_N: invalid argument num %d", len(args))
+	}
+	if existsNull(args) {
+		return nil, nil
+	}
+	arr, err := args[0].ToArray()
+	if err != nil {
+		return nil, err
+	}
+	n, err := args[1].ToInt64()
+	if err != nil {
+		return nil, err
+	}
+	return ARRAY_FIRST_N(arr, n)
+}
+
+func bindArrayLastN(args ...Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("ARRAY_LAST_N: invalid argument num %d", len(args))
+	}
+	if existsNull(args) {
+		return nil, nil
+	}
+	arr, err := args[0].ToArray()
+	if err != nil {
+		return nil, err
+	}
+	n, err := args[1].ToInt64()
+	if err != nil {
+		return nil, err
+	}
+	return ARRAY_LAST_N(arr, n)
+}
+
+func bindArrayRemoveFirstN(args ...Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("ARRAY_REMOVE_FIRST_N: invalid argument num %d", len(args))
+	}
+	if existsNull(args) {
+		return nil, nil
+	}
+	arr, err := args[0].ToArray()
+	if err != nil {
+		return nil, err
+	}
+	n, err := args[1].ToInt64()
+	if err != nil {
+		return nil, err
+	}
+	return ARRAY_REMOVE_FIRST_N(arr, n)
+}
+
+func bindArrayRemoveLastN(args ...Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("ARRAY_REMOVE_LAST_N: invalid argument num %d", len(args))
+	}
+	if existsNull(args) {
+		return nil, nil
+	}
+	arr, err := args[0].ToArray()
+	if err != nil {
+		return nil, err
+	}
+	n, err := args[1].ToInt64()
+	if err != nil {
+		return nil, err
+	}
+	return ARRAY_REMOVE_LAST_N(arr, n)
+}
+
+func bindPi(args ...Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("PI: invalid argument num %d", len(args))
+	}
+	return PI()
+}
+
+func bindPiNumeric(args ...Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("PI_NUMERIC: invalid argument num %d", len(args))
+	}
+	return PI_NUMERIC()
+}
+
+func bindPiBignumeric(args ...Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("PI_BIGNUMERIC: invalid argument num %d", len(args))
+	}
+	return PI_BIGNUMERIC()
+}
+
+func bindNullIfZero(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("NULLIFZERO: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	return NULLIFZERO(args[0])
+}
+
+func bindZeroIfNull(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("ZEROIFNULL: invalid argument num %d", len(args))
+	}
+	return ZEROIFNULL(args[0])
+}
+
+func bindArraySum(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("ARRAY_SUM: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	arr, err := args[0].ToArray()
+	if err != nil {
+		return nil, err
+	}
+	return ARRAY_SUM(arr)
+}
+
+func bindArrayAvg(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("ARRAY_AVG: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	arr, err := args[0].ToArray()
+	if err != nil {
+		return nil, err
+	}
+	return ARRAY_AVG(arr)
+}
+
+func bindArrayMin(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("ARRAY_MIN: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	arr, err := args[0].ToArray()
+	if err != nil {
+		return nil, err
+	}
+	return ARRAY_MIN(arr)
+}
+
+func bindArrayMax(args ...Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("ARRAY_MAX: invalid argument num %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	arr, err := args[0].ToArray()
+	if err != nil {
+		return nil, err
+	}
+	return ARRAY_MAX(arr)
 }
 
 func bindArrayLength(args ...Value) (Value, error) {

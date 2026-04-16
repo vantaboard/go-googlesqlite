@@ -382,6 +382,33 @@ func TANH(x Value) (Value, error) {
 	return FloatValue(math.Tanh(xv)), nil
 }
 
+// COTH returns the hyperbolic cotangent: cosh(x)/sinh(x).
+func COTH(x Value) (Value, error) {
+	xv, err := x.ToFloat64()
+	if err != nil {
+		return nil, err
+	}
+	return FloatValue(math.Cosh(xv) / math.Sinh(xv)), nil
+}
+
+// SECH returns the hyperbolic secant: 1/cosh(x).
+func SECH(x Value) (Value, error) {
+	xv, err := x.ToFloat64()
+	if err != nil {
+		return nil, err
+	}
+	return FloatValue(1 / math.Cosh(xv)), nil
+}
+
+// CSCH returns the hyperbolic cosecant: 1/sinh(x).
+func CSCH(x Value) (Value, error) {
+	xv, err := x.ToFloat64()
+	if err != nil {
+		return nil, err
+	}
+	return FloatValue(1 / math.Sinh(xv)), nil
+}
+
 func ATAN(x Value) (Value, error) {
 	xv, err := x.ToFloat64()
 	if err != nil {

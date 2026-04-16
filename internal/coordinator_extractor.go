@@ -3,8 +3,8 @@ package internal
 import (
 	"context"
 	"fmt"
-	parsed_ast "github.com/goccy/go-zetasql/ast"
-	ast "github.com/goccy/go-zetasql/resolved_ast"
+	parsed_ast "github.com/vantaboard/go-googlesql/ast"
+	ast "github.com/vantaboard/go-googlesql/resolved_ast"
 	"strings"
 )
 
@@ -91,10 +91,10 @@ func (e *NodeExtractor) extractLiteralData(node *ast.LiteralNode, ctx TransformC
 	originalValue := node.Value()
 	originalType := node.Type()
 
-	// Convert ZetaSQL value to zetasqlite Value
-	zetasqliteValue, err := ValueFromZetaSQLValue(originalValue)
+	// Convert GoogleSQL value to googlesqlite Value
+	googlesqliteValue, err := ValueFromGoogleSQLValue(originalValue)
 	if err != nil {
-		return ExpressionData{}, fmt.Errorf("failed to convert ZetaSQL value to zetasqlite Value: %w", err)
+		return ExpressionData{}, fmt.Errorf("failed to convert GoogleSQL value to googlesqlite Value: %w", err)
 	}
 
 	var typeName string
@@ -105,7 +105,7 @@ func (e *NodeExtractor) extractLiteralData(node *ast.LiteralNode, ctx TransformC
 	return ExpressionData{
 		Type: ExpressionTypeLiteral,
 		Literal: &LiteralData{
-			Value:    zetasqliteValue,
+			Value:    googlesqliteValue,
 			TypeName: typeName,
 		},
 	}, nil
@@ -115,29 +115,48 @@ func getFuncName(ctx context.Context, n ast.Node) (string, error) {
 	nodeMap := nodeMapFromContext(ctx)
 	found := nodeMap.FindNodeFromResolvedNode(n)
 	if len(found) == 0 {
+		if path := resolvedFunctionNamePath(n); len(path) != 0 {
+			return formatNameWithPath(namePathFromContext(ctx), path), nil
+		}
 		return "", fmt.Errorf("failed to find path node from function node %T", n)
 	}
-	var foundCallNode *parsed_ast.FunctionCallNode
-	for _, node := range found {
-		fcallNode, ok := node.(*parsed_ast.FunctionCallNode)
-		if !ok {
-			continue
-		}
-		foundCallNode = fcallNode
-		break
-	}
+	foundCallNode := findFunctionCallNode(found)
 	if foundCallNode == nil {
+		if path := resolvedFunctionNamePath(n); len(path) != 0 {
+			return formatNameWithPath(namePathFromContext(ctx), path), nil
+		}
 		return "", fmt.Errorf("failed to find function call node from %T", n)
 	}
 	path, err := getPathFromNode(foundCallNode.Function())
 	if err != nil {
+		if resolvedPath := resolvedFunctionNamePath(n); len(resolvedPath) != 0 {
+			return formatNameWithPath(namePathFromContext(ctx), resolvedPath), nil
+		}
 		return "", fmt.Errorf("failed to find path: %w", err)
 	}
-	namePath := namePathFromContext(ctx)
-	return namePath.format(path), nil
+	if resolvedPath := resolvedFunctionNamePath(n); len(resolvedPath) > len(path) {
+		path = resolvedPath
+	}
+	return formatNameWithPath(namePathFromContext(ctx), path), nil
 }
 
-func getZetasqliteFuncName(ctx context.Context, node *ast.BaseFunctionCallNode, isWindowFunc bool) (string, error) {
+func resolvedFunctionNamePath(node ast.Node) []string {
+	funcNode, ok := node.(*ast.BaseFunctionCallNode)
+	if !ok || funcNode.Function() == nil {
+		return nil
+	}
+	fullName := funcNode.Function().FullName(false)
+	if fullName != "" {
+		return strings.Split(fullName, ".")
+	}
+	path := funcNode.Function().FunctionNamePath()
+	if len(path) == 0 {
+		return nil
+	}
+	return path
+}
+
+func getGoogleSQLiteFuncName(ctx context.Context, node *ast.BaseFunctionCallNode, isWindowFunc bool) (string, error) {
 	funcName := node.Function().FullName(false)
 	funcName = strings.ReplaceAll(funcName, ".", "_")
 
@@ -146,12 +165,12 @@ func getZetasqliteFuncName(ctx context.Context, node *ast.BaseFunctionCallNode, 
 	_, existsAggregateFunc := aggregateFuncMap[funcName]
 	_, existsWindowFunc := windowFuncMap[funcName]
 
-	funcPrefix := "zetasqlite"
+	funcPrefix := "googlesqlite"
 	if node.ErrorMode() == ast.SafeErrorMode {
 		if !existsNormalFunc {
 			return "", fmt.Errorf("SAFE is not supported for function %s", funcName)
 		}
-		funcPrefix = "zetasqlite_safe"
+		funcPrefix = "googlesqlite_safe"
 	}
 
 	if strings.HasPrefix(funcName, "$") {
@@ -169,7 +188,7 @@ func getZetasqliteFuncName(ctx context.Context, node *ast.BaseFunctionCallNode, 
 	} else if isWindowFunc && existsWindowFunc {
 		funcName = fmt.Sprintf("%s_window_%s", funcPrefix, funcName)
 	} else {
-		if node.Function().IsZetaSQLBuiltin() {
+		if node.Function().IsGoogleSQLBuiltin() {
 			return "", fmt.Errorf("%s function is unimplemented", funcName)
 		}
 		fname, err := getFuncName(ctx, node)
@@ -185,7 +204,7 @@ func getZetasqliteFuncName(ctx context.Context, node *ast.BaseFunctionCallNode, 
 // extractFunctionCallData extracts data from function call nodes
 func (e *NodeExtractor) extractFunctionCallData(node *ast.BaseFunctionCallNode, ctx TransformContext, isWindowFunc bool) (ExpressionData, error) {
 	// Extract function name
-	funcName, err := getZetasqliteFuncName(ctx.Context(), node, isWindowFunc)
+	funcName, err := getGoogleSQLiteFuncName(ctx.Context(), node, isWindowFunc)
 	if err != nil {
 		return ExpressionData{}, fmt.Errorf("failed to get function name: %w", err)
 	}
@@ -223,9 +242,9 @@ func (e *NodeExtractor) extractFunctionCallData(node *ast.BaseFunctionCallNode, 
 		// Determine the HAVING modifier type
 		var havingFunc string
 		if originalFuncName == "min_by" {
-			havingFunc = "zetasqlite_having_min"
+			havingFunc = "googlesqlite_having_min"
 		} else {
-			havingFunc = "zetasqlite_having_max"
+			havingFunc = "googlesqlite_having_max"
 		}
 
 		// Transform to ANY_VALUE with HAVING modifier
@@ -233,7 +252,7 @@ func (e *NodeExtractor) extractFunctionCallData(node *ast.BaseFunctionCallNode, 
 		return ExpressionData{
 			Type: ExpressionTypeFunction,
 			Function: &FunctionCallData{
-				Name: "zetasqlite_any_value",
+				Name: "googlesqlite_any_value",
 				Arguments: []ExpressionData{
 					arguments[0], // x - the value to return
 					NewFunctionCallExpressionData(havingFunc, arguments[1]), // HAVING MIN/MAX(y)
@@ -372,7 +391,7 @@ func (e *NodeExtractor) extractMakeStructData(node *ast.MakeStructNode, ctx Tran
 	return ExpressionData{
 		Type: ExpressionTypeFunction,
 		Function: &FunctionCallData{
-			Name:      "zetasqlite_make_struct",
+			Name:      "googlesqlite_make_struct",
 			Arguments: fieldArgs,
 		},
 	}, nil
@@ -391,7 +410,7 @@ func (e *NodeExtractor) extractGetStructFieldData(node *ast.GetStructFieldNode, 
 	return ExpressionData{
 		Type: ExpressionTypeFunction,
 		Function: &FunctionCallData{
-			Name: "zetasqlite_get_struct_field",
+			Name: "googlesqlite_get_struct_field",
 			Arguments: []ExpressionData{
 				exprData,
 				{
@@ -416,7 +435,7 @@ func (e *NodeExtractor) extractGetJsonFieldData(node *ast.GetJsonFieldNode, ctx 
 	return ExpressionData{
 		Type: ExpressionTypeFunction,
 		Function: &FunctionCallData{
-			Name: "zetasqlite_get_json_field",
+			Name: "googlesqlite_get_json_field",
 			Arguments: []ExpressionData{
 				exprData,
 				{
@@ -447,7 +466,7 @@ func (e *NodeExtractor) extractAggregateFunctionCallData(node *ast.AggregateFunc
 			return ExpressionData{}, fmt.Errorf("failed to extract aggregate function call function order by arg: %w", err)
 		}
 		orderBy := NewFunctionCallExpressionData(
-			"zetasqlite_order_by",
+			"googlesqlite_order_by",
 			orderItem,
 			ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: BoolValue(!item.IsDescending())}},
 		)
@@ -456,7 +475,7 @@ func (e *NodeExtractor) extractAggregateFunctionCallData(node *ast.AggregateFunc
 	}
 
 	if node.Distinct() {
-		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("zetasqlite_distinct"))
+		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlite_distinct"))
 	}
 
 	if node.Limit() != nil {
@@ -465,7 +484,7 @@ func (e *NodeExtractor) extractAggregateFunctionCallData(node *ast.AggregateFunc
 			return ExpressionData{}, fmt.Errorf("failed to extract aggregate function call function limit: %w", err)
 		}
 
-		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("zetasqlite_limit", limit))
+		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlite_limit", limit))
 	}
 
 	// Extract HAVING MAX/MIN modifier if present
@@ -480,9 +499,9 @@ func (e *NodeExtractor) extractAggregateFunctionCallData(node *ast.AggregateFunc
 		var havingFunc string
 		switch havingModifier.ModifierKind() {
 		case ast.HavingModifierKindMax:
-			havingFunc = "zetasqlite_having_max"
+			havingFunc = "googlesqlite_having_max"
 		case ast.HavingModifierKindMin:
-			havingFunc = "zetasqlite_having_min"
+			havingFunc = "googlesqlite_having_min"
 		default:
 			return ExpressionData{}, fmt.Errorf("unsupported having modifier kind: %v", havingModifier.ModifierKind())
 		}
@@ -492,7 +511,7 @@ func (e *NodeExtractor) extractAggregateFunctionCallData(node *ast.AggregateFunc
 
 	switch node.NullHandlingModifier() {
 	case ast.IgnoreNulls:
-		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("zetasqlite_ignore_nulls"))
+		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlite_ignore_nulls"))
 	case ast.RespectNulls:
 	}
 
@@ -554,12 +573,12 @@ func getWindowBoundaryTypeData(boundaryType ast.BoundaryType, literal Expression
 }
 
 var windowFuncFixedRanges = map[string]*FrameClauseData{
-	"zetasqlite_window_ntile": {
+	"googlesqlite_window_ntile": {
 		Unit:  "ROWS",
 		Start: &FrameBoundData{Type: "CURRENT ROW"},
 		End:   &FrameBoundData{Type: "UNBOUNDED FOLLOWING"},
 	},
-	"zetasqlite_window_cume_dist": {
+	"googlesqlite_window_cume_dist": {
 		Unit: "GROUPS",
 		Start: &FrameBoundData{Type: "FOLLOWING",
 			Offset: ExpressionData{
@@ -569,32 +588,32 @@ var windowFuncFixedRanges = map[string]*FrameClauseData{
 		},
 		End: &FrameBoundData{Type: "UNBOUNDED FOLLOWING"},
 	},
-	"zetasqlite_window_dense_rank": {
+	"googlesqlite_window_dense_rank": {
 		Unit:  "RANGE",
 		Start: &FrameBoundData{Type: "UNBOUNDED PRECEDING"},
 		End:   &FrameBoundData{Type: "CURRENT ROW"},
 	},
-	"zetasqlite_window_rank": {
+	"googlesqlite_window_rank": {
 		Unit:  "GROUPS",
 		Start: &FrameBoundData{Type: "UNBOUNDED PRECEDING"},
 		End:   &FrameBoundData{Type: "CURRENT ROW EXCLUDE TIES"},
 	},
-	"zetasqlite_window_percent_rank": {
+	"googlesqlite_window_percent_rank": {
 		Unit:  "GROUPS",
 		Start: &FrameBoundData{Type: "CURRENT ROW"},
 		End:   &FrameBoundData{Type: "UNBOUNDED FOLLOWING"},
 	},
-	"zetasqlite_window_row_number": {
+	"googlesqlite_window_row_number": {
 		Unit:  "ROWS",
 		Start: &FrameBoundData{Type: "UNBOUNDED PRECEDING"},
 		End:   &FrameBoundData{Type: "CURRENT ROW"},
 	},
-	"zetasqlite_window_lag": {
+	"googlesqlite_window_lag": {
 		Unit:  "ROWS",
 		Start: &FrameBoundData{Type: "UNBOUNDED PRECEDING"},
 		End:   &FrameBoundData{Type: "CURRENT ROW"},
 	},
-	"zetasqlite_window_lead": {
+	"googlesqlite_window_lead": {
 		Unit:  "ROWS",
 		Start: &FrameBoundData{Type: "CURRENT ROW"},
 		End:   &FrameBoundData{Type: "UNBOUNDED FOLLOWING"},
@@ -602,7 +621,7 @@ var windowFuncFixedRanges = map[string]*FrameClauseData{
 }
 
 var windowFunctionsIgnoreNullsByDefault = map[string]bool{
-	"zetasqlite_window_percentile_disc": true,
+	"googlesqlite_window_percentile_disc": true,
 }
 
 // extractAnalyticFunctionCallData extracts data from analytic function nodes
@@ -615,17 +634,17 @@ func (e *NodeExtractor) extractAnalyticFunctionCallData(node *ast.AnalyticFuncti
 	function := baseData.Function
 
 	if node.Distinct() {
-		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("zetasqlite_distinct"))
+		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlite_distinct"))
 	}
 
 	_, ignoreNullsByDefault := windowFunctionsIgnoreNullsByDefault[baseData.Function.Name]
 
 	switch node.NullHandlingModifier() {
 	case ast.IgnoreNulls:
-		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("zetasqlite_ignore_nulls"))
+		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlite_ignore_nulls"))
 	case ast.DefaultNullHandling:
 		if ignoreNullsByDefault {
-			function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("zetasqlite_ignore_nulls"))
+			function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlite_ignore_nulls"))
 		}
 	}
 
@@ -776,18 +795,104 @@ func getPathFromNode(n parsed_ast.Node) ([]string, error) {
 	return path, nil
 }
 
+func findFunctionCallNode(nodes []parsed_ast.Node) *parsed_ast.FunctionCallNode {
+	for _, node := range nodes {
+		for current := node; current != nil; current = current.Parent() {
+			if fcallNode, ok := current.(*parsed_ast.FunctionCallNode); ok {
+				return fcallNode
+			}
+		}
+	}
+	return nil
+}
+
+func findPathFromNodes(nodes []parsed_ast.Node) ([]string, error) {
+	var firstErr error
+	for _, node := range nodes {
+		for current := node; current != nil; current = current.Parent() {
+			path, err := getPathFromNode(current)
+			if err == nil {
+				return path, nil
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return nil, fmt.Errorf("failed to find path from parsed AST candidates")
+}
+
+func findTargetPathFromNodes(nodes []parsed_ast.Node) ([]string, error) {
+	var firstErr error
+	for _, node := range nodes {
+		for current := node; current != nil; current = current.Parent() {
+			switch current := current.(type) {
+			case *parsed_ast.InsertStatementNode:
+				path, err := getPathFromNode(current.TargetPath())
+				if err == nil {
+					return path, nil
+				}
+				if firstErr == nil {
+					firstErr = err
+				}
+			case *parsed_ast.TrucateStatementNode:
+				path, err := getPathFromNode(current.TargetPath())
+				if err == nil {
+					return path, nil
+				}
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return nil, fmt.Errorf("failed to find target path from parsed AST candidates")
+}
+
+func formatNameWithPath(namePath *NamePath, path []string) string {
+	if namePath == nil {
+		return formatPath(path)
+	}
+	return namePath.format(path)
+}
+
+func resolvedTableNamePath(node ast.Node) []string {
+	tableScan, ok := node.(*ast.TableScanNode)
+	if !ok || tableScan.Table() == nil {
+		return nil
+	}
+	fullName := tableScan.Table().FullName()
+	if fullName == "" {
+		fullName = tableScan.Table().Name()
+	}
+	if fullName == "" {
+		return nil
+	}
+	return strings.Split(fullName, ".")
+}
+
 func getTableName(ctx context.Context, n ast.Node) (string, error) {
+	if path := resolvedTableNamePath(n); len(path) != 0 {
+		return formatNameWithPath(namePathFromContext(ctx), path), nil
+	}
 	nodeMap := nodeMapFromContext(ctx)
 	found := nodeMap.FindNodeFromResolvedNode(n)
-	if len(found) == 0 {
-		return "", fmt.Errorf("failed to find path node from table node %T", n)
+	if len(found) != 0 {
+		if path, err := findTargetPathFromNodes(found); err == nil {
+			return formatNameWithPath(namePathFromContext(ctx), path), nil
+		}
+		path, err := findPathFromNodes(found)
+		if err == nil {
+			return formatNameWithPath(namePathFromContext(ctx), path), nil
+		}
 	}
-	path, err := getPathFromNode(found[0])
-	if err != nil {
-		return "", fmt.Errorf("failed to find path: %w", err)
-	}
-	namePath := namePathFromContext(ctx)
-	return namePath.format(path), nil
+	return "", fmt.Errorf("failed to find path node from table node %T", n)
 }
 
 // extractTableScanData extracts data from table scan nodes
@@ -855,9 +960,9 @@ func (e *NodeExtractor) extractWildcardTableAsSetOp(wildcardTable *WildcardTable
 				// Check if this column exists in the current table
 				var columnExpr ExpressionData
 				if wildcardTable.existsColumn(tableSpec, col.Name) {
-					t, err := col.Type.ToZetaSQLType()
+					t, err := col.Type.ToGoogleSQLType()
 					if err != nil {
-						return ScanData{}, fmt.Errorf("failed to extract zetasqlite type: %w", err)
+						return ScanData{}, fmt.Errorf("failed to extract googlesqlite type: %w", err)
 					}
 					// Column exists - reference it directly
 					columnExpr = ExpressionData{
@@ -1197,7 +1302,7 @@ func (e *NodeExtractor) extractWithRefScanNode(node *ast.WithRefScanNode, ctx Tr
 }
 
 func (e *NodeExtractor) extractSetOperationScanData(node *ast.SetOperationScanNode, ctx TransformContext) (ScanData, error) {
-	// Map ZetaSQL set operation types to SQLite equivalents
+	// Map GoogleSQL set operation types to SQLite equivalents
 	var opType string
 	var modifier string
 	switch node.OpType() {

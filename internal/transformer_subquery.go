@@ -2,20 +2,20 @@ package internal
 
 import (
 	"fmt"
-	ast "github.com/goccy/go-zetasql/resolved_ast"
+	ast "github.com/vantaboard/go-googlesql/resolved_ast"
 )
 
-// SubqueryTransformer handles transformation of subquery expressions from ZetaSQL to SQLite.
+// SubqueryTransformer handles transformation of subquery expressions from  to SQLite.
 //
-// In BigQuery/ZetaSQL, subqueries can appear in various expression contexts with different
+// In BigQuery/, subqueries can appear in various expression contexts with different
 // semantics: scalar subqueries (single value), array subqueries, EXISTS checks, and IN checks.
 // Each type has specific behavior and return value expectations.
 //
-// The transformer converts ZetaSQL subquery expressions by:
+// The transformer converts  subquery expressions by:
 // - Recursively transforming the subquery's scan structure
 // - Wrapping the result in appropriate SQL constructs based on subquery type:
 //   - Scalar: Returns single value, wrapped in parentheses
-//   - Array: Wrapped with zetasqlite_array() for proper array semantics
+//   - Array: Wrapped with googlesqlite_array() for proper array semantics
 //   - EXISTS: Wrapped in EXISTS(...) boolean expression
 //   - IN: Combined with IN expression for membership testing
 //
@@ -62,7 +62,7 @@ func (t *SubqueryTransformer) Transform(data ExpressionData, ctx TransformContex
 		selectStatement.SelectList = []*SelectListItem{
 			{
 				Expression: NewFunctionExpression(
-					"zetasqlite_array",
+					"googlesqlite_array",
 					ctx.FragmentContext().GetQualifiedColumnExpression(subquery.Query.ColumnList[0].ID),
 				),
 			},

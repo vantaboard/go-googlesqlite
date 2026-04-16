@@ -1,4 +1,4 @@
-package zetasqlite_test
+package googlesqlite_test
 
 import (
 	"context"
@@ -10,20 +10,21 @@ import (
 	"testing"
 	"time"
 
-	zetasqlite "github.com/goccy/go-zetasqlite"
 	"github.com/google/go-cmp/cmp"
+	googlesqlite "github.com/vantaboard/go-googlesqlite"
 )
 
 func TestQuery(t *testing.T) {
 	t.Setenv("TZ", "UTC")
-	now := time.Now()
+	// Align with default UTC semantics; TZ=UTC alone does not always reset time.Local early enough.
+	now := time.Now().UTC()
 	ctx := context.Background()
-	ctx = zetasqlite.WithCurrentTime(ctx, now)
-	db, err := sql.Open("zetasqlite", ":memory:")
+	ctx = googlesqlite.WithCurrentTime(ctx, now)
+	db, err := sql.Open("googlesqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	floatCmpOpt := cmp.Comparer(func(x, y float64) bool {
 		if x == y {
 			return true
@@ -39,7 +40,7 @@ func TestQuery(t *testing.T) {
 		expectedRows [][]interface{}
 		expectedErr  string
 	}{
-		// Regression test for https://github.com/goccy/go-zetasqlite/issues/191
+		// Regression test for https://github.com/vantaboard/go-googlesqlite/issues/191
 		{
 			name: "distinct union",
 			query: `WITH toks AS (SELECT true AS x, 1 AS y)
@@ -934,7 +935,6 @@ FROM Items`,
 				{"banana", "apple"},
 			},
 		},
-		// HAVING MAX/MIN tests - https://github.com/goccy/bigquery-emulator/issues/327
 		{
 			name: "any_value with having max",
 			query: `
@@ -2656,7 +2656,6 @@ SELECT COVAR_POP(y, x) OVER () FROM
       (9.0, 3.0)])
 `,
 			expectedRows: [][]interface{}{
-				// TODO(goccy/go-zetasqlite#168): Use population covariance instead of sample covariance
 				// expected rows should actually be {-1.6800000000000002},
 				{-2.1},
 				{-2.1},
@@ -2774,7 +2773,7 @@ FROM finishers`,
 				{"Suzy Slane", createTimestampFormatFromString("2016-10-18 03:06:24+00"), "F35-39", "Desiree Berry"},
 			},
 		},
-		// Regression test for https://github.com/goccy/go-zetasqlite/issues/160
+		// Regression test for https://github.com/vantaboard/go-googlesqlite/issues/160
 		{
 			name: "window partitions are distinct from each other",
 			query: `
@@ -3117,7 +3116,6 @@ ORDER BY offset DESC;`,
 				{[]interface{}{int64(1), int64(2), int64(3)}},
 			},
 		},
-		// Regression tests for goccy/go-zetasqlite#176
 		{
 			name: "array scan left outer join",
 			query: `WITH produce AS (select 'lettuce' AS item UNION ALL SELECT 'banana')
@@ -3269,6 +3267,26 @@ SELECT ARRAY (
 			name:         "array_slice empty array",
 			query:        `SELECT ARRAY_SLICE(ARRAY<INT64>[], 0, 2)`,
 			expectedRows: [][]interface{}{{[]interface{}{}}},
+		},
+		{
+			name:         "array_sum and array_avg",
+			query:        `SELECT ARRAY_SUM([1, 2, 3]), ARRAY_AVG([1, 2, 3]), ARRAY_SUM([1, NULL, 3])`,
+			expectedRows: [][]interface{}{{int64(6), float64(2), int64(4)}},
+		},
+		{
+			name:         "array_sum empty",
+			query:        `SELECT ARRAY_SUM(ARRAY<INT64>[]), ARRAY_SUM([NULL, NULL])`,
+			expectedRows: [][]interface{}{{nil, nil}},
+		},
+		{
+			name:         "array_min and array_max",
+			query:        `SELECT ARRAY_MIN([3, 1, 2]), ARRAY_MAX([3, 1, 2])`,
+			expectedRows: [][]interface{}{{int64(1), int64(3)}},
+		},
+		{
+			name:         "lax json extractors",
+			query:        `SELECT LAX_INT64(JSON '"42"'), LAX_BOOL(JSON 'true'), LAX_DOUBLE(JSON '"3.5"'), LAX_STRING(JSON '"hi"')`,
+			expectedRows: [][]interface{}{{int64(42), true, float64(3.5), "hi"}},
 		},
 		{
 			name:         "array_slice mixed negative positive",
@@ -3568,7 +3586,6 @@ FROM
 				},
 			},
 		},
-		// Regression test for goccy/go-zetasqlite#179
 		{
 			name: "null array scan",
 			query: `
@@ -3857,7 +3874,6 @@ FROM Produce WHERE Produce.category = 'vegetable' QUALIFY rank <= 3`,
 				{"cabbage", int64(3)},
 			},
 		},
-		// Regression test goccy/go-zetasqlite#123
 		{
 			name: "qualify without group by / where / having",
 			query: `WITH toks AS (SELECT 1 AS x UNION ALL SELECT 2 AS x)
@@ -3866,7 +3882,6 @@ FROM Produce WHERE Produce.category = 'vegetable' QUALIFY rank <= 3`,
 				{int64(2)},
 			},
 		},
-		// Regression test goccy/go-zetasqlite#150
 		{
 			name: "qualify group",
 			query: `
@@ -3880,7 +3895,6 @@ FROM Produce WHERE Produce.category = 'vegetable' QUALIFY rank <= 3`,
 			`,
 			expectedRows: [][]interface{}{{"kale", int64(23)}},
 		},
-		// Regression test goccy/go-zetasqlite#147
 		{
 			name: "subselect qualifier",
 			query: `
@@ -3917,7 +3931,6 @@ SELECT item FROM Produce WHERE Produce.category = 'vegetable' QUALIFY RANK() OVE
 			query:       `SELECT CAST("apple" AS INT64) AS not_a_number`,
 			expectedErr: `failed to analyze: INVALID_ARGUMENT: Could not cast literal "apple" to type INT64 [at 1:13]`,
 		},
-		// Regression test for goccy/go-zetasqlite#175
 		{
 			name:        "cast integer to datetime",
 			query:       `WITH toks AS (SELECT "20100317" AS dt) SELECT CAST(dt AS DATETIME) FROM toks;`,
@@ -4182,7 +4195,7 @@ SELECT characters, CHARACTER_LENGTH(characters) FROM example`,
 			query:        `SELECT FORMAT('%t', timestamp '2015-09-01 12:34:56 America/Los_Angeles')`,
 			expectedRows: [][]interface{}{{"2015-09-01 19:34:56+00"}},
 		},
-		// This fails in ZetaSQL base code.
+		// This fails in GoogleSQL base code.
 		// {
 		// 	name:         "format null",
 		// 	query:        `SELECT FORMAT(NULL, 'abc')`,
@@ -4565,7 +4578,6 @@ WITH markdown AS (
 				{"<h1>Another heading</h1>"},
 			},
 		},
-		// Regression tests for goccy/go-zetasqlite#178
 		{
 			name:  "regexp_replace quoted",
 			query: `SELECT REGEXP_REPLACE('"quote123"', r'["\d]', '')`,
@@ -4933,7 +4945,6 @@ SELECT
 			expectedRows: [][]interface{}{{"FOO", "BAR", "BAZ", nil}},
 		},
 
-		// Regression tests for goccy/go-zetasqlite#177
 		{
 			name:         "least greatest between string",
 			query:        `SELECT LEAST("a", "b"), GREATEST("a", "b"), "b" BETWEEN "a" AND "c";`,
@@ -5951,6 +5962,23 @@ FROM Input`,
 			query:        `SELECT DATE "2020-09-22" + val FROM UNNEST([INTERVAL 1 DAY,INTERVAL -1 DAY,INTERVAL 2 YEAR,CAST('1-2 3 18:1:55' AS INTERVAL)]) as val`,
 			expectedRows: [][]interface{}{{"2020-09-23T00:00:00"}, {"2020-09-21T00:00:00"}, {"2022-09-22T00:00:00"}, {"2021-11-25T18:01:55"}},
 		},
+		// Invalid STRING to INTERVAL
+		{
+			name:        "invalid_string_to_interval_cast",
+			query:       `SELECT CAST('totally-not-interval' AS INTERVAL)`,
+			expectedErr: "no value parsed",
+		},
+		// COTH / SECH / CSCH.
+		// FLATTEN / ResolveArrayElement (same release): analyzer-only upstream fix; SQL FLATTEN is not implemented in this runtime.
+		{
+			name:  "hyperbolic_coth_sech_csch",
+			query: `SELECT COTH(1.0), SECH(1.0), CSCH(1.0)`,
+			expectedRows: [][]interface{}{{
+				1.3130352854993312,
+				0.6480542736638855,
+				0.8509181282393216,
+			}},
+		},
 
 		{
 			name: "interval from sub operator",
@@ -6578,6 +6606,12 @@ FROM input_rows`,
 			query:        `SELECT FLOAT64(JSON '9.8') AS velocity`,
 			expectedRows: [][]interface{}{{float64(9.8)}},
 		},
+		// 2023.03.2→2023.04.1 reference_impl: FLOAT64(JSON, wide_number_mode => ...) (named arg only).
+		{
+			name:         "json_float64_wide_number_mode",
+			query:        `SELECT FLOAT64(JSON '9.8', wide_number_mode => 'round') AS velocity`,
+			expectedRows: [][]interface{}{{float64(9.8)}},
+		},
 		{
 			name: "json_type",
 			query: `
@@ -6603,6 +6637,76 @@ FROM
 				{`["apple","banana"]`, "array"},
 				{"false", "boolean"},
 			},
+		},
+		{
+			name:         "json_array_empty",
+			query:        `SELECT JSON_ARRAY() AS j`,
+			expectedRows: [][]interface{}{{"[]"}},
+		},
+		{
+			name:         "json_array_values",
+			query:        `SELECT JSON_ARRAY(1, 'a', TRUE, NULL) AS j`,
+			expectedRows: [][]interface{}{{`[1,"a",1,null]`}},
+		},
+		{
+			name:         "json_object_duplicate_keys_first_wins",
+			query:        `SELECT JSON_OBJECT('k', 1, 'k', 2) AS j`,
+			expectedRows: [][]interface{}{{`{"k":1}`}},
+		},
+		{
+			name:         "upgrade_2023_08_pi_double",
+			query:        `SELECT PI()`,
+			expectedRows: [][]interface{}{{3.141592653589793}},
+		},
+		{
+			name:         "upgrade_2023_08_array_first_n",
+			query:        `SELECT ARRAY_FIRST_N([1,2,3,4], 2)`,
+			expectedRows: [][]interface{}{{[]interface{}{int64(1), int64(2)}}},
+		},
+		{
+			name:         "upgrade_2023_08_nullifzero",
+			query:        `SELECT NULLIFZERO(0), NULLIFZERO(3)`,
+			expectedRows: [][]interface{}{{nil, int64(3)}},
+		},
+		{
+			name:         "upgrade_2023_08_zeroifnull",
+			query:        `SELECT ZEROIFNULL(CAST(NULL AS INT64))`,
+			expectedRows: [][]interface{}{{int64(0)}},
+		},
+		{
+			name:         "upgrade_2023_08_json_remove",
+			query:        `SELECT JSON_REMOVE(PARSE_JSON('{"a":1,"b":2}'), '$.a')`,
+			expectedRows: [][]interface{}{{`{"b":2}`}},
+		},
+		{
+			name:         "upgrade_2023_08_json_set",
+			query:        `SELECT JSON_SET(PARSE_JSON('{"x":1}'), '$.y', CAST(2 AS INT64))`,
+			expectedRows: [][]interface{}{{`{"x":1,"y":2}`}},
+		},
+		{
+			name:         "upgrade_2024_06_json_keys_sorted",
+			query:        `SELECT JSON_KEYS(PARSE_JSON('{"b":1,"a":2}'))`,
+			expectedRows: [][]interface{}{{[]interface{}{"a", "b"}}},
+		},
+		{
+			name:         "upgrade_2024_06_json_keys_nested",
+			query:        `SELECT JSON_KEYS(PARSE_JSON('{"a":{"b":1}}'))`,
+			expectedRows: [][]interface{}{{[]interface{}{"a", "a.b"}}},
+		},
+		{
+			name:         "upgrade_2024_06_json_keys_null_json",
+			query:        `SELECT JSON_KEYS(PARSE_JSON('null'))`,
+			expectedRows: [][]interface{}{{[]interface{}{}}},
+		},
+		{
+			name:         "upgrade_2024_06_json_keys_null_doc",
+			query:        `SELECT JSON_KEYS(CAST(NULL AS JSON))`,
+			expectedRows: [][]interface{}{{nil}},
+		},
+		{
+			name:         "upgrade_2023_08_json_strip_nulls",
+			query:        `SELECT JSON_STRIP_NULLS(PARSE_JSON('{"a":null,"b":1}'))`,
+			expectedRows: [][]interface{}{{`{"b":1}`}},
 		},
 
 		// subquery expr
@@ -6887,11 +6991,13 @@ SELECT @a + @b;
 		},
 		{
 			name: "single statement with params below default limit",
+			// Many positional parameters without ~1000-deep nested binary ops: deep Add chains
+			// can exhaust analyzer stack (especially with unoptimized CGO builds).
 			query: fmt.Sprintf(`
 SELECT 1 FROM (select 1) f WHERE %s ? > 0;
-`, strings.Repeat("? + ", 998)),
+`, strings.Repeat("? + ", 250)),
 			args: func() []interface{} {
-				args := make([]interface{}, 999)
+				args := make([]interface{}, 251)
 				for i := range args {
 					args[i] = sql.NamedArg{Value: 1}
 				}
@@ -7038,6 +7144,62 @@ WHEN NOT MATCHED THEN INSERT ROW;
 SELECT * FROM target;
 `,
 			expectedRows: [][]interface{}{{int64(1), "test"}},
+		},
+		{
+			name: "merge ON single column IS NOT DISTINCT FROM",
+			query: `
+CREATE TEMP TABLE target(id INT64, name STRING);
+CREATE TEMP TABLE source(id INT64, name STRING);
+INSERT INTO source(id, name) VALUES (1, "new");
+MERGE target T USING source S ON T.id IS NOT DISTINCT FROM S.id
+WHEN MATCHED THEN UPDATE SET id = S.id, name = S.name
+WHEN NOT MATCHED THEN INSERT (id, name) VALUES (id, name);
+SELECT * FROM target;
+`,
+			expectedRows: [][]interface{}{{int64(1), "new"}},
+		},
+		{
+			name: "merge ON composite IS NOT DISTINCT FROM",
+			query: `
+CREATE TEMP TABLE target(a INT64, b INT64, c INT64, v STRING);
+CREATE TEMP TABLE source(a INT64, b INT64, c INT64, v STRING);
+INSERT INTO target(a, b, c, v) VALUES (1, 2, 3, "old");
+INSERT INTO source(a, b, c, v) VALUES (1, 2, 3, "new");
+MERGE target T USING source S
+ON T.a IS NOT DISTINCT FROM S.a AND T.b IS NOT DISTINCT FROM S.b AND T.c IS NOT DISTINCT FROM S.c
+WHEN MATCHED THEN UPDATE SET v = S.v;
+SELECT a, b, c, v FROM target ORDER BY a, b, c;
+`,
+			expectedRows: [][]interface{}{{int64(1), int64(2), int64(3), "new"}},
+		},
+		{
+			name: "merge ON composite IS NOT DISTINCT FROM with aliases target and source",
+			query: `
+CREATE TEMP TABLE ingest(a INT64, b INT64, c INT64, v STRING);
+CREATE TEMP TABLE src(a INT64, b INT64, c INT64, v STRING);
+INSERT INTO ingest(a, b, c, v) VALUES (1, 2, 3, "old");
+INSERT INTO src(a, b, c, v) VALUES (1, 2, 3, "new");
+MERGE ingest AS target USING src AS source
+ON target.a IS NOT DISTINCT FROM source.a AND target.b IS NOT DISTINCT FROM source.b AND target.c IS NOT DISTINCT FROM source.c
+WHEN MATCHED THEN UPDATE SET v = source.v;
+SELECT a, b, c, v FROM ingest ORDER BY a, b, c;
+`,
+			expectedRows: [][]interface{}{{int64(1), int64(2), int64(3), "new"}},
+		},
+		{
+			name: "merge WHEN MATCHED AND applies extra predicate",
+			query: `
+CREATE TEMP TABLE target(id INT64, v1 STRING, v2 STRING);
+CREATE TEMP TABLE source(id INT64, v1 STRING, v2 STRING);
+INSERT INTO target(id, v1, v2) VALUES (1, "a", "keep");
+INSERT INTO source(id, v1, v2) VALUES (1, "b", "y");
+MERGE target T USING source S ON T.id = S.id
+WHEN MATCHED AND T.v1 IS DISTINCT FROM S.v1 THEN UPDATE SET v2 = S.v2;
+SELECT id, v1, v2 FROM target ORDER BY id;
+`,
+			expectedRows: [][]interface{}{
+				{int64(1), "a", "y"},
+			},
 		},
 		{
 			name: "simple truncate",
@@ -7256,7 +7418,6 @@ ORDER BY count DESC`,
 				{map[string]interface{}{"tags": []interface{}{"tag3"}, "user_id": "user2"}, int64(1)},
 			},
 		},
-		// Regression test for https://github.com/goccy/bigquery-emulator/issues/436
 		{
 			name: "left join unnest with aggregate functions",
 			query: `
@@ -7310,7 +7471,7 @@ ORDER BY sum_total DESC`,
 					return
 				}
 			}
-			defer rows.Close()
+			defer func() { _ = rows.Close() }()
 			columns, err := rows.Columns()
 			if err != nil {
 				t.Fatal(err)

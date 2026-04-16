@@ -1,0 +1,8 @@
+go 1.26.0
+
+use .
+
+replace github.com/vantaboard/go-googlesql => ../go-googlesql
+
+// Copy to go.work for local development with a sibling go-googlesql checkout.
+// Replace lives here (not in go.mod); `go mod` / CI without a workspace resolve the released module version.

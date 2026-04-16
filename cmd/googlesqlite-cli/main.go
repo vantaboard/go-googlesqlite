@@ -13,17 +13,17 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/fatih/color"
-	"github.com/goccy/go-zetasql/types"
-	"github.com/goccy/go-zetasqlite"
-	"github.com/goccy/go-zetasqlite/internal"
+	"github.com/vantaboard/go-googlesql/types"
+	"github.com/vantaboard/go-googlesqlite"
+	"github.com/vantaboard/go-googlesqlite/internal"
 	"github.com/jessevdk/go-flags"
 	"github.com/olekukonko/tablewriter"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 type option struct {
 	RawMode       bool   `description:"specify the raw query mode. write sqlite3 query directly. this is a debug mode for developers" long:"raw"`
-	HistoryFile   string `description:"specify the history file for used queries" long:"history" default:".zetasqlite_history"`
+	HistoryFile   string `description:"specify the history file for used queries" long:"history" default:".googlesqlite_history"`
 	AutoIndexMode bool   `description:"specify the auto index mode. automatically create an index when creating a table" long:"autoindex"`
 	ExplainMode   bool   `description:"specify the explain mode. show results using sqlite3's explain query plan instead of executing the query" long:"explain"`
 	NoColorMode   bool   `description:"specify the not color mode" long:"no-color"`
@@ -37,8 +37,8 @@ const (
 )
 
 const (
-	zetasqliteRawDriver = "zetasqlite_sqlite3"
-	zetasqliteDriver    = "zetasqlite"
+	googlesqliteRawDriver = "googlesqlite_sqlite3"
+	googlesqliteDriver    = "googlesqlite"
 )
 
 var (
@@ -61,7 +61,7 @@ func run(ctx context.Context) exitCode {
 	if err != nil {
 		flagsErr, ok := err.(*flags.Error)
 		if !ok {
-			fmt.Fprintf(os.Stderr, "[zetasqlite] unknown parsed option error: %[1]T %[1]v\n", err)
+			fmt.Fprintf(os.Stderr, "[googlesqlite] unknown parsed option error: %[1]T %[1]v\n", err)
 			return exitError
 		}
 		if flagsErr.Type == flags.ErrHelp {
@@ -70,10 +70,7 @@ func run(ctx context.Context) exitCode {
 		fmt.Println(err)
 		return exitError
 	}
-	isColorMode := true
-	if opt.NoColorMode {
-		isColorMode = false
-	}
+	isColorMode := !opt.NoColorMode
 	cli := &CLI{
 		args:            args,
 		out:             os.Stdout,
@@ -101,7 +98,7 @@ type CLI struct {
 }
 
 func (cli *CLI) run(ctx context.Context) error {
-	if !terminal.IsTerminal(int(os.Stdin.Fd())) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		// use pipe
 		query, err := io.ReadAll(os.Stdin)
 		if err != nil {
@@ -112,13 +109,13 @@ func (cli *CLI) run(ctx context.Context) error {
 		}
 	}
 	rl, err := readline.NewEx(&readline.Config{
-		Prompt:      "zetasqlite> ",
+		Prompt:      "googlesqlite> ",
 		HistoryFile: cli.historyFile,
 	})
 	if err != nil {
 		return err
 	}
-	defer rl.Close()
+	defer func() { _ = rl.Close() }()
 	for {
 		line, err := rl.Readline()
 		if err == io.EOF || err == readline.ErrInterrupt {
@@ -143,15 +140,9 @@ func (cli *CLI) getDSN() string {
 
 func (cli *CLI) getDriverName() string {
 	if cli.isRawMode {
-		return zetasqliteRawDriver
+		return googlesqliteRawDriver
 	}
-	return zetasqliteDriver
-}
-
-type CommandArgs struct {
-	args        []string
-	query       string
-	subCommands []string
+	return googlesqliteDriver
 }
 
 func (cli *CLI) runCommand(ctx context.Context, query string) error {
@@ -181,13 +172,13 @@ func (cli *CLI) runCommand(ctx context.Context, query string) error {
 }
 
 func (cli *CLI) showTablesCommand(ctx context.Context) error {
-	db, err := sql.Open(zetasqliteRawDriver, cli.getDSN())
+	db, err := sql.Open(googlesqliteRawDriver, cli.getDSN())
 	if err != nil {
-		return fmt.Errorf("failed to open zetasqlite driver: %w", err)
+		return fmt.Errorf("failed to open googlesqlite driver: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
-	rows, err := db.QueryContext(ctx, `SELECT name, spec FROM zetasqlite_catalog WHERE kind = "table"`)
+	rows, err := db.QueryContext(ctx, `SELECT name, spec FROM googlesqlite_catalog WHERE kind = "table"`)
 	if err != nil {
 		return nil
 	}
@@ -203,19 +194,19 @@ func (cli *CLI) showTablesCommand(ctx context.Context) error {
 		if err := json.Unmarshal([]byte(spec), &table); err != nil {
 			return err
 		}
-		fmt.Fprintf(cli.out, "%s\n", strings.Join(table.NamePath, "."))
+		_, _ = fmt.Fprintf(cli.out, "%s\n", strings.Join(table.NamePath, "."))
 	}
 	return nil
 }
 
 func (cli *CLI) showFunctionsCommand(ctx context.Context) error {
-	db, err := sql.Open(zetasqliteRawDriver, cli.getDSN())
+	db, err := sql.Open(googlesqliteRawDriver, cli.getDSN())
 	if err != nil {
-		return fmt.Errorf("failed to open zetasqlite driver: %w", err)
+		return fmt.Errorf("failed to open googlesqlite driver: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
-	rows, err := db.QueryContext(ctx, `SELECT name, spec FROM zetasqlite_catalog WHERE kind = "function"`)
+	rows, err := db.QueryContext(ctx, `SELECT name, spec FROM googlesqlite_catalog WHERE kind = "function"`)
 	if err != nil {
 		return nil
 	}
@@ -231,14 +222,14 @@ func (cli *CLI) showFunctionsCommand(ctx context.Context) error {
 		if err := json.Unmarshal([]byte(spec), &fn); err != nil {
 			return err
 		}
-		fmt.Fprintf(cli.out, "%s\n", strings.Join(fn.NamePath, "."))
+		_, _ = fmt.Fprintf(cli.out, "%s\n", strings.Join(fn.NamePath, "."))
 	}
 	return nil
 }
 
 func (cli *CLI) explainModeCommand(ctx context.Context, subCommands []string) error {
 	if len(subCommands) == 0 {
-		fmt.Fprintf(cli.out, ".explain requires on/off argument\n")
+		_, _ = fmt.Fprintf(cli.out, ".explain requires on/off argument\n")
 		return nil
 	}
 	switch subCommands[0] {
@@ -252,7 +243,7 @@ func (cli *CLI) explainModeCommand(ctx context.Context, subCommands []string) er
 
 func (cli *CLI) autoIndexModeCommand(ctx context.Context, subCommands []string) error {
 	if len(subCommands) == 0 {
-		fmt.Fprintf(cli.out, ".autoindex requires on/off argument\n")
+		_, _ = fmt.Fprintf(cli.out, ".autoindex requires on/off argument\n")
 		return nil
 	}
 	switch subCommands[1] {
@@ -267,9 +258,9 @@ func (cli *CLI) autoIndexModeCommand(ctx context.Context, subCommands []string) 
 func (cli *CLI) defaultCommand(ctx context.Context, query string) error {
 	db, err := sql.Open(cli.getDriverName(), cli.getDSN())
 	if err != nil {
-		return fmt.Errorf("failed to open zetasqlite driver: %w", err)
+		return fmt.Errorf("failed to open googlesqlite driver: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -277,12 +268,12 @@ func (cli *CLI) defaultCommand(ctx context.Context, query string) error {
 	}
 	if !cli.isRawMode {
 		if err := conn.Raw(func(c interface{}) error {
-			zetasqliteConn, ok := c.(*zetasqlite.ZetaSQLiteConn)
+			googlesqliteConn, ok := c.(*googlesqlite.GoogleSQLiteConn)
 			if !ok {
-				return fmt.Errorf("failed to get ZetaSQLiteConn from %T", c)
+				return fmt.Errorf("failed to get GoogleSQLiteConn from %T", c)
 			}
-			zetasqliteConn.SetExplainMode(cli.isExplainMode)
-			zetasqliteConn.SetAutoIndexMode(cli.isAutoIndexMode)
+			googlesqliteConn.SetExplainMode(cli.isExplainMode)
+			googlesqliteConn.SetAutoIndexMode(cli.isAutoIndexMode)
 			return nil
 		}); err != nil {
 			return fmt.Errorf("failed to setup connection: %w", err)
@@ -295,12 +286,12 @@ func (cli *CLI) defaultCommand(ctx context.Context, query string) error {
 	}
 	rows, err := conn.QueryContext(ctx, query)
 	if err != nil {
-		fmt.Fprintf(cli.out, "ERROR: %v\n", err)
+		_, _ = fmt.Fprintf(cli.out, "ERROR: %v\n", err)
 		return nil
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if err := cli.printRows(ctx, mode, rows); err != nil {
-		fmt.Fprintf(cli.out, "ERROR: %v\n", err)
+		_, _ = fmt.Fprintf(cli.out, "ERROR: %v\n", err)
 		return nil
 	}
 	return nil
@@ -345,15 +336,15 @@ func (cli *CLI) printRowsWithTable(ctx context.Context, rows *sql.Rows) error {
 	for i := 0; i < columnNum; i++ {
 		var v interface{}
 		queryArgs[i] = &v
-		typ, err := zetasqlite.UnmarshalDatabaseTypeName(columnTypes[i].DatabaseTypeName())
+		typ, err := googlesqlite.UnmarshalDatabaseTypeName(columnTypes[i].DatabaseTypeName())
 		if err != nil {
 			return err
 		}
-		zetasqlType, err := typ.ToZetaSQLType()
+		googlesqlType, err := typ.ToGoogleSQLType()
 		if err != nil {
 			return err
 		}
-		columnColors[i] = cli.columnKindToColor(zetasqlType.Kind())
+		columnColors[i] = cli.columnKindToColor(googlesqlType.Kind())
 	}
 
 	for rows.Next() {
@@ -390,15 +381,15 @@ func (cli *CLI) printRowsWithGroup(ctx context.Context, rows *sql.Rows) error {
 		if length > max {
 			max = length
 		}
-		typ, err := zetasqlite.UnmarshalDatabaseTypeName(columnTypes[i].DatabaseTypeName())
+		typ, err := googlesqlite.UnmarshalDatabaseTypeName(columnTypes[i].DatabaseTypeName())
 		if err != nil {
 			return err
 		}
-		zetasqlType, err := typ.ToZetaSQLType()
+		googlesqlType, err := typ.ToGoogleSQLType()
 		if err != nil {
 			return err
 		}
-		columnColors[i] = cli.columnKindToColor(zetasqlType.Kind())
+		columnColors[i] = cli.columnKindToColor(googlesqlType.Kind())
 		var v interface{}
 		queryArgs[i] = &v
 	}
@@ -409,10 +400,10 @@ func (cli *CLI) printRowsWithGroup(ctx context.Context, rows *sql.Rows) error {
 		if err := rows.Scan(queryArgs...); err != nil {
 			return err
 		}
-		fmt.Fprintf(cli.out, "*************************** %d. row ***************************\n", idx+1)
+		_, _ = fmt.Fprintf(cli.out, "*************************** %d. row ***************************\n", idx+1)
 		for colIdx, arg := range queryArgs {
 			v := reflect.ValueOf(arg).Elem().Interface()
-			fmt.Fprintf(cli.out, format, columns[colIdx], cli.formatValue(v, columnColors[colIdx]))
+			_, _ = fmt.Fprintf(cli.out, format, columns[colIdx], cli.formatValue(v, columnColors[colIdx]))
 		}
 		idx++
 	}
