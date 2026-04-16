@@ -83,6 +83,26 @@ jobs:
         env:
           GOOGLESQL_VERSION: ${{ steps.gsql.outputs.v }}
         run: bash go-googlesql/scripts/ci-download-or-build-default-prebuilts.sh go-googlesql
+      # Tarballs include stable names (lib/*.a) as symlinks to ${GOOS}_${GOARCH}/*.a. Older googlesql-prebuilts
+      # extraction skipped symlink entries; recreate so CGO -force_load paths resolve (macOS + Linux).
+      - name: Ensure prebuilt lib symlinks
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          R="${{ github.workspace }}/go-googlesql"
+          ga="$(go env GOOS)_$(go env GOARCH)"
+          p="$R/internal/ccall/go-protobuf/protobuf/lib"
+          u="$R/internal/ccall/go-googlesql-unified/lib"
+          if [[ -f "$p/$ga/libprotobuf_cgo.a" ]]; then
+            ln -sfn "$ga/libprotobuf_cgo.a" "$p/libprotobuf_cgo.a"
+          fi
+          if [[ -f "$u/$ga/libgooglesql.a" ]]; then
+            ln -sfn "$ga/libgooglesql.a" "$u/libgooglesql.a"
+          fi
+          if [[ "$(go env GOOS)" == "linux" ]] && [[ -f "$p/$ga/libcxx_prebuilt.a" ]]; then
+            ln -sfn "$ga/libcxx_prebuilt.a" "$p/libcxx_prebuilt.a"
+            ln -sfn "$ga/libcxxabi_prebuilt.a" "$p/libcxxabi_prebuilt.a"
+          fi
       # CGO #cgo LDFLAGS use ${SRCDIR} under the module; prebuilts live in the sibling checkout, not in GOMODCACHE.
       - name: Point go.mod at local go-googlesql (prebuilts)
         working-directory: go-googlesqlite
