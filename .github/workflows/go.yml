@@ -47,12 +47,11 @@ jobs:
           go-version: ${{ matrix.go-version }}
           cache: true
           cache-dependency-path: go-googlesqlite/go.sum
+      # Match go-googlesql: go install via proxy.golang.org (no arduino/setup-task GitHub API).
       - name: Install Task
-        uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-          # Avoid unauthenticated GitHub API rate limits on shared runner IPs (macOS often hits this first).
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Install C/C++ toolchain (Linux)
         if: runner.os == 'Linux'
         run: |
