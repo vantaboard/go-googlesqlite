@@ -20,7 +20,7 @@ func TestExec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	for _, test := range []struct {
 		name        string
 		query       string
@@ -152,7 +152,7 @@ func TestNestedStructFieldAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err := db.ExecContext(ctx, `
 CREATE TABLE table (
   id INT64,
@@ -176,7 +176,7 @@ CREATE TABLE table (
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	type queryRow struct {
 		Value  interface{}
 		FieldB map[string]interface{}
@@ -217,7 +217,7 @@ func TestCreateTempTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err := db.ExecContext(ctx, "CREATE TEMP TABLE tmp_table (id INT64)"); err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestWildcardTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err := db.ExecContext(
 		ctx,
 		"CREATE TABLE `project.dataset.table_a` AS SELECT specialName FROM UNNEST (['alice_a', 'bob_a']) as specialName",
@@ -268,7 +268,7 @@ func TestWildcardTable(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		type queryRow struct {
 			Name   *string
 			Suffix string
@@ -305,7 +305,7 @@ func TestWildcardTable(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		type queryRow struct {
 			Name   *string
 			Suffix string
@@ -345,7 +345,7 @@ func TestTemplatedArgFunc(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	t.Run("simple any arguments", func(t *testing.T) {
 		if _, err := db.ExecContext(
 			ctx,
@@ -358,7 +358,7 @@ func TestTemplatedArgFunc(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer rows.Close()
+			defer func() { _ = rows.Close() }()
 			rows.Next()
 			var num float64
 			if err := rows.Scan(&num); err != nil {
@@ -376,7 +376,7 @@ func TestTemplatedArgFunc(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer rows.Close()
+			defer func() { _ = rows.Close() }()
 			rows.Next()
 			var num float64
 			if err := rows.Scan(&num); err != nil {
@@ -402,7 +402,7 @@ func TestTemplatedArgFunc(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer rows.Close()
+			defer func() { _ = rows.Close() }()
 			rows.Next()
 			var num int64
 			if err := rows.Scan(&num); err != nil {
@@ -420,7 +420,7 @@ func TestTemplatedArgFunc(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer rows.Close()
+			defer func() { _ = rows.Close() }()
 			rows.Next()
 			var num float64
 			if err := rows.Scan(&num); err != nil {
@@ -442,7 +442,7 @@ func TestJavaScriptUDF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	t.Run("operation", func(t *testing.T) {
 		if _, err := db.ExecContext(
 			ctx,
@@ -463,7 +463,7 @@ WITH numbers AS
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		results := [][]float64{}
 		for rows.Next() {
@@ -530,7 +530,7 @@ WITH Input AS (
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		type queryRow struct {
 			JsonRow string
@@ -575,7 +575,7 @@ AS r"""
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		if !rows.Next() {
 			t.Fatal("failed to get result")
 		}
@@ -611,7 +611,7 @@ LANGUAGE js AS """
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		var results []string
 		for i := 0; i < 2; i++ {

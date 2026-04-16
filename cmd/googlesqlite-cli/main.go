@@ -18,7 +18,7 @@ import (
 	"github.com/vantaboard/go-googlesqlite/internal"
 	"github.com/jessevdk/go-flags"
 	"github.com/olekukonko/tablewriter"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 type option struct {
@@ -70,10 +70,7 @@ func run(ctx context.Context) exitCode {
 		fmt.Println(err)
 		return exitError
 	}
-	isColorMode := true
-	if opt.NoColorMode {
-		isColorMode = false
-	}
+	isColorMode := !opt.NoColorMode
 	cli := &CLI{
 		args:            args,
 		out:             os.Stdout,
@@ -101,7 +98,7 @@ type CLI struct {
 }
 
 func (cli *CLI) run(ctx context.Context) error {
-	if !terminal.IsTerminal(int(os.Stdin.Fd())) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		// use pipe
 		query, err := io.ReadAll(os.Stdin)
 		if err != nil {
@@ -118,7 +115,7 @@ func (cli *CLI) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer rl.Close()
+	defer func() { _ = rl.Close() }()
 	for {
 		line, err := rl.Readline()
 		if err == io.EOF || err == readline.ErrInterrupt {
@@ -146,12 +143,6 @@ func (cli *CLI) getDriverName() string {
 		return googlesqliteRawDriver
 	}
 	return googlesqliteDriver
-}
-
-type CommandArgs struct {
-	args        []string
-	query       string
-	subCommands []string
 }
 
 func (cli *CLI) runCommand(ctx context.Context, query string) error {
@@ -185,7 +176,7 @@ func (cli *CLI) showTablesCommand(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to open googlesqlite driver: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	rows, err := db.QueryContext(ctx, `SELECT name, spec FROM googlesqlite_catalog WHERE kind = "table"`)
 	if err != nil {
@@ -203,7 +194,7 @@ func (cli *CLI) showTablesCommand(ctx context.Context) error {
 		if err := json.Unmarshal([]byte(spec), &table); err != nil {
 			return err
 		}
-		fmt.Fprintf(cli.out, "%s\n", strings.Join(table.NamePath, "."))
+		_, _ = fmt.Fprintf(cli.out, "%s\n", strings.Join(table.NamePath, "."))
 	}
 	return nil
 }
@@ -213,7 +204,7 @@ func (cli *CLI) showFunctionsCommand(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to open googlesqlite driver: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	rows, err := db.QueryContext(ctx, `SELECT name, spec FROM googlesqlite_catalog WHERE kind = "function"`)
 	if err != nil {
@@ -231,14 +222,14 @@ func (cli *CLI) showFunctionsCommand(ctx context.Context) error {
 		if err := json.Unmarshal([]byte(spec), &fn); err != nil {
 			return err
 		}
-		fmt.Fprintf(cli.out, "%s\n", strings.Join(fn.NamePath, "."))
+		_, _ = fmt.Fprintf(cli.out, "%s\n", strings.Join(fn.NamePath, "."))
 	}
 	return nil
 }
 
 func (cli *CLI) explainModeCommand(ctx context.Context, subCommands []string) error {
 	if len(subCommands) == 0 {
-		fmt.Fprintf(cli.out, ".explain requires on/off argument\n")
+		_, _ = fmt.Fprintf(cli.out, ".explain requires on/off argument\n")
 		return nil
 	}
 	switch subCommands[0] {
@@ -252,7 +243,7 @@ func (cli *CLI) explainModeCommand(ctx context.Context, subCommands []string) er
 
 func (cli *CLI) autoIndexModeCommand(ctx context.Context, subCommands []string) error {
 	if len(subCommands) == 0 {
-		fmt.Fprintf(cli.out, ".autoindex requires on/off argument\n")
+		_, _ = fmt.Fprintf(cli.out, ".autoindex requires on/off argument\n")
 		return nil
 	}
 	switch subCommands[1] {
@@ -269,7 +260,7 @@ func (cli *CLI) defaultCommand(ctx context.Context, query string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open googlesqlite driver: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -295,12 +286,12 @@ func (cli *CLI) defaultCommand(ctx context.Context, query string) error {
 	}
 	rows, err := conn.QueryContext(ctx, query)
 	if err != nil {
-		fmt.Fprintf(cli.out, "ERROR: %v\n", err)
+		_, _ = fmt.Fprintf(cli.out, "ERROR: %v\n", err)
 		return nil
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if err := cli.printRows(ctx, mode, rows); err != nil {
-		fmt.Fprintf(cli.out, "ERROR: %v\n", err)
+		_, _ = fmt.Fprintf(cli.out, "ERROR: %v\n", err)
 		return nil
 	}
 	return nil
@@ -409,10 +400,10 @@ func (cli *CLI) printRowsWithGroup(ctx context.Context, rows *sql.Rows) error {
 		if err := rows.Scan(queryArgs...); err != nil {
 			return err
 		}
-		fmt.Fprintf(cli.out, "*************************** %d. row ***************************\n", idx+1)
+		_, _ = fmt.Fprintf(cli.out, "*************************** %d. row ***************************\n", idx+1)
 		for colIdx, arg := range queryArgs {
 			v := reflect.ValueOf(arg).Elem().Interface()
-			fmt.Fprintf(cli.out, format, columns[colIdx], cli.formatValue(v, columnColors[colIdx]))
+			_, _ = fmt.Fprintf(cli.out, format, columns[colIdx], cli.formatValue(v, columnColors[colIdx]))
 		}
 		idx++
 	}

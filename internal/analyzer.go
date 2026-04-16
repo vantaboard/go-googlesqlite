@@ -236,7 +236,7 @@ func normalizePositionalParameters(query string, parameters []*bigquery.QueryPar
 				continue
 			}
 			positionalIdx++
-			builder.WriteString(fmt.Sprintf("@p%d", positionalIdx))
+			_, _ = fmt.Fprintf(&builder, "@p%d", positionalIdx)
 		default:
 			builder.WriteByte(ch)
 		}

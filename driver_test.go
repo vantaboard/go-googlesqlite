@@ -640,7 +640,7 @@ func TestQueryParametersWithAllowUndeclaredReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Create test table
 	if _, err := db.Exec(`
@@ -661,7 +661,7 @@ CREATE TABLE TestTable (
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	t.Run("positional parameters with explicit types", func(t *testing.T) {
 		// Configure positional parameters via BigQuery API

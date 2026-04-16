@@ -424,7 +424,7 @@ func isZeroScalar(v Value) (bool, error) {
 	case FloatValue:
 		return float64(x) == 0, nil
 	case *NumericValue:
-		return x.Rat.Sign() == 0, nil
+		return x.Sign() == 0, nil
 	default:
 		if r, err := v.ToRat(); err == nil {
 			return r.Sign() == 0, nil

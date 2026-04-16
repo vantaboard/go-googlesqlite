@@ -237,10 +237,10 @@ func jsonKeysSegmentUnquoted(key string) bool {
 			return false
 		}
 		if i == 0 {
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
+			if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && c != '_' {
 				return false
 			}
-		} else if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+		} else if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' {
 			return false
 		}
 	}

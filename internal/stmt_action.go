@@ -502,7 +502,7 @@ func (a *QueryStmtAction) ExplainQueryPlan(ctx context.Context, conn *Conn) erro
 	if err != nil {
 		return fmt.Errorf("failed to explain query plan: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	fmt.Println("|selectid|order|from|detail|")
 	fmt.Println("----------------------------")
 	for rows.Next() {

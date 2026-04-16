@@ -1829,7 +1829,7 @@ func parseJsonKeysMode(s string) (jsonKeysMode, error) {
 	case strings.EqualFold(s, "lax recursive"):
 		return jsonKeysModeLaxRecursive, nil
 	default:
-		return 0, fmt.Errorf("Invalid JSON mode specified")
+		return 0, fmt.Errorf("invalid JSON mode specified")
 	}
 }
 

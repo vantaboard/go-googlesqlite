@@ -219,7 +219,7 @@ func (e *SQLExpression) WriteSql(writer *SQLWriter) {
 		writer.Write(fmt.Sprintf(" COLLATE %s", e.Collation))
 	}
 
-	if e.Alias != "" && !(e.Type == ExpressionTypeColumn && e.Alias == e.Value) {
+	if e.Alias != "" && (e.Type != ExpressionTypeColumn || e.Alias != e.Value) {
 		writer.Write(" AS ")
 		writer.Write("`" + e.Alias + "`")
 	}
@@ -429,7 +429,7 @@ func (s *SelectListItem) WriteSql(writer *SQLWriter) {
 		}
 	} else {
 		s.Expression.WriteSql(writer)
-		if s.Alias != "" && !(s.Expression.Type == ExpressionTypeColumn && s.Alias == s.Expression.Value) {
+		if s.Alias != "" && (s.Expression.Type != ExpressionTypeColumn || s.Alias != s.Expression.Value) {
 			writer.Write(" AS `" + s.Alias + "`")
 		}
 	}

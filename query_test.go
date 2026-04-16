@@ -24,7 +24,7 @@ func TestQuery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	floatCmpOpt := cmp.Comparer(func(x, y float64) bool {
 		if x == y {
 			return true
@@ -7471,7 +7471,7 @@ ORDER BY sum_total DESC`,
 					return
 				}
 			}
-			defer rows.Close()
+			defer func() { _ = rows.Close() }()
 			columns, err := rows.Columns()
 			if err != nil {
 				t.Fatal(err)
