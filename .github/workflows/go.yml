@@ -75,6 +75,10 @@ jobs:
         env:
           GOOGLESQL_VERSION: ${{ steps.gsql.outputs.v }}
         run: bash go-googlesql/scripts/ci-download-or-build-default-prebuilts.sh go-googlesql
+      # CGO #cgo LDFLAGS use ${SRCDIR} under the module; prebuilts live in the sibling checkout, not in GOMODCACHE.
+      - name: Point go.mod at local go-googlesql (prebuilts)
+        working-directory: go-googlesqlite
+        run: go mod edit -replace "github.com/vantaboard/go-googlesql=${{ github.workspace }}/go-googlesql"
       - name: Build
         working-directory: go-googlesqlite
         env:
