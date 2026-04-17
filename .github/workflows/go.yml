@@ -81,7 +81,7 @@ jobs:
       - name: Default prebuilts (release tarball or Bazel)
         working-directory: ${{ github.workspace }}
         env:
-          GOOGLESQL_VERSION: ${{ steps.gsql.outputs.v }}
+          GO_GOOGLESQL_VERSION: ${{ steps.gsql.outputs.v }}
         run: bash go-googlesql/scripts/ci-download-or-build-default-prebuilts.sh go-googlesql
       # Tarballs include stable names (lib/*.a) as symlinks to ${GOOS}_${GOARCH}/*.a. Older googlesql-prebuilts
       # extraction skipped symlink entries; recreate so CGO -force_load paths resolve (macOS + Linux).
@@ -104,9 +104,16 @@ jobs:
             ln -sfn "$ga/libcxxabi_prebuilt.a" "$p/libcxxabi_prebuilt.a"
           fi
       # CGO #cgo LDFLAGS use ${SRCDIR} under the module; prebuilts live in the sibling checkout, not in GOMODCACHE.
+      # Nested lib/* modules also carry link-only #cgo flags; replace each to the populated sibling tree (proxy zips omit *.a).
       - name: Point go.mod at local go-googlesql (prebuilts)
         working-directory: go-googlesqlite
-        run: go mod edit -replace "github.com/vantaboard/go-googlesql=${{ github.workspace }}/go-googlesql"
+        run: |
+          set -euo pipefail
+          R="${{ github.workspace }}/go-googlesql"
+          go mod edit -replace "github.com/vantaboard/go-googlesql=${R}"
+          for m in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64; do
+            go mod edit -replace "github.com/vantaboard/go-googlesql/lib/${m}=${R}/lib/${m}"
+          done
       - name: Build
         working-directory: go-googlesqlite
         env:
