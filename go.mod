@@ -3,7 +3,7 @@ module github.com/vantaboard/go-googlesqlite
 go 1.26.0
 
 require (
-	github.com/vantaboard/go-googlesql v0.5.10
+	github.com/vantaboard/go-googlesql v0.5.12
 	modernc.org/sqlite v1.37.0
 )
 
@@ -62,11 +62,11 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/pkg/errors v0.8.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/vantaboard/go-googlesql/lib/darwin-amd64 v0.5.10 // indirect
-	github.com/vantaboard/go-googlesql/lib/darwin-arm64 v0.5.10 // indirect
-	github.com/vantaboard/go-googlesql/lib/linux-amd64 v0.5.10 // indirect
-	github.com/vantaboard/go-googlesql/lib/linux-arm64 v0.5.10 // indirect
-	github.com/vantaboard/go-googlesql/lib/windows-amd64 v0.5.10 // indirect
+	github.com/vantaboard/go-googlesql/lib/darwin-amd64 v0.5.11 // indirect
+	github.com/vantaboard/go-googlesql/lib/darwin-arm64 v0.5.11 // indirect
+	github.com/vantaboard/go-googlesql/lib/linux-amd64 v0.5.11 // indirect
+	github.com/vantaboard/go-googlesql/lib/linux-arm64 v0.5.11 // indirect
+	github.com/vantaboard/go-googlesql/lib/windows-amd64 v0.5.11 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
