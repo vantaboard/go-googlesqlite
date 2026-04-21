@@ -1,6 +1,6 @@
 module github.com/vantaboard/go-googlesqlite
 
-go 1.26.0
+go 1.26.2
 
 require (
 	github.com/vantaboard/go-googlesql v0.5.13
