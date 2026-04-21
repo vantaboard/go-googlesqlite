@@ -802,7 +802,8 @@ func (a *TruncateStmtAction) Cleanup(ctx context.Context, conn *Conn) error {
 }
 
 type MergeStmtAction struct {
-	stmts []string
+	stmts       []string
+	dupCheckSQL string // optional; run Query after first statement; any row => error
 }
 
 func (a *MergeStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.Stmt, error) {
@@ -810,9 +811,24 @@ func (a *MergeStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.Stmt,
 }
 
 func (a *MergeStmtAction) exec(ctx context.Context, conn *Conn) error {
-	for _, stmt := range a.stmts {
+	for i, stmt := range a.stmts {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("failed to exec merge statement %s: %w", stmt, err)
+		}
+		if i == 0 && a.dupCheckSQL != "" {
+			rows, err := conn.QueryContext(ctx, a.dupCheckSQL)
+			if err != nil {
+				return fmt.Errorf("failed to validate MERGE join: %w", err)
+			}
+			hasRow := rows.Next()
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("failed to validate MERGE join: %w", err)
+			}
+			_ = rows.Close()
+			if hasRow {
+				return fmt.Errorf("MERGE must match at most one source row for each target row when WHEN MATCHED performs UPDATE or DELETE")
+			}
 		}
 	}
 	return nil

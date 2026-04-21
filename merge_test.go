@@ -3,14 +3,18 @@ package googlesqlite_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 	googlesqlite "github.com/vantaboard/go-googlesqlite"
 )
+
+var mergeTestMemCounter uint64
 
 // TestMerge covers BigQuery-style MERGE DML: MATCHED / NOT MATCHED BY TARGET / NOT MATCHED BY SOURCE.
 // See https://docs.cloud.google.com/bigquery/docs/reference/standard-sql/dml-syntax#merge_statement
@@ -132,9 +136,43 @@ SELECT id, tier FROM target ORDER BY id;
 				{int64(2), int64(2)},
 			},
 		},
+		{
+			name: "reject multiple source rows matching one target when matched update",
+			sql: `
+CREATE TEMP TABLE target(id INT64, name STRING);
+CREATE TEMP TABLE source(id INT64, name STRING);
+INSERT INTO target(id, name) VALUES (1, 't');
+INSERT INTO source(id, name) VALUES (1, 'a'), (1, 'b');
+MERGE target T USING source S ON T.id = S.id
+WHEN MATCHED THEN UPDATE SET name = S.name;
+SELECT 1;
+`,
+			wantErrSubstr: "MERGE must match at most one source row",
+		},
+		{
+			name: "ON FALSE inserts source-only and deletes target-only by predicate",
+			sql: `
+CREATE TEMP TABLE inv(product STRING, quantity INT64);
+CREATE TEMP TABLE src(product STRING, quantity INT64);
+INSERT INTO inv(product, quantity) VALUES ('dryer', 50), ('front load washer', 20), ('microwave', 20);
+INSERT INTO src(product, quantity) VALUES ('top load washer', 30);
+MERGE inv T USING src S ON FALSE
+WHEN NOT MATCHED BY TARGET AND product LIKE '%washer%' THEN INSERT (product, quantity) VALUES (product, quantity)
+WHEN NOT MATCHED BY SOURCE AND product LIKE '%washer%' THEN DELETE;
+SELECT product, quantity FROM inv ORDER BY product;
+`,
+			wantRows: [][]interface{}{
+				{"dryer", int64(50)},
+				{"microwave", int64(20)},
+				{"top load washer", int64(30)},
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			db, err := sql.Open("googlesqlite", ":memory:")
+			// Isolate each subtest: plain ":memory:" can share state across connections in some SQLite setups.
+			dsn := fmt.Sprintf("file:merge_test_%d_%d?mode=memory&cache=private",
+				time.Now().UnixNano(), atomic.AddUint64(&mergeTestMemCounter, 1))
+			db, err := sql.Open("googlesqlite", dsn)
 			if err != nil {
 				t.Fatal(err)
 			}

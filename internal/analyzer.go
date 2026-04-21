@@ -931,14 +931,19 @@ func (a *Analyzer) newMergeStmtAction(ctx context.Context, query string, args []
 
 	// Extract the transformed statements from the compound fragment
 	var stmts []string
+	var dupCheck string
 	if compoundFragment, ok := result.Fragment.(*CompoundSQLFragment); ok {
 		stmts = compoundFragment.GetStatements()
+		dupCheck = compoundFragment.MergeDupCheckSQL
 	} else {
 		// Fallback to single statement
 		stmts = []string{result.Fragment.String()}
 	}
 
-	return &MergeStmtAction{stmts: stmts}, nil
+	// Ingestion-time partitioned tables and partition decorators are not modeled in GoogleSQLite;
+	// BigQuery-emulator or upstream catalog should enforce column lists and partition rules if needed.
+
+	return &MergeStmtAction{stmts: stmts, dupCheckSQL: dupCheck}, nil
 }
 
 func getParamsFromNode(node ast.Node) []*ast.ParameterNode {

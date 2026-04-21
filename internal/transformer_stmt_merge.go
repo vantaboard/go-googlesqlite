@@ -20,6 +20,11 @@ import (
 // 2. Generate conditional INSERT/UPDATE/DELETE statements based on WHEN clauses
 // 3. Clean up the temporary table
 //
+// Semantics note (vs BigQuery): BigQuery evaluates MERGE as one atomic join snapshot with
+// first matching WHEN per row. This implementation runs multiple SQLite statements; the merged
+// temp table may be dropped and recreated between WHEN clauses so later clauses see an updated
+// target, except before NOT MATCHED BY SOURCE (those clauses keep the initial join snapshot).
+//
 // This maintains the same semantics as the original visitor pattern implementation while
 // integrating with the new transformer architecture.
 type MergeStmtTransformer struct {
@@ -59,7 +64,7 @@ func (t *MergeStmtTransformer) Transform(data StatementData, ctx TransformContex
 		return nil, fmt.Errorf("failed to transform merge expression: %w", err)
 	}
 
-	// Validate merge expression (conjunction of = or IS NOT DISTINCT FROM column pairs)
+	// Validate merge expression (conjunction of = or IS NOT DISTINCT FROM column pairs), or ON FALSE.
 	if err := t.validateMergeExpression(mergeData.MergeExpr); err != nil {
 		return nil, fmt.Errorf("unsupported merge expression: %w", err)
 	}
@@ -124,8 +129,11 @@ func (t *MergeStmtTransformer) Transform(data StatementData, ctx TransformContex
 	// 3. Drop temporary table
 	statements = append(statements, "DROP TABLE googlesqlite_merged_table")
 
-	// Create a compound statement fragment that represents all the statements
-	return NewCompoundSQLFragment(statements), nil
+	frag := NewCompoundSQLFragment(statements)
+	if mergeNeedsDuplicateSourceGuard(mergeData.WhenClauses) {
+		frag.MergeDupCheckSQL = mergeDuplicateSourceCheckSQL(mergeKeys)
+	}
+	return frag, nil
 }
 
 func mergeWhenClauseMutatesTarget(action ast.ActionType) bool {
@@ -135,6 +143,77 @@ func mergeWhenClauseMutatesTarget(action ast.ActionType) bool {
 	default:
 		return false
 	}
+}
+
+func mergeNeedsDuplicateSourceGuard(whenClauses []*MergeWhenClauseData) bool {
+	for _, w := range whenClauses {
+		if w == nil {
+			continue
+		}
+		if w.MatchType == ast.MatchTypeMatched && (w.ActionType == ast.ActionTypeUpdate || w.ActionType == ast.ActionTypeDelete) {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeDuplicateSourceCheckSQL returns a query that yields a row iff two or more matched
+// (source+target) merged rows share the same target key — forbidden for WHEN MATCHED UPDATE/DELETE.
+func mergeDuplicateSourceCheckSQL(keys []mergeKeyPair) string {
+	var whereParts []string
+	var groupBy []string
+	for _, k := range keys {
+		whereParts = append(whereParts, fmt.Sprintf("`%s` IS NOT NULL AND `%s` IS NOT NULL", k.mergedSourceName, k.mergedTargetName))
+		groupBy = append(groupBy, fmt.Sprintf("`%s`", k.mergedTargetName))
+	}
+	where := strings.Join(whereParts, " AND ")
+	group := strings.Join(groupBy, ", ")
+	return fmt.Sprintf(
+		"SELECT 1 FROM googlesqlite_merged_table WHERE %s GROUP BY %s HAVING COUNT(*) > 1 LIMIT 1",
+		where, group,
+	)
+}
+
+func isMergeExprConstantFalse(expr ExpressionData) bool {
+	if expr.Type != ExpressionTypeLiteral || expr.Literal == nil || expr.Literal.Value == nil {
+		return false
+	}
+	b, err := expr.Literal.Value.ToBool()
+	if err != nil {
+		return false
+	}
+	return !b
+}
+
+func inferMergeColumnPairsFromNameOverlap(mergeData *MergeData) ([]mergeColumnPair, error) {
+	if mergeData.SourceScan == nil || mergeData.TargetScan == nil {
+		return nil, fmt.Errorf("merge scans required for ON FALSE")
+	}
+	targetByName := make(map[string]*ColumnData)
+	for _, c := range mergeData.TargetScan.ColumnList {
+		if c != nil {
+			targetByName[c.Name] = c
+		}
+	}
+	var pairs []mergeColumnPair
+	seen := make(map[string]struct{})
+	for _, sc := range mergeData.SourceScan.ColumnList {
+		if sc == nil {
+			continue
+		}
+		if tc, ok := targetByName[sc.Name]; ok {
+			key := fmt.Sprintf("%d:%d", tc.ID, sc.ID)
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			pairs = append(pairs, mergeColumnPair{sourceCol: sc, targetCol: tc})
+		}
+	}
+	if len(pairs) == 0 {
+		return nil, fmt.Errorf("MERGE ON FALSE requires at least one column with the same name in source and target (used to correlate rows)")
+	}
+	return pairs, nil
 }
 
 // mergeColumnPair holds one source/target key column pair from the MERGE ON clause (before merged-table aliases).
@@ -167,8 +246,11 @@ func flattenMergeAnd(expr ExpressionData) []ExpressionData {
 }
 
 // validateMergeExpression ensures the merge ON clause is a conjunction of = or IS NOT DISTINCT FROM
-// comparisons between source and target column references.
+// comparisons between source and target column references, or a constant FALSE (see inferMergeColumnPairsFromNameOverlap).
 func (t *MergeStmtTransformer) validateMergeExpression(mergeExpr ExpressionData) error {
+	if isMergeExprConstantFalse(mergeExpr) {
+		return nil
+	}
 	leaves := flattenMergeAnd(mergeExpr)
 	if len(leaves) == 0 {
 		return fmt.Errorf("empty merge expression")
@@ -185,6 +267,8 @@ func validateMergeLeaf(leaf ExpressionData) error {
 	if leaf.Type != ExpressionTypeFunction || leaf.Function == nil {
 		return fmt.Errorf("expected comparison, got %v", leaf.Type)
 	}
+	// Null-safe key comparisons should use IS NOT DISTINCT FROM; (x = y OR (x IS NULL AND y IS NULL))
+	// is not modeled as separate OR leaves—use IS NOT DISTINCT FROM instead.
 	switch leaf.Function.Name {
 	case "googlesqlite_equal", "googlesqlite_is_not_distinct_from":
 	default:
@@ -203,6 +287,9 @@ func validateMergeLeaf(leaf ExpressionData) error {
 
 // extractMergeColumnPairs extracts source/target column pairs from the MERGE ON expression tree.
 func (t *MergeStmtTransformer) extractMergeColumnPairs(mergeData *MergeData, mergeExpr ExpressionData, targetTableName string) ([]mergeColumnPair, error) {
+	if isMergeExprConstantFalse(mergeExpr) {
+		return inferMergeColumnPairsFromNameOverlap(mergeData)
+	}
 	leaves := flattenMergeAnd(mergeExpr)
 	pairs := make([]mergeColumnPair, 0, len(leaves))
 	seen := make(map[string]struct{})
@@ -356,7 +443,10 @@ func mergeWhenFilter(matchType ast.MatchType, keys []mergeKeyPair) (*SQLExpressi
 }
 
 func (t *MergeStmtTransformer) applyMergedColumnAliases(sql string, columnMapping *ColumnMapping, ctx TransformContext) (string, error) {
-	out := sql
+	type repl struct {
+		old, new string
+	}
+	var list []repl
 	for column, mapping := range columnMapping.AllColumnMap {
 		expr, err := t.coordinator.TransformExpression(ExpressionData{
 			Type:   ExpressionTypeColumn,
@@ -365,7 +455,35 @@ func (t *MergeStmtTransformer) applyMergedColumnAliases(sql string, columnMappin
 		if err != nil {
 			return "", fmt.Errorf("failed to transform column for merge WHEN alias: %w", err)
 		}
-		out = strings.ReplaceAll(out, expr.String(), fmt.Sprintf("`%s`", mapping))
+		list = append(list, repl{old: expr.String(), new: fmt.Sprintf("`%s`", mapping)})
+	}
+	sort.Slice(list, func(i, j int) bool { return len(list[i].old) > len(list[j].old) })
+	out := sql
+	for _, r := range list {
+		out = strings.ReplaceAll(out, r.old, r.new)
+	}
+	return out, nil
+}
+
+func (t *MergeStmtTransformer) replaceMergedColumnRefsInUpdateValue(valueString string, columnMapping *ColumnMapping, ctx TransformContext) (string, error) {
+	type repl struct {
+		old, new string
+	}
+	var list []repl
+	for column, mapping := range columnMapping.AllColumnMap {
+		expr, err := t.coordinator.TransformExpression(ExpressionData{
+			Type:   ExpressionTypeColumn,
+			Column: &ColumnRefData{ColumnID: column.ID},
+		}, ctx)
+		if err != nil {
+			return "", err
+		}
+		list = append(list, repl{old: expr.String(), new: fmt.Sprintf("`%s`", mapping)})
+	}
+	sort.Slice(list, func(i, j int) bool { return len(list[i].old) > len(list[j].old) })
+	out := valueString
+	for _, r := range list {
+		out = strings.ReplaceAll(out, r.old, r.new)
 	}
 	return out, nil
 }
@@ -424,7 +542,9 @@ func (t *MergeStmtTransformer) transformWhenClause(
 	}
 }
 
-// transformInsertAction transforms an INSERT action within a WHEN clause
+// transformInsertAction transforms an INSERT action within a WHEN clause.
+// INSERT DEFAULT is supported when the analyzer emits a literal/default expression; column-level
+// DEFAULT constraints on the target table are a separate catalog feature.
 func (t *MergeStmtTransformer) transformInsertAction(whenClause *MergeWhenClauseData, targetTableName string,
 	sourceTable SQLFragment, whereStmt string, columnMapping *ColumnMapping, ctx TransformContext) (string, error) {
 
@@ -467,18 +587,10 @@ func (t *MergeStmtTransformer) transformUpdateAction(whenClause *MergeWhenClause
 			return "", fmt.Errorf("failed to transform update value: %w", err)
 		}
 
-		// Replace column references with mapped names from the temporary table
 		valueString := valueExpr.String()
-		for column, mapping := range columnMapping.AllColumnMap {
-			expr, err := t.coordinator.TransformExpression(ExpressionData{
-				Type:   ExpressionTypeColumn,
-				Column: &ColumnRefData{ColumnID: column.ID},
-			}, ctx)
-			if err != nil {
-				return "", fmt.Errorf("failed to transform update value: %w", err)
-			}
-
-			valueString = strings.ReplaceAll(valueString, expr.String(), fmt.Sprintf("`%s`", mapping))
+		valueString, err = t.replaceMergedColumnRefsInUpdateValue(valueString, columnMapping, ctx)
+		if err != nil {
+			return "", fmt.Errorf("failed to transform update value: %w", err)
 		}
 
 		setItems = append(setItems, fmt.Sprintf("`%s`= %s", item.Column, valueString))

@@ -1343,6 +1343,10 @@ type SetItem struct {
 // CompoundSQLFragment represents multiple SQL statements that should be executed in sequence
 type CompoundSQLFragment struct {
 	statements []string
+	// MergeDupCheckSQL, if set, is executed with Query (not Exec) immediately after statements[0]
+	// (CREATE merged temp table). Any row returned means duplicate source rows matched one target
+	// key and MERGE must abort (BigQuery: WHEN MATCHED UPDATE/DELETE).
+	MergeDupCheckSQL string
 }
 
 // NewCompoundSQLFragment creates a new compound SQL fragment
