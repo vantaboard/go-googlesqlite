@@ -332,6 +332,34 @@ func TestRegisterCustomDriver(t *testing.T) {
 	}
 }
 
+func TestCreateSchemaExplicitProjectIgnoresConnectionDefault(t *testing.T) {
+	sql.Register("googlesqlite-create-schema-cross", &googlesqlite.GoogleSQLiteDriver{
+		ConnectHook: func(conn *googlesqlite.GoogleSQLiteConn) error {
+			return conn.SetNamePath([]string{"default-project"})
+		},
+	})
+	db, err := sql.Open("googlesqlite-create-schema-cross", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	res, err := db.ExecContext(context.Background(), "CREATE SCHEMA IF NOT EXISTS `other-project.the_dataset`")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat, err := googlesqlite.ChangedCatalogFromResult(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cat.Dataset == nil || len(cat.Dataset.Added) != 1 {
+		t.Fatalf("expected one dataset ref, got %#v", cat.Dataset)
+	}
+	ref := cat.Dataset.Added[0]
+	if ref.ProjectID != "other-project" || ref.DatasetID != "the_dataset" {
+		t.Fatalf("got project=%q dataset=%q", ref.ProjectID, ref.DatasetID)
+	}
+}
+
 func TestChangedCatalog(t *testing.T) {
 	t.Run("table", func(t *testing.T) {
 		db, err := sql.Open("googlesqlite", ":memory:")

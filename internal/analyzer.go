@@ -657,7 +657,21 @@ func (a *Analyzer) newCreateViewStmtAction(ctx context.Context, _ string, args [
 }
 
 func (a *Analyzer) newCreateSchemaStmtAction(_ context.Context, _ string, _ []driver.NamedValue, node *ast.CreateSchemaStmtNode) (*CreateSchemaStmtAction, error) {
-	merged := a.namePath.mergePath(node.NamePath())
+	raw := a.namePath.normalizePath(node.NamePath())
+	var merged []string
+	switch {
+	case len(raw) == 0:
+		return nil, fmt.Errorf("CREATE SCHEMA name is empty")
+	case len(raw) == 1:
+		// Dataset only: prepend connection default project (e.g. default + mydataset).
+		merged = a.namePath.mergePath(node.NamePath())
+	case len(raw) == 2:
+		// Explicit project.dataset — do not merge with connection project (avoids
+		// combining the job default project, connection project, and dataset incorrectly).
+		merged = raw
+	default:
+		return nil, fmt.Errorf("CREATE SCHEMA name must be project.dataset (2 path elements); got %v", raw)
+	}
 	if len(merged) != 2 {
 		return nil, fmt.Errorf("CREATE SCHEMA name must be project.dataset (2 path elements); got %v", merged)
 	}
