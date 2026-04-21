@@ -922,6 +922,23 @@ FROM Items`,
 
 		// aggregate functions
 		{
+			name: "group by all",
+			query: `
+				SELECT x, SUM(y) AS total
+				FROM UNNEST([
+					STRUCT(1 AS x, 10 AS y),
+					STRUCT(1 AS x, 5 AS y),
+					STRUCT(2 AS x, 3 AS y)
+				])
+				GROUP BY ALL
+				ORDER BY x
+			`,
+			expectedRows: [][]interface{}{
+				{int64(1), int64(15)},
+				{int64(2), int64(3)},
+			},
+		},
+		{
 			name:         "any_value",
 			query:        `SELECT ANY_VALUE(fruit) FROM UNNEST(["apple", "banana", "pear"]) as fruit`,
 			expectedRows: [][]interface{}{{"apple"}},

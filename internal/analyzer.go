@@ -94,6 +94,7 @@ func newAnalyzerOptions() (*googlesql.AnalyzerOptions, error) {
 		googlesql.FeatureV13WithRecursive,
 		googlesql.FeatureV12GroupByArray,
 		googlesql.FeatureV12GroupByStruct,
+		googlesql.FeatureV14GroupByAll,
 		// v1.4 builtins (numeric ids until named in go-googlesql enum): FIRST/LAST N, NULLIFZERO/ZEROIFNULL, PI
 		googlesql.LanguageFeature(14027),
 		googlesql.LanguageFeature(14028),
