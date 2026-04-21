@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/vantaboard/go-googlesql"
@@ -13,7 +14,25 @@ type (
 	nodeMapKey     struct{}
 	funcMapKey     struct{}
 	currentTimeKey struct{}
+	loggerKey      struct{}
 )
+
+// WithLogger attaches a slog.Logger to the context for structured logging in the query pipeline.
+func WithLogger(ctx context.Context, l *slog.Logger) context.Context {
+	if l == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, loggerKey{}, l)
+}
+
+// Logger returns the slog.Logger from context, or slog.Default() if none was set.
+func Logger(ctx context.Context) *slog.Logger {
+	l, _ := ctx.Value(loggerKey{}).(*slog.Logger)
+	if l == nil {
+		return slog.Default()
+	}
+	return l
+}
 
 func analyzerFromContext(ctx context.Context) *Analyzer {
 	value := ctx.Value(analyzerKey{})

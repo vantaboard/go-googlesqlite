@@ -116,9 +116,9 @@ func (c *QueryCoordinator) TransformStatementNode(node ast.Node, ctx TransformCo
 	}
 
 	debug := ctx.Config().Debug
+	log := Logger(ctx.Context())
 	if debug {
-		fmt.Println("--- AST:")
-		fmt.Print(node.DebugString())
+		log.Debug("transform: AST", "ast", node.DebugString())
 	}
 
 	// Extract pure data from the AST node
@@ -135,8 +135,7 @@ func (c *QueryCoordinator) TransformStatementNode(node ast.Node, ctx TransformCo
 		if err != nil {
 			return nil, err
 		}
-		fmt.Println("--- EXTRACTED DATA:")
-		fmt.Println(string(j))
+		log.Debug("transform: extracted data", "json", string(j))
 	}
 
 	// Delegate to the appropriate transformer using direct dispatch
@@ -146,9 +145,7 @@ func (c *QueryCoordinator) TransformStatementNode(node ast.Node, ctx TransformCo
 	}
 
 	if debug {
-		fmt.Println("--- FORMATTED QUERY:")
-		fmt.Println(result)
-		fmt.Println("---")
+		log.Debug("transform: formatted query", "sql", result)
 	}
 
 	return result, nil

@@ -32,7 +32,7 @@ func (t *RecursiveRefScanTransformer) Transform(data ScanData, ctx TransformCont
 	// Get the recursive CTE name from context
 	recursiveCTEName := ctx.GetRecursiveCTEName()
 	if ctx.Config().Debug {
-		fmt.Printf("DEBUG: RecursiveRefScan - CTE name from context: '%s'\n", recursiveCTEName)
+		Logger(ctx.Context()).Debug("RecursiveRefScan", "recursive_cte_name", recursiveCTEName)
 	}
 	if recursiveCTEName == "" {
 		return nil, fmt.Errorf("recursive CTE name not found in context")

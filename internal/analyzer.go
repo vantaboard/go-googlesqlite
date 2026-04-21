@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/vantaboard/go-googlesql"
 	parsed_ast "github.com/vantaboard/go-googlesql/ast"
@@ -358,7 +359,28 @@ func (a *Analyzer) configureQueryParameters(options *googlesql.AnalyzerOptions) 
 	return nil
 }
 
-func (a *Analyzer) Analyze(ctx context.Context, conn *Conn, query string, args []driver.NamedValue) ([]StmtActionFunc, error) {
+func truncateQueryForLog(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
+func (a *Analyzer) Analyze(ctx context.Context, conn *Conn, query string, args []driver.NamedValue) (actionFuncs []StmtActionFunc, err error) {
+	start := time.Now()
+	log := Logger(ctx)
+	namePathStr := strings.Join(a.namePath.path, ".")
+	log.Debug("analyzer: begin", "query", truncateQueryForLog(query, 2048), "name_path", namePathStr)
+
+	defer func() {
+		elapsed := time.Since(start).Milliseconds()
+		if err != nil {
+			log.Error("analyzer: failed", "err", err, "elapsed_ms", elapsed)
+		} else {
+			log.Debug("analyzer: complete", "elapsed_ms", elapsed, "stmt_count", len(actionFuncs))
+		}
+	}()
+
 	query = normalizeSafeLiteralCasts(query)
 	query, a.queryParameters = normalizePositionalParameters(query, a.queryParameters)
 	if err := validateLiteralCast(query); err != nil {
@@ -383,7 +405,7 @@ func (a *Analyzer) Analyze(ctx context.Context, conn *Conn, query string, args [
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure query parameter types: %s", err)
 	}
-	actionFuncs := make([]StmtActionFunc, 0, len(stmts))
+	actionFuncs = make([]StmtActionFunc, 0, len(stmts))
 	for _, stmt := range stmts {
 		stmt := stmt
 		actionFuncs = append(actionFuncs, func() (StmtAction, error) {

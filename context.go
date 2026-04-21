@@ -2,6 +2,7 @@ package googlesqlite
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/vantaboard/go-googlesqlite/internal"
@@ -27,4 +28,14 @@ func WithCurrentTime(ctx context.Context, now time.Time) context.Context {
 // CurrentTime gets the time specified by WithCurrentTime.
 func CurrentTime(ctx context.Context) *time.Time {
 	return internal.CurrentTime(ctx)
+}
+
+// WithLogger attaches a slog.Logger to the context for structured logging in the query pipeline.
+func WithLogger(ctx context.Context, l *slog.Logger) context.Context {
+	return internal.WithLogger(ctx, l)
+}
+
+// Logger returns the slog.Logger from context, or slog.Default() if none was set.
+func Logger(ctx context.Context) *slog.Logger {
+	return internal.Logger(ctx)
 }

@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"log/slog"
+	"sync"
+
 	"google.golang.org/api/bigquery/v2"
 	internal "github.com/vantaboard/go-googlesqlite/internal"
 	_ "modernc.org/sqlite"
-	"sync"
 )
 
 var (
@@ -25,7 +27,7 @@ var (
 
 func init() {
 	if err := internal.RegisterFunctions(); err != nil {
-		fmt.Printf("failed to register functions: %s", err)
+		slog.Error("googlesqlite: failed to register functions", "err", err)
 	}
 
 	sql.Register("googlesqlite", &GoogleSQLiteDriver{})
