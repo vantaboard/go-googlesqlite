@@ -13,11 +13,12 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/fatih/color"
+	"github.com/jessevdk/go-flags"
+	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 	"github.com/vantaboard/go-googlesql/types"
 	"github.com/vantaboard/go-googlesqlite"
 	"github.com/vantaboard/go-googlesqlite/internal"
-	"github.com/jessevdk/go-flags"
-	"github.com/olekukonko/tablewriter"
 	"golang.org/x/term"
 )
 
@@ -323,12 +324,14 @@ func (cli *CLI) printRowsWithTable(ctx context.Context, rows *sql.Rows) error {
 	if err != nil {
 		return err
 	}
-	table := tablewriter.NewWriter(cli.out)
-	table.SetAutoFormatHeaders(false)
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-	table.SetAutoWrapText(false)
-	table.SetHeader(columns)
+	table := tablewriter.NewTable(cli.out,
+		tablewriter.WithHeaderAutoFormat(tw.Off),
+		tablewriter.WithHeaderAlignment(tw.AlignLeft),
+		tablewriter.WithRowAlignment(tw.AlignLeft),
+		tablewriter.WithHeaderAutoWrap(tw.WrapNone),
+		tablewriter.WithRowAutoWrap(tw.WrapNone),
+	)
+	table.Header(columns)
 
 	columnNum := len(columns)
 	queryArgs := make([]interface{}, columnNum)
@@ -356,10 +359,14 @@ func (cli *CLI) printRowsWithTable(ctx context.Context, rows *sql.Rows) error {
 			v := reflect.ValueOf(arg).Elem().Interface()
 			values = append(values, cli.formatValue(v, columnColors[colIdx]))
 		}
-		table.Append(values)
+		if err := table.Append(values); err != nil {
+			return err
+		}
 	}
 
-	table.Render()
+	if err := table.Render(); err != nil {
+		return err
+	}
 	return nil
 }
 
