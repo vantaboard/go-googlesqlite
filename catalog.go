@@ -12,6 +12,8 @@ type (
 	ChangedCatalog  = internal.ChangedCatalog
 	ChangedTable    = internal.ChangedTable
 	ChangedFunction = internal.ChangedFunction
+	ChangedDataset  = internal.ChangedDataset
+	DatasetRef      = internal.DatasetRef
 	TableSpec       = internal.TableSpec
 	FunctionSpec    = internal.FunctionSpec
 	NameWithType    = internal.NameWithType

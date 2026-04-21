@@ -113,6 +113,7 @@ func newAnalyzerOptions() (*googlesql.AnalyzerOptions, error) {
 		ast.DeleteStmt,
 		ast.DropStmt,
 		ast.TruncateStmt,
+		ast.CreateSchemaStmt,
 		ast.CreateTableStmt,
 		ast.CreateTableAsSelectStmt,
 		ast.CreateProcedureStmt,
@@ -531,6 +532,8 @@ func (a *Analyzer) newStmtAction(ctx context.Context, query string, args []drive
 		return a.newCreateFunctionStmtAction(ctx, query, args, node.(*ast.CreateFunctionStmtNode))
 	case ast.CreateViewStmt:
 		return a.newCreateViewStmtAction(ctx, query, args, node.(*ast.CreateViewStmtNode))
+	case ast.CreateSchemaStmt:
+		return a.newCreateSchemaStmtAction(ctx, query, args, node.(*ast.CreateSchemaStmtNode))
 	case ast.DropStmt:
 		return a.newDropStmtAction(ctx, query, args, node.(*ast.DropStmtNode))
 	case ast.DropFunctionStmt:
@@ -650,6 +653,24 @@ func (a *Analyzer) newCreateViewStmtAction(ctx context.Context, _ string, args [
 		query:   createViewStmt,
 		spec:    spec,
 		catalog: a.catalog,
+	}, nil
+}
+
+func (a *Analyzer) newCreateSchemaStmtAction(_ context.Context, _ string, _ []driver.NamedValue, node *ast.CreateSchemaStmtNode) (*CreateSchemaStmtAction, error) {
+	merged := a.namePath.mergePath(node.NamePath())
+	if len(merged) != 2 {
+		return nil, fmt.Errorf("CREATE SCHEMA name must be project.dataset (2 path elements); got %v", merged)
+	}
+	ref := DatasetRef{
+		ProjectID:   merged[0],
+		DatasetID:   merged[1],
+		IfNotExists: node.CreateMode() == ast.CreateIfNotExistsMode,
+		OrReplace:   node.CreateMode() == ast.CreateOrReplaceMode,
+	}
+	return &CreateSchemaStmtAction{
+		catalog:        a.catalog,
+		schemaNamePath: merged,
+		datasetRef:     ref,
 	}, nil
 }
 

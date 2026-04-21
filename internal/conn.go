@@ -8,17 +8,35 @@ import (
 type ChangedCatalog struct {
 	Table    *ChangedTable
 	Function *ChangedFunction
+	Dataset  *ChangedDataset
 }
 
 func newChangedCatalog() *ChangedCatalog {
 	return &ChangedCatalog{
 		Table:    &ChangedTable{},
 		Function: &ChangedFunction{},
+		Dataset:  &ChangedDataset{},
 	}
 }
 
 func (c *ChangedCatalog) Changed() bool {
-	return c.Table.Changed() || c.Function.Changed()
+	return c.Table.Changed() || c.Function.Changed() || c.Dataset.Changed()
+}
+
+// DatasetRef describes a dataset (schema) created or ensured via CREATE SCHEMA.
+type DatasetRef struct {
+	ProjectID   string
+	DatasetID   string
+	IfNotExists bool
+	OrReplace   bool
+}
+
+type ChangedDataset struct {
+	Added []DatasetRef
+}
+
+func (d *ChangedDataset) Changed() bool {
+	return len(d.Added) > 0
 }
 
 type ChangedTable struct {
@@ -93,6 +111,10 @@ func (c *Conn) deleteTable(spec *TableSpec) {
 func (c *Conn) addFunction(spec *FunctionSpec) {
 	c.removeFromDeletedFunctionsIfExists(spec)
 	c.cc.Function.Added = append(c.cc.Function.Added, spec)
+}
+
+func (c *Conn) addDatasetRef(ref DatasetRef) {
+	c.cc.Dataset.Added = append(c.cc.Dataset.Added, ref)
 }
 
 func (c *Conn) deleteFunction(spec *FunctionSpec) {

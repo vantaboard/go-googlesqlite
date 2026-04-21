@@ -86,6 +86,10 @@ DROP VIEW IF EXISTS _view_a
 `,
 		},
 		{
+			name: "create schema if not exists",
+			query: "CREATE SCHEMA IF NOT EXISTS `proj.schema_ds`",
+		},
+		{
 			name: "transaction",
 			query: `
 CREATE OR REPLACE TABLE Inventory

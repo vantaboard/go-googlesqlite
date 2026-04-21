@@ -522,6 +522,31 @@ func (c *Catalog) addTableSpec(spec *TableSpec) error {
 	return nil
 }
 
+// EnsureSchemaCatalogPath ensures nested SimpleCatalog nodes exist for each segment
+// in namePath (for example project, then dataset). This matches subcatalog creation
+// in addTableSpecRecursive without attaching a table.
+func (c *Catalog) EnsureSchemaCatalogPath(namePath []string) error {
+	if len(namePath) == 0 {
+		return fmt.Errorf("schema name path is empty")
+	}
+	cur := c.catalog
+	for _, seg := range namePath {
+		if seg == "" {
+			return fmt.Errorf("empty segment in schema path %v", namePath)
+		}
+		sub, err := cur.Catalog(seg)
+		if err != nil {
+			return err
+		}
+		if sub == nil {
+			sub = newSimpleCatalog(seg)
+			cur.AddCatalog(sub)
+		}
+		cur = sub
+	}
+	return nil
+}
+
 func (c *Catalog) addTableSpecRecursive(cat *types.SimpleCatalog, spec *TableSpec) error {
 	if len(spec.NamePath) > 1 {
 		subCatalogName := spec.NamePath[0]
