@@ -3,7 +3,7 @@ module github.com/vantaboard/go-googlesqlite
 go 1.26.0
 
 require (
-	github.com/vantaboard/go-googlesql v0.5.12
+	github.com/vantaboard/go-googlesql v0.5.13
 	modernc.org/sqlite v1.37.0
 )
 
@@ -26,9 +26,9 @@ require (
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
-	golang.org/x/net v0.37.0
-	golang.org/x/term v0.30.0
-	golang.org/x/text v0.23.0
+	golang.org/x/net v0.52.0
+	golang.org/x/term v0.41.0
+	golang.org/x/text v0.35.0
 	google.golang.org/api v0.114.0
 )
 
@@ -62,19 +62,20 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/pkg/errors v0.8.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/vantaboard/go-googlesql/lib/darwin-amd64 v0.5.11 // indirect
-	github.com/vantaboard/go-googlesql/lib/darwin-arm64 v0.5.11 // indirect
-	github.com/vantaboard/go-googlesql/lib/linux-amd64 v0.5.11 // indirect
-	github.com/vantaboard/go-googlesql/lib/linux-arm64 v0.5.11 // indirect
-	github.com/vantaboard/go-googlesql/lib/windows-amd64 v0.5.11 // indirect
+	github.com/vantaboard/go-googlesql/lib/darwin-amd64 v0.5.13 // indirect
+	github.com/vantaboard/go-googlesql/lib/darwin-arm64 v0.5.13 // indirect
+	github.com/vantaboard/go-googlesql/lib/linux-amd64 v0.5.13 // indirect
+	github.com/vantaboard/go-googlesql/lib/linux-arm64 v0.5.13 // indirect
+	github.com/vantaboard/go-googlesql/lib/windows-amd64 v0.5.13 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
-	golang.org/x/mod v0.24.0 // indirect
+	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/oauth2 v0.6.0 // indirect
-	golang.org/x/sync v0.12.0 // indirect
-	golang.org/x/sys v0.31.0 // indirect
-	golang.org/x/tools v0.31.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
+	golang.org/x/telemetry v0.0.0-20260311193753-579e4da9a98c // indirect
+	golang.org/x/tools v0.43.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20230330154414-c0448cd141ea // indirect

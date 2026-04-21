@@ -83,8 +83,8 @@ jobs:
         env:
           GO_GOOGLESQL_VERSION: ${{ steps.gsql.outputs.v }}
         run: bash go-googlesql/scripts/ci-download-or-build-default-prebuilts.sh go-googlesql
-      # Tarballs include stable names (lib/*.a) as symlinks to ${GOOS}_${GOARCH}/*.a. Older googlesql-prebuilts
-      # extraction skipped symlink entries; recreate so CGO -force_load paths resolve (macOS + Linux).
+      # Tarballs use stable names under internal/ccall/.../lib as symlinks to ${GOOS}_${GOARCH}/*.a.
+      # Default releases ship split libgooglesql_*.a (match go-googlesql scripts/ci-download-or-build-default-prebuilts.sh).
       - name: Ensure prebuilt lib symlinks
         working-directory: ${{ github.workspace }}
         run: |
@@ -96,8 +96,12 @@ jobs:
           if [[ -f "$p/$ga/libprotobuf_cgo.a" ]]; then
             ln -sfn "$ga/libprotobuf_cgo.a" "$p/libprotobuf_cgo.a"
           fi
-          if [[ -f "$u/$ga/libgooglesql.a" ]]; then
-            ln -sfn "$ga/libgooglesql.a" "$u/libgooglesql.a"
+          for f in "$u/$ga"/libgooglesql_*.a; do
+            [[ -e "$f" ]] || continue
+            ln -sfn "$ga/$(basename "$f")" "$u/$(basename "$f")"
+          done
+          if [[ -f "$u/$ga/unified_archives_link_order.txt" ]]; then
+            ln -sfn "$ga/unified_archives_link_order.txt" "$u/unified_archives_link_order.txt"
           fi
           if [[ "$(go env GOOS)" == "linux" ]] && [[ -f "$p/$ga/libcxx_prebuilt.a" ]]; then
             ln -sfn "$ga/libcxx_prebuilt.a" "$p/libcxx_prebuilt.a"
