@@ -2,6 +2,7 @@ package internal
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	ast "github.com/vantaboard/go-googlesql/resolved_ast"
@@ -85,8 +86,12 @@ func (t *MergeStmtTransformer) Transform(data StatementData, ctx TransformContex
 	// 1. Create temporary merged table
 	statements = append(statements, createTableStmt.String())
 
-	// 2. Generate conditional statements based on WHEN clauses
-	for _, whenClause := range mergeData.WhenClauses {
+	// 2. Generate conditional statements based on WHEN clauses.
+	// After each mutating clause, rebuild the merged table from the current target so later
+	// WHEN clauses see a fresh snapshot (BigQuery evaluates against one logical snapshot, but
+	// sequential DML requires refreshing so a row already handled — e.g. by an earlier
+	// NOT MATCHED BY TARGET — is not processed again by a later clause).
+	for i, whenClause := range mergeData.WhenClauses {
 		stmt, err := t.transformWhenClause(
 			whenClause, mergeData.TargetTable,
 			sourceTable,
@@ -100,6 +105,20 @@ func (t *MergeStmtTransformer) Transform(data StatementData, ctx TransformContex
 		if stmt != "" {
 			statements = append(statements, stmt)
 		}
+		if i < len(mergeData.WhenClauses)-1 && mergeWhenClauseMutatesTarget(whenClause.ActionType) {
+			nextWhen := mergeData.WhenClauses[i+1]
+			// Keep the original merged snapshot before NOT MATCHED BY SOURCE (BigQuery uses one
+			// pre-merge join for the whole statement). Refreshing breaks target-only detection.
+			if nextWhen.MatchType == ast.MatchTypeNotMatchedBySource {
+				continue
+			}
+			statements = append(statements, "DROP TABLE googlesqlite_merged_table")
+			recreate, _, err := t.createMergedTableStatement("googlesqlite_merged_table", sourceTable, targetTable, mergeData.SourceScan, mergeData.TargetScan, mergeExpr, ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to recreate merged table after WHEN clause: %w", err)
+			}
+			statements = append(statements, recreate.String())
+		}
 	}
 
 	// 3. Drop temporary table
@@ -107,6 +126,15 @@ func (t *MergeStmtTransformer) Transform(data StatementData, ctx TransformContex
 
 	// Create a compound statement fragment that represents all the statements
 	return NewCompoundSQLFragment(statements), nil
+}
+
+func mergeWhenClauseMutatesTarget(action ast.ActionType) bool {
+	switch action {
+	case ast.ActionTypeInsert, ast.ActionTypeUpdate, ast.ActionTypeDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 // mergeColumnPair holds one source/target key column pair from the MERGE ON clause (before merged-table aliases).
@@ -416,13 +444,14 @@ func (t *MergeStmtTransformer) transformInsertAction(whenClause *MergeWhenClause
 		values = append(values, valueExpr.String())
 	}
 
-	// Build INSERT statement
+	// Filter to rows that qualify for this WHEN clause (e.g. NOT MATCHED BY TARGET).
 	return fmt.Sprintf(
-		"INSERT INTO `%s` (%s) SELECT %s FROM %s",
+		"INSERT INTO `%s` (%s) SELECT %s FROM %s WHERE %s",
 		targetTableName,
 		strings.Join(columns, ","),
 		strings.Join(values, ","),
 		sourceTable.String(),
+		whereStmt,
 	), nil
 }
 
@@ -579,6 +608,21 @@ func (t *MergeStmtTransformer) createColumnMapping(sourceColumns, targetColumns 
 	return mapping
 }
 
+// mergeColumnsSorted returns map keys in stable order so UNION ALL branches use identical column layout.
+func mergeColumnsSorted(m map[*ColumnData]string) []*ColumnData {
+	cols := make([]*ColumnData, 0, len(m))
+	for c := range m {
+		cols = append(cols, c)
+	}
+	sort.Slice(cols, func(i, j int) bool {
+		if cols[i].ID != cols[j].ID {
+			return cols[i].ID < cols[j].ID
+		}
+		return cols[i].Name < cols[j].Name
+	})
+	return cols
+}
+
 // createJoinWithColumnMapping creates a SELECT statement with explicit column mapping for joins
 func (t *MergeStmtTransformer) createJoinWithColumnMapping(joinFromItem *FromItem, mapping *ColumnMapping, ctx TransformContext) (*SelectStatement, error) {
 	stmt := NewSelectStatement()
@@ -588,7 +632,8 @@ func (t *MergeStmtTransformer) createJoinWithColumnMapping(joinFromItem *FromIte
 	stmt.SelectList = []*SelectListItem{}
 
 	// Add source columns
-	for col, newName := range mapping.SourceColumnMap {
+	for _, col := range mergeColumnsSorted(mapping.SourceColumnMap) {
+		newName := mapping.SourceColumnMap[col]
 		exprData := ExpressionData{
 			Type:   ExpressionTypeColumn,
 			Column: &ColumnRefData{ColumnID: col.ID},
@@ -606,7 +651,8 @@ func (t *MergeStmtTransformer) createJoinWithColumnMapping(joinFromItem *FromIte
 	}
 
 	// Add target columns
-	for col, newName := range mapping.TargetColumnMap {
+	for _, col := range mergeColumnsSorted(mapping.TargetColumnMap) {
+		newName := mapping.TargetColumnMap[col]
 		exprData := ExpressionData{
 			Type:   ExpressionTypeColumn,
 			Column: &ColumnRefData{ColumnID: col.ID},
