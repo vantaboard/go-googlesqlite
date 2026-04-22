@@ -236,7 +236,7 @@ func (c *Catalog) Sync(ctx context.Context, conn *Conn) error {
 	if err := c.repo.EnsureSchema(ctx, conn); err != nil {
 		return fmt.Errorf("failed to create catalog tables: %w", err)
 	}
-	now := time.Now()
+	now := catalogBindTime(time.Now())
 	rows, err := c.repo.QueryUpdatedSince(ctx, conn, c.lastSyncedAt)
 	if err != nil {
 		return fmt.Errorf("failed to query load catalog: %w", err)
@@ -402,7 +402,7 @@ func (c *Catalog) saveFunctionSpec(ctx context.Context, conn *Conn, spec *Functi
 	if err != nil {
 		return fmt.Errorf("failed to encode function spec: %w", err)
 	}
-	now := time.Now()
+	now := catalogBindTime(time.Now())
 	if err := c.repo.Upsert(ctx, conn, spec.FuncName(), FunctionSpecKind, string(encoded), now); err != nil {
 		return fmt.Errorf("failed to save a new function spec: %w", err)
 	}

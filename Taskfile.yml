@@ -16,6 +16,7 @@ tasks:
       - |
         echo "go-googlesqlite — https://taskfile.dev (task --list-all)"
         echo "Common: task build | task test:prebuilt | task test:linux | task cover"
+        echo "Partial tests: TESTFLAGS='-run SomeTest -count=1' task test:prebuilt  (always use task; sources .envrc / stack bootstrap)"
 
   build:
     desc: Build googlesqlite-cli with unified prebuilt tags
@@ -57,12 +58,12 @@ tasks:
         ./bin/golangci-lint run --timeout 30m --build-tags="$GOOGLESQL_BUILD_TAGS"
 
   test:prebuilt:
-    desc: Host tests with the same CGO env as go-googlesql Task (sibling prebuilts)
+    desc: Host tests with the same CGO env as go-googlesql Task. Optional TESTFLAGS for go test (e.g. -run Foo).
     cmds:
       - |
         set -euo pipefail
         source .envrc
-        go test -tags "$GOOGLESQL_BUILD_TAGS" -p 1 -count=1 ./...
+        go test -tags "$GOOGLESQL_BUILD_TAGS" -p 1 -count=1 ${TESTFLAGS:-} ./...
 
   test:duckdb-lib:
     desc: |
@@ -91,7 +92,7 @@ tasks:
           fi
         fi
         TAGS="${GOOGLESQL_BUILD_TAGS},duckdb,duckdb_use_lib"
-        go test -tags "${TAGS}" -p 1 -count=1 ./...
+        go test -tags "${TAGS}" -p 1 -count=1 ${TESTFLAGS:-} ./...
 
   docker:build-dev-googlesql:
     desc: Build go-googlesql:dev in the sibling checkout (required for test:linux)

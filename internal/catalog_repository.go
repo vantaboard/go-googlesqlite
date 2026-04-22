@@ -7,6 +7,16 @@ import (
 	"time"
 )
 
+// catalogBindTime returns a Time safe to pass to database/sql for TIMESTAMP columns.
+// Go's time.Time may include a monotonic clock; when drivers stringify binds, that can
+// produce values DuckDB rejects (e.g. "... m=+0.123").
+func catalogBindTime(t time.Time) time.Time {
+	if t.IsZero() {
+		return t
+	}
+	return time.Unix(0, t.UnixNano()).In(t.Location())
+}
+
 // CatalogRepository persists googlesqlite metadata table specs in a dialect-specific way.
 type CatalogRepository interface {
 	EnsureSchema(ctx context.Context, conn *Conn) error
@@ -70,10 +80,11 @@ func (r *sqliteCatalogRepository) EnsureSchema(ctx context.Context, conn *Conn) 
 }
 
 func (r *sqliteCatalogRepository) QueryUpdatedSince(ctx context.Context, conn *Conn, lastSyncedAt time.Time) (*sql.Rows, error) {
-	return conn.QueryContext(ctx, r.selectSince, sql.Named("lastUpdatedAt", lastSyncedAt))
+	return conn.QueryContext(ctx, r.selectSince, sql.Named("lastUpdatedAt", catalogBindTime(lastSyncedAt)))
 }
 
 func (r *sqliteCatalogRepository) Upsert(ctx context.Context, conn *Conn, name string, kind CatalogSpecKind, specJSON string, at time.Time) error {
+	at = catalogBindTime(at)
 	_, err := conn.ExecContext(ctx, r.upsert,
 		sql.Named("name", name),
 		sql.Named("kind", string(kind)),
@@ -144,10 +155,11 @@ func (r *duckdbCatalogRepository) EnsureSchema(ctx context.Context, conn *Conn) 
 }
 
 func (r *duckdbCatalogRepository) QueryUpdatedSince(ctx context.Context, conn *Conn, lastSyncedAt time.Time) (*sql.Rows, error) {
-	return conn.QueryContext(ctx, r.selectSince, lastSyncedAt)
+	return conn.QueryContext(ctx, r.selectSince, catalogBindTime(lastSyncedAt))
 }
 
 func (r *duckdbCatalogRepository) Upsert(ctx context.Context, conn *Conn, name string, kind CatalogSpecKind, specJSON string, at time.Time) error {
+	at = catalogBindTime(at)
 	_, err := conn.ExecContext(ctx, r.upsert, name, string(kind), specJSON, at, at)
 	return err
 }
