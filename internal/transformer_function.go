@@ -138,8 +138,7 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 					return nil, fmt.Errorf("failed to transform partition by expression: %w", err)
 				}
 
-				// Apply collation so SQLite will partition the rows based on googlesqlite_collate return value
-				expr.Collation = "googlesqlite_collate"
+				ApplySortCollation(ctx.Dialect(), expr)
 
 				partitionBy = append(partitionBy, expr)
 			}
@@ -151,7 +150,7 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 				if err != nil {
 					return nil, fmt.Errorf("failed to transform order by expression: %w", err)
 				}
-				orderByItems, err := createOrderByItems(expr, orderData)
+				orderByItems, err := createOrderByItems(expr, orderData, ctx.Dialect())
 				if err != nil {
 					return nil, fmt.Errorf("failed to create order by items: %w", err)
 				}
@@ -226,10 +225,14 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 			}
 		}
 		// Default function call transformation
+		emitName := function.Name
+		if n, ok := ctx.Dialect().RewriteEmittedFunctionName(function.Name); ok {
+			emitName = n
+		}
 		return &SQLExpression{
 			Type: ExpressionTypeFunction,
 			FunctionCall: &FunctionCall{
-				Name:       function.Name,
+				Name:       emitName,
 				Arguments:  args,
 				WindowSpec: windowSpec,
 			},

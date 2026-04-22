@@ -105,7 +105,7 @@ func (t *AnalyticScanTransformer) Transform(data ScanData, ctx TransformContext)
 			for _, partData := range windowSpec.PartitionBy {
 				if partData.Type == ExpressionTypeColumn && partData.Column != nil {
 					expr := ctx.FragmentContext().GetQualifiedColumnExpression(partData.Column.ColumnID)
-					expr.Collation = "googlesqlite_collate"
+					ApplySortCollation(ctx.Dialect(), expr)
 					orderByItems = append(orderByItems, &OrderByItem{
 						Expression: expr,
 						Direction:  "ASC",
@@ -121,7 +121,7 @@ func (t *AnalyticScanTransformer) Transform(data ScanData, ctx TransformContext)
 					if orderData.IsDescending {
 						direction = "DESC"
 					}
-					expr.Collation = "googlesqlite_collate"
+					ApplySortCollation(ctx.Dialect(), expr)
 					orderByItems = append(orderByItems, &OrderByItem{
 						Expression: expr,
 						Direction:  direction,

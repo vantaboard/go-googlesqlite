@@ -81,7 +81,7 @@ func (t *OrderByScanTransformer) transformOrderByItems(items []*OrderByItemData,
 		}
 
 		// Handle potential multiple items for NULL ordering
-		items, err := t.createOrderByItems(expr, itemData)
+		items, err := t.createOrderByItems(expr, itemData, ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create order by items: %w", err)
 		}
@@ -93,9 +93,8 @@ func (t *OrderByScanTransformer) transformOrderByItems(items []*OrderByItemData,
 }
 
 // createOrderByItems handles NULL ordering by potentially creating multiple ORDER BY items
-func (t *OrderByScanTransformer) createOrderByItems(expr *SQLExpression, itemData *OrderByItemData) ([]*OrderByItem, error) {
-	// Apply googlesqlite_collate collation to the expression
-	expr.Collation = "googlesqlite_collate"
+func (t *OrderByScanTransformer) createOrderByItems(expr *SQLExpression, itemData *OrderByItemData, ctx TransformContext) ([]*OrderByItem, error) {
+	ApplySortCollation(ctx.Dialect(), expr)
 
 	items := make([]*OrderByItem, 0)
 
@@ -107,7 +106,7 @@ func (t *OrderByScanTransformer) createOrderByItems(expr *SQLExpression, itemDat
 			"IS NOT",
 			NewLiteralExpression("NULL"),
 		)
-		nullExpr.Collation = "googlesqlite_collate"
+		ApplySortCollation(ctx.Dialect(), nullExpr)
 
 		switch itemData.NullOrder {
 		case ast.NullOrderModeNullsFirst:
@@ -141,8 +140,10 @@ func (t *OrderByScanTransformer) createOrderByItems(expr *SQLExpression, itemDat
 }
 
 // createOrderByItems creates ORDER BY items with proper NULL handling
-func createOrderByItems(expr *SQLExpression, orderData *OrderByItemData) ([]*OrderByItem, error) {
+func createOrderByItems(expr *SQLExpression, orderData *OrderByItemData, d Dialect) ([]*OrderByItem, error) {
 	items := make([]*OrderByItem, 0)
+
+	ApplySortCollation(d, expr)
 
 	// Handle NULL ordering if specified
 	if orderData.NullOrder != 0 { // Assuming NullOrderModeOrderUnspecified = 0
@@ -154,7 +155,7 @@ func createOrderByItems(expr *SQLExpression, orderData *OrderByItemData) ([]*Ord
 				Right:    NewLiteralExpression("NULL"),
 			},
 		}
-		nullExpr.Collation = "googlesqlite_collate"
+		ApplySortCollation(d, nullExpr)
 
 		// Add null handling ORDER BY item first
 		direction := "ASC"
@@ -174,7 +175,6 @@ func createOrderByItems(expr *SQLExpression, orderData *OrderByItemData) ([]*Ord
 		direction = "DESC"
 	}
 
-	expr.Collation = "googlesqlite_collate"
 	items = append(items, &OrderByItem{
 		Expression: expr,
 		Direction:  direction,

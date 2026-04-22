@@ -224,10 +224,10 @@ func (t *AggregateScanTransformer) buildGroupingSetsQuery(
 		for _, groupByCol := range groupByMap {
 			// Create a copy with collation
 			orderExpr := &SQLExpression{
-				Type:      groupByCol.Type,
-				Value:     groupByCol.Value,
-				Collation: "googlesqlite_collate",
+				Type:  groupByCol.Type,
+				Value: groupByCol.Value,
 			}
+			ApplySortCollation(ctx.Dialect(), orderExpr)
 
 			orderByItems = append(orderByItems, &OrderByItem{
 				Expression: orderExpr,
