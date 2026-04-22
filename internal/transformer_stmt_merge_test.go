@@ -8,7 +8,7 @@ import (
 func TestMergeDuplicateSourceCheckSQL(t *testing.T) {
 	sql := mergeDuplicateSourceCheckSQL([]mergeKeyPair{
 		{mergedSourceName: "merged_source_id", mergedTargetName: "merged_target_id"},
-	})
+	}, "googlesqlite_merged_table")
 	if !strings.Contains(sql, "GROUP BY `merged_target_id`") || !strings.Contains(sql, "HAVING COUNT(*) > 1") {
 		t.Fatalf("unexpected SQL: %s", sql)
 	}

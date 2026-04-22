@@ -20,6 +20,10 @@ type Dialect interface {
 	MaybeEmitNativeCast(inner *SQLExpression, cast *CastData) (*SQLExpression, error)
 	// ArrayUnnestUseLateralCorrelation is true when correlated UNNEST should use JOIN LATERAL (DuckDB).
 	ArrayUnnestUseLateralCorrelation() bool
+	// MergeTempTableName is the scratch table used by the multi-statement MERGE simulation.
+	MergeTempTableName() string
+	// MergeScratchTableIsTemporary uses CREATE TEMP TABLE for that scratch table (recommended on DuckDB).
+	MergeScratchTableIsTemporary() bool
 }
 
 // ApplySortCollation sets expr.Collation when the dialect uses a sort collation (SQLite only today).
@@ -55,6 +59,10 @@ func (SQLiteDialect) MaybeEmitNativeCast(_ *SQLExpression, _ *CastData) (*SQLExp
 
 func (SQLiteDialect) ArrayUnnestUseLateralCorrelation() bool { return false }
 
+func (SQLiteDialect) MergeTempTableName() string { return "googlesqlite_merged_table" }
+
+func (SQLiteDialect) MergeScratchTableIsTemporary() bool { return false }
+
 // duckDBNativeFunctions maps googlesqlite-prefixed runtime names to DuckDB builtins where semantics align.
 var duckDBNativeFunctions = map[string]string{
 	"googlesqlite_length":      "length",
@@ -63,6 +71,18 @@ var duckDBNativeFunctions = map[string]string{
 	"googlesqlite_lower":       "lower",
 	"googlesqlite_upper":       "upper",
 	"googlesqlite_substr":      "substr",
+	// String family (Phase 2 batch): DuckDB builtins with compatible arity for common cases.
+	"googlesqlite_trim":    "trim",
+	"googlesqlite_ltrim":   "ltrim",
+	"googlesqlite_rtrim":   "rtrim",
+	"googlesqlite_concat":  "concat",
+	"googlesqlite_replace": "replace",
+	"googlesqlite_reverse": "reverse",
+	"googlesqlite_repeat": "repeat",
+	// INSTR with 3+ args has no single DuckDB builtin; keep SQLite UDF path until rewritten.
+	"googlesqlite_strpos": "strpos",
+	"googlesqlite_chr":     "chr",
+	"googlesqlite_ascii":   "ascii",
 }
 
 // DuckDBDialect is the GoogleSQL-to-DuckDB codegen target (incremental parity).
@@ -85,4 +105,8 @@ func (DuckDBDialect) WrapGroupByKey(expr *SQLExpression) *SQLExpression { return
 
 func (DuckDBDialect) ArrayUnnestUseLateralCorrelation() bool { return true }
 
-// MERGE and other SQLite-only helpers remain dialect follow-ups; see docs/duckdb-parity-roadmap.md.
+func (DuckDBDialect) MergeTempTableName() string { return "googlesqlite_merged_table" }
+
+func (DuckDBDialect) MergeScratchTableIsTemporary() bool { return true }
+
+// See docs/duckdb-parity-roadmap.md for remaining parity gaps.

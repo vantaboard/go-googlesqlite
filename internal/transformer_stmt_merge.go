@@ -45,6 +45,7 @@ func (t *MergeStmtTransformer) Transform(data StatementData, ctx TransformContex
 	}
 
 	mergeData := data.Merge
+	mergeTable := ctx.Dialect().MergeTempTableName()
 
 	// Transform target table scan
 	targetTable, err := t.coordinator.TransformScan(*mergeData.TargetScan, ctx)
@@ -75,7 +76,7 @@ func (t *MergeStmtTransformer) Transform(data StatementData, ctx TransformContex
 	}
 
 	// Create temporary merged table with FULL OUTER JOIN
-	createTableStmt, columnMapping, err := t.createMergedTableStatement("googlesqlite_merged_table", sourceTable, targetTable, mergeData.SourceScan, mergeData.TargetScan, mergeExpr, ctx)
+	createTableStmt, columnMapping, err := t.createMergedTableStatement(mergeTable, sourceTable, targetTable, mergeData.SourceScan, mergeData.TargetScan, mergeExpr, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create merged table statement: %w", err)
 	}
@@ -102,6 +103,7 @@ func (t *MergeStmtTransformer) Transform(data StatementData, ctx TransformContex
 			sourceTable,
 			mergeKeys,
 			columnMapping,
+			mergeTable,
 			ctx,
 		)
 		if err != nil {
@@ -117,8 +119,8 @@ func (t *MergeStmtTransformer) Transform(data StatementData, ctx TransformContex
 			if nextWhen.MatchType == ast.MatchTypeNotMatchedBySource {
 				continue
 			}
-			statements = append(statements, "DROP TABLE googlesqlite_merged_table")
-			recreate, _, err := t.createMergedTableStatement("googlesqlite_merged_table", sourceTable, targetTable, mergeData.SourceScan, mergeData.TargetScan, mergeExpr, ctx)
+			statements = append(statements, fmt.Sprintf("DROP TABLE `%s`", mergeTable))
+			recreate, _, err := t.createMergedTableStatement(mergeTable, sourceTable, targetTable, mergeData.SourceScan, mergeData.TargetScan, mergeExpr, ctx)
 			if err != nil {
 				return nil, fmt.Errorf("failed to recreate merged table after WHEN clause: %w", err)
 			}
@@ -127,11 +129,11 @@ func (t *MergeStmtTransformer) Transform(data StatementData, ctx TransformContex
 	}
 
 	// 3. Drop temporary table
-	statements = append(statements, "DROP TABLE googlesqlite_merged_table")
+	statements = append(statements, fmt.Sprintf("DROP TABLE `%s`", mergeTable))
 
 	frag := NewCompoundSQLFragment(statements)
 	if mergeNeedsDuplicateSourceGuard(mergeData.WhenClauses) {
-		frag.MergeDupCheckSQL = mergeDuplicateSourceCheckSQL(mergeKeys)
+		frag.MergeDupCheckSQL = mergeDuplicateSourceCheckSQL(mergeKeys, mergeTable)
 	}
 	return frag, nil
 }
@@ -159,7 +161,7 @@ func mergeNeedsDuplicateSourceGuard(whenClauses []*MergeWhenClauseData) bool {
 
 // mergeDuplicateSourceCheckSQL returns a query that yields a row iff two or more matched
 // (source+target) merged rows share the same target key — forbidden for WHEN MATCHED UPDATE/DELETE.
-func mergeDuplicateSourceCheckSQL(keys []mergeKeyPair) string {
+func mergeDuplicateSourceCheckSQL(keys []mergeKeyPair, mergeTable string) string {
 	var whereParts []string
 	var groupBy []string
 	for _, k := range keys {
@@ -169,8 +171,8 @@ func mergeDuplicateSourceCheckSQL(keys []mergeKeyPair) string {
 	where := strings.Join(whereParts, " AND ")
 	group := strings.Join(groupBy, ", ")
 	return fmt.Sprintf(
-		"SELECT 1 FROM googlesqlite_merged_table WHERE %s GROUP BY %s HAVING COUNT(*) > 1 LIMIT 1",
-		where, group,
+		"SELECT 1 FROM `%s` WHERE %s GROUP BY %s HAVING COUNT(*) > 1 LIMIT 1",
+		mergeTable, where, group,
 	)
 }
 
@@ -495,6 +497,7 @@ func (t *MergeStmtTransformer) transformWhenClause(
 	sourceTable SQLFragment,
 	mergeKeys []mergeKeyPair,
 	columnMapping *ColumnMapping,
+	mergeTable string,
 	ctx TransformContext,
 ) (string, error) {
 
@@ -521,7 +524,7 @@ func (t *MergeStmtTransformer) transformWhenClause(
 
 	// Create WHERE clause with existence check
 	subq := NewSelectStatement()
-	subq.FromClause = &FromItem{Type: FromItemTypeTable, TableName: "googlesqlite_merged_table"}
+	subq.FromClause = &FromItem{Type: FromItemTypeTable, TableName: mergeTable}
 	subq.SelectList = []*SelectListItem{{Expression: NewLiteralExpression("1")}}
 	subq.WhereClause = combinedWhere
 	existsStmt := NewExistsExpression(subq)
@@ -531,7 +534,7 @@ func (t *MergeStmtTransformer) transformWhenClause(
 	case ast.ActionTypeInsert:
 		return t.transformInsertAction(whenClause, targetTableName, sourceTable, existsStmt.String(), columnMapping, ctx)
 	case ast.ActionTypeUpdate:
-		return t.transformUpdateAction(whenClause, targetTableName, combinedWhere.String(), columnMapping, ctx)
+		return t.transformUpdateAction(whenClause, targetTableName, mergeTable, combinedWhere.String(), columnMapping, ctx)
 	case ast.ActionTypeDelete:
 		return (&DeleteStatement{
 			Table:     &FromItem{TableName: targetTableName},
@@ -576,7 +579,7 @@ func (t *MergeStmtTransformer) transformInsertAction(whenClause *MergeWhenClause
 }
 
 // transformUpdateAction transforms an UPDATE action within a WHEN clause
-func (t *MergeStmtTransformer) transformUpdateAction(whenClause *MergeWhenClauseData, targetTableName, whereStmt string,
+func (t *MergeStmtTransformer) transformUpdateAction(whenClause *MergeWhenClauseData, targetTableName, mergeTable, whereStmt string,
 	columnMapping *ColumnMapping, ctx TransformContext) (string, error) {
 
 	// Transform SET items
@@ -598,9 +601,10 @@ func (t *MergeStmtTransformer) transformUpdateAction(whenClause *MergeWhenClause
 
 	// Build UPDATE statement
 	return fmt.Sprintf(
-		"UPDATE `%s` SET %s FROM googlesqlite_merged_table WHERE %s",
+		"UPDATE `%s` SET %s FROM `%s` WHERE %s",
 		targetTableName,
 		strings.Join(setItems, ","),
+		mergeTable,
 		whereStmt,
 	), nil
 }
@@ -668,8 +672,9 @@ func (t *MergeStmtTransformer) createMergedTableStatement(tableName string, sour
 
 	// Create the CREATE TABLE AS SELECT statement
 	return &CreateTableStatement{
-		TableName: tableName,
-		AsSelect:  distinctQuery,
+		TableName:   tableName,
+		AsSelect:    distinctQuery,
+		IsTemporary: ctx.Dialect().MergeScratchTableIsTemporary(),
 	}, columnMapping, nil
 }
 

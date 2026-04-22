@@ -6,6 +6,57 @@ import (
 	"testing"
 )
 
+func TestDialectGolden_emitStringBuiltinRenames(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	ctx := context.Background()
+	for _, tc := range []struct {
+		fnName     string
+		sqliteNeed string
+		duckNeed   string
+	}{
+		{"googlesqlite_trim", "googlesqlite_trim(", "trim("},
+		{"googlesqlite_concat", "googlesqlite_concat(", "concat("},
+		{"googlesqlite_strpos", "googlesqlite_strpos(", "strpos("},
+		{"googlesqlite_replace", "googlesqlite_replace(", "replace("},
+	} {
+		t.Run(tc.fnName, func(t *testing.T) {
+			args := []ExpressionData{
+				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("a")}},
+				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("b")}},
+			}
+			if tc.fnName == "googlesqlite_replace" {
+				args = append(args, ExpressionData{
+					Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("c")},
+				})
+			}
+			fn := NewFunctionCallExpressionData(tc.fnName, args...)
+			for _, pair := range []struct {
+				name    string
+				dialect Dialect
+				substr  string
+			}{
+				{"sqlite", SQLiteDialect{}, tc.sqliteNeed},
+				{"duckdb", DuckDBDialect{}, tc.duckNeed},
+			} {
+				t.Run(pair.name, func(t *testing.T) {
+					cfg := DefaultTransformConfig()
+					cfg.Dialect = pair.dialect
+					factory := NewQueryTransformFactory(cfg, coord)
+					tctx := factory.CreateTransformContext(ctx)
+					expr, err := coord.TransformExpression(fn, tctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					got := expr.String()
+					if !strings.Contains(got, pair.substr) {
+						t.Fatalf("got %q, want substring %q", got, pair.substr)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestDialectGolden_emitFunctionNameLength(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	// String literal argument for LENGTH(...)

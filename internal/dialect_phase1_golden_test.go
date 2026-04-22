@@ -14,6 +14,18 @@ func TestDialectGolden_arraySubqueryAggregateName(t *testing.T) {
 	}
 }
 
+func TestDialectGolden_mergeScratchUsesTempOnDuckDB(t *testing.T) {
+	if (SQLiteDialect{}).MergeScratchTableIsTemporary() {
+		t.Fatal("sqlite: scratch merge table should not use CREATE TEMP by default")
+	}
+	if !(DuckDBDialect{}).MergeScratchTableIsTemporary() {
+		t.Fatal("duckdb: scratch merge table should use CREATE TEMP TABLE")
+	}
+	if g, w := (SQLiteDialect{}).MergeTempTableName(), (DuckDBDialect{}).MergeTempTableName(); g != w {
+		t.Fatalf("merge temp table name should match across dialects for parity tests, sqlite=%q duckdb=%q", g, w)
+	}
+}
+
 func TestDialectGolden_groupByWrap(t *testing.T) {
 	col := NewColumnExpression("x", "t")
 	sqlite := (SQLiteDialect{}).WrapGroupByKey(col)

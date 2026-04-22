@@ -916,7 +916,11 @@ func (s *SelectStatement) String() string {
 
 // CreateTableStatement WriteSql implementation
 func (s *CreateTableStatement) WriteSql(writer *SQLWriter) {
-	writer.Write("CREATE TABLE")
+	if s.IsTemporary {
+		writer.Write("CREATE TEMP TABLE")
+	} else {
+		writer.Write("CREATE TABLE")
+	}
 	if s.IfNotExists {
 		writer.Write(" IF NOT EXISTS")
 	}
@@ -1246,10 +1250,11 @@ func NewInnerJoin(left, right *FromItem, condition *SQLExpression) *FromItem {
 // DDL Statement types
 
 type CreateTableStatement struct {
-	IfNotExists bool
-	TableName   string
-	Columns     []*ColumnDefinition
-	AsSelect    *SelectStatement
+	IfNotExists  bool
+	IsTemporary  bool // MERGE simulation scratch table on DuckDB (session-local).
+	TableName    string
+	Columns      []*ColumnDefinition
+	AsSelect     *SelectStatement
 }
 
 type ColumnDefinition struct {
