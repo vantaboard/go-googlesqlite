@@ -65,7 +65,7 @@ Suggested order (high leverage first):
 - [x] **Strings / bytes / regex (batch 2):** DuckDB renames (`starts_with`, `ends_with`, `left`, `right`, `lpad`, `rpad`, `initcap`, `unicode`, `byte_length` → `octet_length`, `md5`/`sha1`/`sha256`/`sha512`); **INSTR** 2-arg → `strpos` rewrite in [`transformer_function.go`](../internal/transformer_function.go); golden + [`transformer_duckdb_rewrites_test.go`](../internal/transformer_duckdb_rewrites_test.go) + [`duckdb_integration_test.go`](../duckdb_integration_test.go) Phase 2 corpus.
 - [x] **Date/time (batch 1):** `CURRENT_TIMESTAMP` / `CURRENT_DATE` / `CURRENT_TIME` DuckDB rewrites (including frozen clock via [`WithCurrentTime`](../context.go) → `to_timestamp`); see matrix + rewrite tests.
 - [x] **JSON (batch 1):** `googlesqlite_json_extract` → `json_extract` rename; `PARSE_JSON` first-arg-only rewrite (optional BigQuery widen mode dropped on DuckDB); dual-backend smoke on `JSON_EXTRACT` + `CAST` in [`duckdb_integration_test.go`](../duckdb_integration_test.go).
-- [ ] **Aggregates / window builtins:** `FunctionSpec.CallSQL` and custom SQLite aggregates—largest gap; consider per-function issues.
+- [x] **Aggregates / window builtins (starter):** common `googlesqlite_*` / `googlesqlite_window_*` names map to DuckDB builtins via [`dialect_duckdb_renames.go`](../internal/dialect_duckdb_renames.go); `COUNT(DISTINCT …)` / `count(*)` normalization in [`sqlbuilder_sqlbuilder.go`](../internal/sqlbuilder_sqlbuilder.go); dual-backend tests (`sum_group_by`, `row_number_over`). Option modifiers (`googlesqlite_having_*`, `googlesqlite_order_by`, …) and rare aggregates remain follow-on.
 - [ ] **Geography / ML / rare builtins:** lowest priority unless your corpus needs them.
 
 Deliverable: **`internal/duckdb_function_matrix.md`** is the single strategy table (rename / rewrite / macro / unsupported); this roadmap links to it.
@@ -89,13 +89,13 @@ Planning note: [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.
 - [x] **Parameters (smoke):** dual-backend named param test in [`duckdb_integration_test.go`](../duckdb_integration_test.go) (`CAST(@p AS INT64)`).
 - [x] **Transactions (smoke):** commit + rollback DDL/DML via `database/sql` `BeginTx` in [`duckdb_integration_test.go`](../duckdb_integration_test.go).
 - [x] **Connection settings:** `SetMaxIdleConns(0)` in [`OpenSQLBackend`](../internal/backend.go) for DuckDB; lifecycle notes in [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.md).
-- [ ] **bigquery-emulator:** optional driver selection + same job SQL corpus (separate repo milestone).
+- [ ] **bigquery-emulator:** driver selection + shared job SQL corpus still **not wired** (repository uses `*googlesqlite.GoogleSQLiteConn`); see **DuckDB execution layer** in [bigquery-emulator README](https://github.com/vantaboard/bigquery-emulator/blob/main/README.md). Optional CI for DuckDB lives in **go-googlesqlite** `duckdb-lib` workflow.
 
 ---
 
 ## Phase 5 — Verification toward “100%”
 
-- [ ] **Expand golden tests:** one file per concern or table-driven corpus under `internal/` (SQL text) + optional `testdata/`.
+- [x] **Expand golden tests (starter):** `testdata/duckdb_corpus/*.sql` + [`duckdb_corpus_test.go`](../duckdb_corpus_test.go) (`duckdb` + `duckdb_use_lib`) runs each file on SQLite vs DuckDB with the same normalization rules as other dual-backend tests.
 - [x] **Dual-backend integration tests (starter corpus):** [`duckdb_integration_test.go`](../duckdb_integration_test.go) (`//go:build duckdb && duckdb_use_lib`) — Phase 1 surfaces + strings; comparison rules in [duckdb-parity-gates.md](duckdb-parity-gates.md).
 - [ ] **Performance / OOM:** large CTAS / analytics workloads (original motivation); track separately from correctness parity.
 
