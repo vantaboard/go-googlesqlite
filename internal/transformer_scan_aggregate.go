@@ -74,8 +74,7 @@ func (t *AggregateScanTransformer) Transform(data ScanData, ctx TransformContext
 			return nil, fmt.Errorf("failed to transform GROUP BY expression: %w", err)
 		}
 
-		// Wrap with googlesqlite_group_by for proper GoogleSQL semantics
-		wrappedExpr := NewFunctionExpression("googlesqlite_group_by", sqlExpr)
+		wrappedExpr := ctx.Dialect().WrapGroupByKey(sqlExpr)
 		groupByExprs = append(groupByExprs, wrappedExpr)
 		groupByMap[groupByExpr.Column.ColumnID()] = sqlExpr
 	}
@@ -159,8 +158,7 @@ func (t *AggregateScanTransformer) buildGroupingSetsQuery(
 		groupBySetColumnMap := make(map[int]struct{})
 
 		for _, col := range groupingSet.GroupByColumns {
-			// Wrap with googlesqlite_group_by
-			wrappedExpr := NewFunctionExpression("googlesqlite_group_by", groupByMap[col.Column.ColumnID()])
+			wrappedExpr := ctx.Dialect().WrapGroupByKey(groupByMap[col.Column.ColumnID()])
 			groupBySetColumns = append(groupBySetColumns, wrappedExpr)
 			groupBySetColumnMap[col.Column.ColumnID()] = struct{}{}
 		}

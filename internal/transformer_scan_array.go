@@ -13,6 +13,7 @@ import (
 // The transformer converts GoogleSQL ArrayScan nodes by:
 // - Transforming array expressions through the coordinator
 // - Using SQLite's json_each() table function with googlesqlite_decode_array() for UNNEST
+// - Using DuckDB unnest() + generate_subscripts() (0-based offset) with JOIN LATERAL when correlated
 // - Handling correlated arrays with proper JOIN semantics (INNER vs LEFT)
 // - Managing element and offset column availability in the fragment context
 // - Supporting both standalone UNNEST and UNNEST with input scans
@@ -28,6 +29,51 @@ func NewArrayScanTransformer(coordinator Coordinator) *ArrayScanTransformer {
 	return &ArrayScanTransformer{
 		coordinator: coordinator,
 	}
+}
+
+// unnestExpansionFromItem builds a FROM item that expands an array into rows with columns
+// `value` (element) and optionally `key` (0-based offset, matching SQLite json_each).
+func (t *ArrayScanTransformer) unnestExpansionFromItem(
+	arrayExpr *SQLExpression,
+	arrayAlias string,
+	includeOffset bool,
+	correlated bool,
+) *FromItem {
+	if !correlated {
+		// Single-row source: (SELECT expr AS _arr) then unnest in outer SELECT.
+		src := NewSelectStatement()
+		src.SelectList = []*SelectListItem{{Expression: arrayExpr, Alias: "_arr"}}
+		srcFrom := NewSubqueryFromItem(src, "_unnest_src")
+
+		body := NewSelectStatement()
+		body.FromClause = srcFrom
+		body.SelectList = duckDBUnnestSelectList(arrayExpr, includeOffset, true)
+		return NewSubqueryFromItem(body, arrayAlias)
+	}
+
+	body := NewSelectStatement()
+	body.SelectList = duckDBUnnestSelectList(arrayExpr, includeOffset, false)
+	return NewSubqueryFromItem(body, arrayAlias)
+}
+
+// duckDBUnnestSelectList builds SELECT list for DuckDB unnest; when useArrColumn is true,
+// unnest(generate_subscripts) read from _arr in _unnest_src.
+func duckDBUnnestSelectList(arrayExpr *SQLExpression, includeOffset bool, useArrColumn bool) []*SelectListItem {
+	var unnestArg *SQLExpression
+	if useArrColumn {
+		unnestArg = NewColumnExpression("_arr", "_unnest_src")
+	} else {
+		unnestArg = arrayExpr
+	}
+
+	unnestCol := NewFunctionExpression("unnest", unnestArg)
+	items := []*SelectListItem{{Expression: unnestCol, Alias: "value"}}
+	if includeOffset {
+		gs := NewFunctionExpression("generate_subscripts", unnestArg, NewLiteralExpression("1"))
+		keyExpr := NewBinaryExpression(gs, "-", NewLiteralExpression("1"))
+		items = append(items, &SelectListItem{Expression: keyExpr, Alias: "key"})
+	}
+	return items
 }
 
 // Transform converts ArrayScanData to a FromItem representing UNNEST operation
@@ -55,39 +101,45 @@ func (t *ArrayScanTransformer) Transform(data ScanData, ctx TransformContext) (*
 		return nil, fmt.Errorf("failed to transform array expression: %w", err)
 	}
 
-	// Create the json_each table function call with googlesqlite_decode_array
-	jsonEachFromItem := &FromItem{
-		Type: FromItemTypeTableFunction,
-		TableFunction: &TableFunction{
-			Name: "json_each",
-			Arguments: []*SQLExpression{
-				NewFunctionExpression(
-					"googlesqlite_decode_array",
-					arrayExpr,
-				),
+	arrayAlias := fmt.Sprintf("$array_%s", ctx.FragmentContext().GetID())
+	includeOffset := arrayData.ArrayOffsetColumn != nil
+
+	var expansion *FromItem
+	if ctx.Dialect().ArrayUnnestUseLateralCorrelation() {
+		correlated := arrayData.InputScan != nil
+		expansion = t.unnestExpansionFromItem(arrayExpr, arrayAlias, includeOffset, correlated)
+	} else {
+		expansion = &FromItem{
+			Type: FromItemTypeTableFunction,
+			TableFunction: &TableFunction{
+				Name: "json_each",
+				Arguments: []*SQLExpression{
+					NewFunctionExpression(
+						"googlesqlite_decode_array",
+						arrayExpr,
+					),
+				},
 			},
-		},
-		Alias: fmt.Sprintf("$array_%s", ctx.FragmentContext().GetID()),
+			Alias: arrayAlias,
+		}
 	}
 
 	// The element / key columns must be made available prior to the JoinExpr being transformed
-	// since they reference return values from SQLite's`json_each` which do not exist in GoogleSQL
+	// since they reference return values from the unnest expansion which do not exist in GoogleSQL
 	ctx.FragmentContext().AddAvailableColumn(arrayData.ElementColumn.ID, &ColumnInfo{
 		ID:   arrayData.ElementColumn.ID,
 		Name: "value",
-		// This column name comes from SQLite's table-valued function `json_each` (our jsonEachFromItem)
-		Expression: NewColumnExpression("value", jsonEachFromItem.Alias),
+		Expression: NewColumnExpression("value", expansion.Alias),
 	})
-	ctx.FragmentContext().RegisterColumnScope(arrayData.ElementColumn.ID, jsonEachFromItem.Alias)
+	ctx.FragmentContext().RegisterColumnScope(arrayData.ElementColumn.ID, expansion.Alias)
 
 	if offsetColumn := arrayData.ArrayOffsetColumn; offsetColumn != nil {
 		ctx.FragmentContext().AddAvailableColumn(offsetColumn.ID, &ColumnInfo{
 			ID:   offsetColumn.ID,
 			Name: "key",
-			// This column name comes from SQLite's table-valued function `json_each` (our jsonEachFromItem)
-			Expression: NewColumnExpression("key", jsonEachFromItem.Alias),
+			Expression: NewColumnExpression("key", expansion.Alias),
 		})
-		ctx.FragmentContext().RegisterColumnScope(offsetColumn.ID, jsonEachFromItem.Alias)
+		ctx.FragmentContext().RegisterColumnScope(offsetColumn.ID, expansion.Alias)
 	}
 
 	// Create a subquery that selects the proper column names
@@ -95,7 +147,7 @@ func (t *ArrayScanTransformer) Transform(data ScanData, ctx TransformContext) (*
 
 	// Always select 'value' as the element column
 	unnestSelect.SelectList = []*SelectListItem{}
-	unnestSelect.FromClause = jsonEachFromItem
+	unnestSelect.FromClause = expansion
 
 	for _, col := range data.ColumnList {
 		name, table := ctx.FragmentContext().GetQualifiedColumnRef(col.ID)
@@ -137,14 +189,17 @@ func (t *ArrayScanTransformer) Transform(data ScanData, ctx TransformContext) (*
 		}
 	}
 
+	useLateral := ctx.Dialect().ArrayUnnestUseLateralCorrelation()
+
 	// Set the FROM clause to be a JOIN between input and UNNEST
 	unnestSelect.FromClause = &FromItem{
 		Type: FromItemTypeJoin,
 		Join: &JoinClause{
-			Type:      joinType,
-			Left:      innerFromItem,
-			Right:     jsonEachFromItem,
-			Condition: joinCondition,
+			Type:           joinType,
+			Left:           innerFromItem,
+			Right:          expansion,
+			Condition:      joinCondition,
+			RightIsLateral: useLateral,
 		},
 	}
 

@@ -212,6 +212,11 @@ func updateTableAlias(expr *SQLExpression, newAlias string) {
 			updateTableAlias(expr.CaseExpression.ElseExpr, newAlias)
 		}
 
+	case ExpressionTypeCast:
+		if expr.Cast != nil {
+			updateTableAlias(expr.Cast.Expr, newAlias)
+		}
+
 	// Types with their own scope - don't traverse into them
 	case ExpressionTypeSubquery, ExpressionTypeExists:
 		return
@@ -468,6 +473,20 @@ func substituteColumnRefsWithDepth(expr *SQLExpression, aliasMap map[string]*SQL
 		// Subquery expressions are not substituted
 		return expr
 
+	case ExpressionTypeCast:
+		if expr.Cast == nil || expr.Cast.Expr == nil {
+			return expr
+		}
+		return &SQLExpression{
+			Type: ExpressionTypeCast,
+			Cast: &SQLCastSpec{
+				Expr:       substituteColumnRefsWithDepth(expr.Cast.Expr, aliasMap, tableAlias, depth+1),
+				TargetType: expr.Cast.TargetType,
+				Try:        expr.Cast.Try,
+			},
+			Collation: expr.Collation,
+		}
+
 	case ExpressionTypeLiteral, ExpressionTypeParameter, ExpressionTypeStar:
 		// Literals, parameters, and star expressions don't need substitution
 		return expr
@@ -548,6 +567,14 @@ func copyExpression(expr *SQLExpression) *SQLExpression {
 	if expr.ExistsExpr != nil {
 		copied.ExistsExpr = &ExistsExpression{
 			Subquery: expr.ExistsExpr.Subquery, // Subqueries are not deep-copied
+		}
+	}
+
+	if expr.Cast != nil {
+		copied.Cast = &SQLCastSpec{
+			Expr:       copyExpression(expr.Cast.Expr),
+			TargetType: expr.Cast.TargetType,
+			Try:        expr.Cast.Try,
 		}
 	}
 

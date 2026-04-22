@@ -102,6 +102,21 @@ type ExistsExpression struct {
 	Subquery *SelectStatement
 }
 
+// SQLCastSpec is native CAST / TRY_CAST emission (used with ExpressionTypeCast).
+type SQLCastSpec struct {
+	Expr       *SQLExpression
+	TargetType string // SQL type text after AS (e.g. BIGINT, VARCHAR)
+	Try        bool   // TRY_CAST when true (DuckDB / safe cast)
+}
+
+// NewSQLCastExpression builds CAST(expr AS type) or TRY_CAST(expr AS type).
+func NewSQLCastExpression(expr *SQLExpression, targetSQLType string, try bool) *SQLExpression {
+	return &SQLExpression{
+		Type: ExpressionTypeCast,
+		Cast: &SQLCastSpec{Expr: expr, TargetType: targetSQLType, Try: try},
+	}
+}
+
 // ListExpression represents SQL list expressions
 type ListExpression struct {
 	Expressions []*SQLExpression
@@ -165,6 +180,7 @@ type SQLExpression struct {
 	Subquery         *SelectStatement
 	CaseExpression   *CaseExpression
 	ExistsExpr       *ExistsExpression
+	Cast             *SQLCastSpec
 	Alias            string
 	TableAlias       string
 	Collation        string
@@ -209,6 +225,19 @@ func (e *SQLExpression) WriteSql(writer *SQLWriter) {
 	case ExpressionTypeExists:
 		if e.ExistsExpr != nil {
 			e.ExistsExpr.WriteSql(writer)
+		}
+	case ExpressionTypeCast:
+		if e.Cast != nil && e.Cast.Expr != nil {
+			kw := "CAST"
+			if e.Cast.Try {
+				kw = "TRY_CAST"
+			}
+			writer.Write(kw)
+			writer.Write("(")
+			e.Cast.Expr.WriteSql(writer)
+			writer.Write(" AS ")
+			writer.Write(e.Cast.TargetType)
+			writer.Write(")")
 		}
 	case ExpressionTypeParameter:
 		writer.Write(e.Value)
@@ -550,6 +579,8 @@ type JoinClause struct {
 	Right     *FromItem
 	Condition *SQLExpression
 	Using     []string
+	// RightIsLateral emits JOIN … LATERAL (…) for correlated table subqueries (DuckDB UNNEST).
+	RightIsLateral bool
 }
 
 func (j *JoinClause) WriteSql(writer *SQLWriter) {
@@ -560,14 +591,23 @@ func (j *JoinClause) WriteSql(writer *SQLWriter) {
 	switch j.Type {
 	case JoinTypeInner:
 		writer.Write(" INNER JOIN ")
+		if j.RightIsLateral {
+			writer.Write("LATERAL ")
+		}
 	case JoinTypeLeft:
 		writer.Write(" LEFT JOIN ")
+		if j.RightIsLateral {
+			writer.Write("LATERAL ")
+		}
 	case JoinTypeRight:
 		writer.Write(" RIGHT JOIN ")
 	case JoinTypeFull:
 		writer.Write(" FULL OUTER JOIN ")
 	case JoinTypeCross:
 		writer.Write(" CROSS JOIN ")
+		if j.RightIsLateral {
+			writer.Write("LATERAL ")
+		}
 	}
 
 	if j.Right != nil {

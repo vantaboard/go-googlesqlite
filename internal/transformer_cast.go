@@ -47,7 +47,13 @@ func (t *CastTransformer) Transform(data ExpressionData, ctx TransformContext) (
 		return nil, fmt.Errorf("failed to transform cast expression: %w", err)
 	}
 
-	// Use googlesqlite_cast function for complex type conversions
+	native, err := ctx.Dialect().MaybeEmitNativeCast(innerExpr, cast)
+	if err != nil {
+		return nil, err
+	}
+	if native != nil {
+		return native, nil
+	}
 	return t.createGoogleSQLiteCast(innerExpr, cast)
 }
 

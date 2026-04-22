@@ -15,7 +15,7 @@ import (
 // - Recursively transforming the subquery's scan structure
 // - Wrapping the result in appropriate SQL constructs based on subquery type:
 //   - Scalar: Returns single value, wrapped in parentheses
-//   - Array: Wrapped with googlesqlite_array() for proper array semantics
+//   - Array: Wrapped with dialect-specific list aggregate (googlesqlite_array / list)
 //   - EXISTS: Wrapped in EXISTS(...) boolean expression
 //   - IN: Combined with IN expression for membership testing
 //
@@ -62,7 +62,7 @@ func (t *SubqueryTransformer) Transform(data ExpressionData, ctx TransformContex
 		selectStatement.SelectList = []*SelectListItem{
 			{
 				Expression: NewFunctionExpression(
-					"googlesqlite_array",
+					ctx.Dialect().ArraySubqueryListAggregate(),
 					ctx.FragmentContext().GetQualifiedColumnExpression(subquery.Query.ColumnList[0].ID),
 				),
 			},
