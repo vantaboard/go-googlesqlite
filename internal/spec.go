@@ -409,7 +409,7 @@ func newFunctionSpec(ctx context.Context, namePath *NamePath, stmt *ast.CreateFu
 	default:
 		funcExpr := stmt.FunctionExpression()
 		if funcExpr != nil {
-			transformContext := GetGlobalQueryTransformFactory().CreateTransformContext(ctx)
+			transformContext := NewTransformContextFromAnalyzerContext(ctx)
 			extractor := NewNodeExtractor()
 			funcExprData, err := extractor.ExtractExpressionData(funcExpr, transformContext)
 			if err != nil {
@@ -485,7 +485,7 @@ func newTemplatedFunctionSpec(ctx context.Context, namePath *NamePath, stmt *ast
 	funcExpr := stmt.FunctionExpression()
 	var body *SQLExpression
 	if funcExpr != nil {
-		transformContext := GetGlobalQueryTransformFactory().CreateTransformContext(ctx)
+		transformContext := NewTransformContextFromAnalyzerContext(ctx)
 		extractor := NewNodeExtractor()
 		funcExprData, err := extractor.ExtractExpressionData(funcExpr, transformContext)
 		if err != nil {

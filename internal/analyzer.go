@@ -24,6 +24,8 @@ type Analyzer struct {
 	catalog         *Catalog
 	opt             *googlesql.AnalyzerOptions
 	queryParameters []*bigquery.QueryParameter
+	dialect         Dialect
+	queryFactory    *QueryTransformFactory
 }
 
 type DisableQueryFormattingKey struct{}
@@ -32,14 +34,26 @@ var invalidInt64CastPattern = regexp.MustCompile(`(?is)\bCAST\s*\(\s*("[^"]*"|'[
 var invalidSafeInt64CastPattern = regexp.MustCompile(`(?is)\bSAFE_CAST\s*\(\s*("[^"]*"|'[^']*')\s+AS\s+INT64\s*\)`)
 
 func NewAnalyzer(catalog *Catalog) (*Analyzer, error) {
+	return NewAnalyzerWithDialect(catalog, SQLiteDialect{})
+}
+
+// NewAnalyzerWithDialect constructs an analyzer using the given codegen dialect (nil means SQLite).
+func NewAnalyzerWithDialect(catalog *Catalog, dialect Dialect) (*Analyzer, error) {
+	if dialect == nil {
+		dialect = SQLiteDialect{}
+	}
 	opt, err := newAnalyzerOptions()
 	if err != nil {
 		return nil, err
 	}
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = dialect
 	return &Analyzer{
-		catalog:  catalog,
-		opt:      opt,
-		namePath: &NamePath{},
+		catalog:      catalog,
+		opt:          opt,
+		namePath:     &NamePath{},
+		dialect:      dialect,
+		queryFactory: NewQueryTransformFactory(cfg, nil),
 	}, nil
 }
 
@@ -384,6 +398,7 @@ func truncateQueryForLog(s string, max int) string {
 }
 
 func (a *Analyzer) Analyze(ctx context.Context, conn *Conn, query string, args []driver.NamedValue) (actionFuncs []StmtActionFunc, err error) {
+	ctx = WithTransformDialect(ctx, a.dialect)
 	start := time.Now()
 	log := Logger(ctx)
 	namePathStr := strings.Join(a.namePath.path, ".")
@@ -617,7 +632,7 @@ func (a *Analyzer) newCreateTableStmtAction(ctx context.Context, args []driver.N
 }
 
 func (a *Analyzer) newCreateTableAsSelectStmtAction(ctx context.Context, _ string, args []driver.NamedValue, node *ast.CreateTableAsSelectStmtNode) (*CreateTableStmtAction, error) {
-	result, err := GetGlobalQueryTransformFactory().TransformQuery(ctx, node)
+	result, err := a.queryFactory.TransformQuery(ctx, node)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format query %s: %w", "CREATE TABLE AS SELECT", err)
 	}
@@ -674,7 +689,7 @@ func (a *Analyzer) newCreateFunctionStmtAction(ctx context.Context, query string
 }
 
 func (a *Analyzer) newCreateViewStmtAction(ctx context.Context, _ string, args []driver.NamedValue, node *ast.CreateViewStmtNode) (*CreateViewStmtAction, error) {
-	result, err := GetGlobalQueryTransformFactory().TransformQuery(ctx, node)
+	result, err := a.queryFactory.TransformQuery(ctx, node)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format query %s: %w", "CREATE VIEW", err)
 	}
@@ -798,7 +813,7 @@ func (a *Analyzer) buildArrayTypeFuncFromTemplatedFunc(node *ast.CreateFunctionS
 }
 
 func (a *Analyzer) newDropStmtAction(ctx context.Context, query string, args []driver.NamedValue, node *ast.DropStmtNode) (*DropStmtAction, error) {
-	result, err := GetGlobalQueryTransformFactory().TransformQuery(ctx, node)
+	result, err := a.queryFactory.TransformQuery(ctx, node)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format query %s: %w", query, err)
 	}
@@ -824,7 +839,7 @@ func (a *Analyzer) newDropStmtAction(ctx context.Context, query string, args []d
 }
 
 func (a *Analyzer) newDropFunctionStmtAction(ctx context.Context, query string, args []driver.NamedValue, node *ast.DropFunctionStmtNode) (*DropStmtAction, error) {
-	result, err := GetGlobalQueryTransformFactory().TransformQuery(ctx, node)
+	result, err := a.queryFactory.TransformQuery(ctx, node)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format query %s: %w", query, err)
 	}
@@ -849,7 +864,7 @@ func (a *Analyzer) newDropFunctionStmtAction(ctx context.Context, query string, 
 }
 
 func (a *Analyzer) newDMLStmtAction(ctx context.Context, query string, args []driver.NamedValue, node ast.Node) (*DMLStmtAction, error) {
-	result, err := GetGlobalQueryTransformFactory().TransformQuery(ctx, node)
+	result, err := a.queryFactory.TransformQuery(ctx, node)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format query %s: %w", query, err)
 	}
@@ -896,7 +911,7 @@ func (a *Analyzer) newQueryStmtAction(ctx context.Context, query string, args []
 		}
 	} else {
 		var err error
-		result, err := GetGlobalQueryTransformFactory().TransformQuery(ctx, node)
+		result, err := a.queryFactory.TransformQuery(ctx, node)
 		if err != nil {
 			return nil, fmt.Errorf("failed to format query %s: %w", query, err)
 		}
@@ -961,7 +976,7 @@ func (a *Analyzer) newTruncateStmtAction(ctx context.Context, query string, args
 }
 
 func (a *Analyzer) newMergeStmtAction(ctx context.Context, query string, args []driver.NamedValue, node *ast.MergeStmtNode) (*MergeStmtAction, error) {
-	result, err := GetGlobalQueryTransformFactory().TransformQuery(ctx, node)
+	result, err := a.queryFactory.TransformQuery(ctx, node)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format query %s: %w", "MERGE", err)
 	}

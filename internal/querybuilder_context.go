@@ -42,6 +42,11 @@ func (c *DefaultTransformContext) Config() *TransformConfig {
 	return c.config
 }
 
+// Dialect returns the codegen dialect (defaults to SQLite).
+func (c *DefaultTransformContext) Dialect() Dialect {
+	return effectiveDialect(c.config)
+}
+
 // WithFragmentContext returns a new context with updated fragment context
 func (c *DefaultTransformContext) WithFragmentContext(fc FragmentContextProvider) TransformContext {
 	newCtx := *c // Copy

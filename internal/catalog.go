@@ -13,42 +13,6 @@ import (
 	"github.com/vantaboard/go-googlesql/types"
 )
 
-var (
-	createCatalogTableQuery = `
-CREATE TABLE IF NOT EXISTS googlesqlite_catalog(
-  name STRING NOT NULL PRIMARY KEY,
-  kind STRING NOT NULL,
-  spec STRING NOT NULL,
-  updatedAt TIMESTAMP NOT NULL,
-  createdAt TIMESTAMP NOT NULL
-)
-`
-	indexCatalogTableQuery = `
-CREATE INDEX IF NOT EXISTS catalog_last_updated_index ON googlesqlite_catalog(updatedAt DESC);
-`
-
-	upsertCatalogQuery = `
-INSERT INTO googlesqlite_catalog (
-  name,
-  kind,
-  spec,
-  updatedAt,
-  createdAt
-) VALUES (
-  @name,
-  @kind,
-  @spec,
-  @updatedAt,
-  @createdAt
-) ON CONFLICT(name) DO UPDATE SET
-  spec = @spec,
-  updatedAt = @updatedAt
-`
-	deleteCatalogQuery = `
-DELETE FROM googlesqlite_catalog WHERE name = @name
-`
-)
-
 type CatalogSpecKind string
 
 const (
@@ -60,6 +24,7 @@ const (
 
 type Catalog struct {
 	db           *sql.DB
+	repo         CatalogRepository
 	lastSyncedAt time.Time
 	mu           sync.Mutex
 	tables       []*TableSpec
@@ -148,8 +113,17 @@ var MISSING_FUNCTIONS = []*FunctionSpec{
 }
 
 func NewCatalog(db *sql.DB) (*Catalog, error) {
+	return NewCatalogWithRepository(db, NewSQLiteCatalogRepository())
+}
+
+// NewCatalogWithRepository constructs a catalog using the given persistence implementation.
+func NewCatalogWithRepository(db *sql.DB, repo CatalogRepository) (*Catalog, error) {
+	if repo == nil {
+		repo = NewSQLiteCatalogRepository()
+	}
 	catalog := &Catalog{
 		db:       db,
+		repo:     repo,
 		catalog:  newSimpleCatalog(catalogName),
 		tableMap: map[string]*TableSpec{},
 		funcMap:  map[string]*FunctionSpec{},
@@ -259,15 +233,11 @@ func (c *Catalog) Sync(ctx context.Context, conn *Conn) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := c.createCatalogTablesIfNotExists(ctx, conn); err != nil {
+	if err := c.repo.EnsureSchema(ctx, conn); err != nil {
 		return fmt.Errorf("failed to create catalog tables: %w", err)
 	}
 	now := time.Now()
-	rows, err := conn.QueryContext(
-		ctx,
-		`SELECT name, kind, spec FROM googlesqlite_catalog WHERE updatedAt >= @lastUpdatedAt`,
-		sql.Named("lastUpdatedAt", c.lastSyncedAt),
-	)
+	rows, err := c.repo.QueryUpdatedSince(ctx, conn, c.lastSyncedAt)
 	if err != nil {
 		return fmt.Errorf("failed to query load catalog: %w", err)
 	}
@@ -335,7 +305,7 @@ func (c *Catalog) DeleteTableSpec(ctx context.Context, conn *Conn, name string) 
 	if err := c.deleteTableSpecByName(name); err != nil {
 		return err
 	}
-	if _, err := conn.ExecContext(ctx, deleteCatalogQuery, sql.Named("name", name)); err != nil {
+	if err := c.repo.Delete(ctx, conn, name); err != nil {
 		return err
 	}
 	return nil
@@ -348,7 +318,7 @@ func (c *Catalog) DeleteFunctionSpec(ctx context.Context, conn *Conn, name strin
 	if err := c.deleteFunctionSpecByName(name); err != nil {
 		return err
 	}
-	if _, err := conn.ExecContext(ctx, deleteCatalogQuery, sql.Named("name", name)); err != nil {
+	if err := c.repo.Delete(ctx, conn, name); err != nil {
 		return err
 	}
 	return nil
@@ -421,15 +391,7 @@ func (c *Catalog) saveTableSpec(ctx context.Context, conn *Conn, spec *TableSpec
 	if spec.IsView {
 		kind = string(ViewSpecKind)
 	}
-	if _, err := conn.ExecContext(
-		ctx,
-		upsertCatalogQuery,
-		sql.Named("name", spec.TableName()),
-		sql.Named("kind", kind),
-		sql.Named("spec", string(encoded)),
-		sql.Named("updatedAt", now),
-		sql.Named("createdAt", now),
-	); err != nil {
+	if err := c.repo.Upsert(ctx, conn, spec.TableName(), CatalogSpecKind(kind), string(encoded), now); err != nil {
 		return fmt.Errorf("failed to save a new table spec: %w", err)
 	}
 	return nil
@@ -441,46 +403,8 @@ func (c *Catalog) saveFunctionSpec(ctx context.Context, conn *Conn, spec *Functi
 		return fmt.Errorf("failed to encode function spec: %w", err)
 	}
 	now := time.Now()
-	if _, err := conn.ExecContext(
-		ctx,
-		upsertCatalogQuery,
-		sql.Named("name", spec.FuncName()),
-		sql.Named("kind", string(FunctionSpecKind)),
-		sql.Named("spec", string(encoded)),
-		sql.Named("updatedAt", now),
-		sql.Named("createdAt", now),
-	); err != nil {
+	if err := c.repo.Upsert(ctx, conn, spec.FuncName(), FunctionSpecKind, string(encoded), now); err != nil {
 		return fmt.Errorf("failed to save a new function spec: %w", err)
-	}
-	return nil
-}
-
-func (c *Catalog) createCatalogTablesIfNotExists(ctx context.Context, conn *Conn) error {
-	// Re-read the schema each time (no in-memory "already created" flag) so a rolled-back
-	// transaction cannot leave the catalog table missing while we think it exists.
-	var tableCount int
-	if err := conn.QueryRowContext(
-		ctx,
-		`SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'googlesqlite_catalog'`,
-	).Scan(&tableCount); err != nil {
-		return fmt.Errorf("failed to check catalog table: %w", err)
-	}
-	if tableCount == 0 {
-		if _, err := conn.ExecContext(ctx, createCatalogTableQuery); err != nil {
-			return fmt.Errorf("failed to create catalog table: %w", err)
-		}
-	}
-	var indexCount int
-	if err := conn.QueryRowContext(
-		ctx,
-		`SELECT COUNT(1) FROM sqlite_master WHERE type = 'index' AND name = 'catalog_last_updated_index'`,
-	).Scan(&indexCount); err != nil {
-		return fmt.Errorf("failed to check catalog index: %w", err)
-	}
-	if indexCount == 0 {
-		if _, err := conn.ExecContext(ctx, indexCatalogTableQuery); err != nil {
-			return fmt.Errorf("failed to index catalog table: %w", err)
-		}
 	}
 	return nil
 }

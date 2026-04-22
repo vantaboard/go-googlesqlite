@@ -9,12 +9,13 @@ import (
 )
 
 type (
-	analyzerKey    struct{}
-	namePathKey    struct{}
-	nodeMapKey     struct{}
-	funcMapKey     struct{}
-	currentTimeKey struct{}
-	loggerKey      struct{}
+	analyzerKey          struct{}
+	namePathKey          struct{}
+	nodeMapKey           struct{}
+	funcMapKey           struct{}
+	currentTimeKey       struct{}
+	loggerKey            struct{}
+	transformDialectKey  struct{}
 )
 
 // WithLogger attaches a slog.Logger to the context for structured logging in the query pipeline.
@@ -92,4 +93,21 @@ func CurrentTime(ctx context.Context) *time.Time {
 		return nil
 	}
 	return value.(*time.Time)
+}
+
+// WithTransformDialect attaches the active codegen dialect for nested transforms (e.g. SQL function bodies).
+func WithTransformDialect(ctx context.Context, d Dialect) context.Context {
+	if d == nil {
+		d = SQLiteDialect{}
+	}
+	return context.WithValue(ctx, transformDialectKey{}, d)
+}
+
+// TransformDialectFromContext returns the dialect from ctx, defaulting to SQLiteDialect.
+func TransformDialectFromContext(ctx context.Context) Dialect {
+	v, _ := ctx.Value(transformDialectKey{}).(Dialect)
+	if v == nil {
+		return SQLiteDialect{}
+	}
+	return v
 }

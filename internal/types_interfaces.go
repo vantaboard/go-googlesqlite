@@ -50,6 +50,9 @@ type TransformContext interface {
 	// Config returns transformation configuration
 	Config() *TransformConfig
 
+	// Dialect returns the active SQL/codegen target for this transform.
+	Dialect() Dialect
+
 	// WithFragmentContext returns a new context with updated fragment context
 	WithFragmentContext(fc FragmentContextProvider) TransformContext
 

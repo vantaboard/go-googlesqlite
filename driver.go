@@ -25,6 +25,10 @@ var (
 	nameToValueMapMu sync.Mutex
 )
 
+func dbPoolKey(driverName, dsn string) string {
+	return driverName + "\x00" + dsn
+}
+
 func init() {
 	if err := internal.RegisterFunctions(); err != nil {
 		slog.Error("googlesqlite: failed to register functions", "err", err)
@@ -34,22 +38,28 @@ func init() {
 }
 
 func newDBAndCatalog(name string) (*sql.DB, *internal.Catalog, error) {
+	return newDBAndCatalogWithBackend(name, internal.SQLiteBackend{})
+}
+
+func newDBAndCatalogWithBackend(dsn string, backend internal.SQLBackend) (*sql.DB, *internal.Catalog, error) {
+	key := dbPoolKey(backend.DriverName(), dsn)
 	nameToValueMapMu.Lock()
 	defer nameToValueMapMu.Unlock()
-	db, exists := nameToDBMap[name]
+	db, exists := nameToDBMap[key]
 	if exists {
-		return db, nameToCatalogMap[name], nil
+		return db, nameToCatalogMap[key], nil
 	}
-	db, err := sql.Open("sqlite", name)
+	db, err := internal.OpenSQLBackend(backend, dsn)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open database by %s: %w", name, err)
+		return nil, nil, fmt.Errorf("failed to open database %s (%s): %w", backend.DriverName(), dsn, err)
 	}
-	catalog, err := internal.NewCatalog(db)
+	catalog, err := internal.NewCatalogWithRepository(db, backend.NewCatalogRepository())
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed open database by %s: failed to initialize catalog: %w", name, err)
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("failed open database by %s: failed to initialize catalog: %w", dsn, err)
 	}
-	nameToDBMap[name] = db
-	nameToCatalogMap[name] = catalog
+	nameToDBMap[key] = db
+	nameToCatalogMap[key] = catalog
 	return db, catalog, nil
 }
 
@@ -62,7 +72,7 @@ func (d *GoogleSQLiteDriver) Open(name string) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := newGoogleSQLiteConn(db, catalog)
+	conn, err := newGoogleSQLiteConn(db, catalog, internal.SQLiteDialect{})
 	if err != nil {
 		return nil, err
 	}
@@ -80,12 +90,12 @@ type GoogleSQLiteConn struct {
 	analyzer *internal.Analyzer
 }
 
-func newGoogleSQLiteConn(db *sql.DB, catalog *internal.Catalog) (*GoogleSQLiteConn, error) {
+func newGoogleSQLiteConn(db *sql.DB, catalog *internal.Catalog, dialect internal.Dialect) (*GoogleSQLiteConn, error) {
 	conn, err := db.Conn(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("failed to get sqlite3 connection: %w", err)
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
-	analyzer, err := internal.NewAnalyzer(catalog)
+	analyzer, err := internal.NewAnalyzerWithDialect(catalog, dialect)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create analyzer: %w", err)
 	}

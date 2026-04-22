@@ -45,7 +45,22 @@ func NewQueryTransformFactory(config *TransformConfig, coordinator Coordinator) 
 
 // CreateTransformContext creates a transform context with the factory's configuration
 func (f *QueryTransformFactory) CreateTransformContext(ctx context.Context) TransformContext {
-	return NewDefaultTransformContext(ctx, f.config)
+	cfg := f.config
+	if cfg.Dialect == nil {
+		cfgCopy := *cfg
+		cfgCopy.Dialect = SQLiteDialect{}
+		cfg = &cfgCopy
+	}
+	return NewDefaultTransformContext(ctx, cfg)
+}
+
+// NewTransformContextFromAnalyzerContext builds a transform context using the dialect
+// attached to ctx (see WithTransformDialect), for call sites that do not hold an Analyzer.
+func NewTransformContextFromAnalyzerContext(ctx context.Context) TransformContext {
+	d := TransformDialectFromContext(ctx)
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = d
+	return NewQueryTransformFactory(cfg, nil).CreateTransformContext(ctx)
 }
 
 // TransformQuery is a convenience method that transforms a complete query
