@@ -492,6 +492,13 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, d Dialect) (*
 		if len(args) == 2 {
 			return NewFunctionExpression("strpos", args...), true
 		}
+	case "googlesqlite_between":
+		if len(args) == 3 {
+			// Matches runtime BETWEEN (bindBetween): inclusive bounds; any NULL arg -> NULL via SQL 3VL.
+			ge := NewBinaryExpression(args[0], ">=", args[1])
+			le := NewBinaryExpression(args[0], "<=", args[2])
+			return NewBinaryExpression(ge, "AND", le), true
+		}
 	case "googlesqlite_current_timestamp", "googlesqlite_current_datetime":
 		switch len(args) {
 		case 0:

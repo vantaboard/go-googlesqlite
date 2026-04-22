@@ -47,6 +47,30 @@ func TestTransformDuckDB_instrTwoArgStrpos(t *testing.T) {
 	}
 }
 
+func TestTransformDuckDB_betweenRangeAnd(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	fn := NewFunctionCallExpressionData("googlesqlite_between",
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(5)}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(1)}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(10)}},
+	)
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	expr, err := coord.TransformExpression(fn, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if strings.Contains(got, "googlesqlite_between") {
+		t.Fatalf("expected rewrite off googlesqlite_between, got %q", got)
+	}
+	if !strings.Contains(got, ">=") || !strings.Contains(got, "<=") || !strings.Contains(got, " AND ") {
+		t.Fatalf("expected >= .. AND .. <=, got %q", got)
+	}
+}
+
 func TestTransformDuckDB_parseJsonFirstArgOnly(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	fn := NewFunctionCallExpressionData("googlesqlite_parse_json",
