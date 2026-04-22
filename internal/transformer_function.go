@@ -217,6 +217,15 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 			}
 		}
 
+		// DuckDB has no googlesqlite_* comparators/logical helpers. Fold them to native operators even
+		// when arguments are column refs (metadata DELETE/UPDATE WHERE), which skip the primitive-only
+		// fast path below.
+		if ctx.Dialect() != nil && ctx.Dialect().ID() == "duckdb" {
+			if rewritten, ok := duckDBOptimizeComparatorOrLogical(function.Name, args); ok {
+				return rewritten, nil
+			}
+		}
+
 		// Fast path optimization: bypass function calls for primitive type operations
 		// Function calls incur huge overheads: as each call's args must be decoded/encoded, as well as
 		// allocated within both the modernc.org/sqlite driver and the go-googlesqlite driver
@@ -249,6 +258,40 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 				WindowSpec: windowSpec,
 			},
 		}, nil
+	}
+}
+
+// duckDBOptimizeComparatorOrLogical maps googlesqlite_* helpers to native SQL operators for DuckDB
+// without requiring primitive-only arguments (see canOptimizeFunction).
+func duckDBOptimizeComparatorOrLogical(name string, args []*SQLExpression) (*SQLExpression, bool) {
+	switch name {
+	case "googlesqlite_and", "googlesqlite_or":
+		if len(args) < 2 {
+			return nil, false
+		}
+		e, err := optimizeFunctionToSQL(name, args)
+		return e, err == nil
+	case "googlesqlite_not":
+		if len(args) != 1 {
+			return nil, false
+		}
+		e, err := optimizeFunctionToSQL(name, args)
+		return e, err == nil
+	case "googlesqlite_in":
+		if len(args) < 2 {
+			return nil, false
+		}
+		e, err := optimizeFunctionToSQL(name, args)
+		return e, err == nil
+	default:
+		if _, found := functionToOperator[name]; !found {
+			return nil, false
+		}
+		if len(args) != 2 {
+			return nil, false
+		}
+		e, err := optimizeFunctionToSQL(name, args)
+		return e, err == nil
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/vantaboard/go-googlesql"
 	parsed_ast "github.com/vantaboard/go-googlesql/ast"
@@ -29,6 +30,31 @@ type Analyzer struct {
 }
 
 type DisableQueryFormattingKey struct{}
+
+// rewriteAtNamedToDollarForDuckDB converts GoogleSQL @param markers to DuckDB $param for raw SQL
+// (see DisableQueryFormattingKey) so underlying duckdb-go Prepare accepts the statement.
+func rewriteAtNamedToDollarForDuckDB(d Dialect, sql string) string {
+	if d == nil || d.ID() != "duckdb" {
+		return sql
+	}
+	var b strings.Builder
+	for i := 0; i < len(sql); i++ {
+		if sql[i] == '@' && i+1 < len(sql) {
+			j := i + 1
+			for j < len(sql) && (sql[j] == '_' || unicode.IsLetter(rune(sql[j])) || unicode.IsDigit(rune(sql[j]))) {
+				j++
+			}
+			if j > i+1 {
+				b.WriteByte('$')
+				b.WriteString(sql[i+1 : j])
+				i = j - 1
+				continue
+			}
+		}
+		b.WriteByte(sql[i])
+	}
+	return b.String()
+}
 
 var invalidInt64CastPattern = regexp.MustCompile(`(?is)\bCAST\s*\(\s*("[^"]*"|'[^']*')\s+AS\s+INT64\s*\)`)
 var invalidSafeInt64CastPattern = regexp.MustCompile(`(?is)\bSAFE_CAST\s*\(\s*("[^"]*"|'[^']*')\s+AS\s+INT64\s*\)`)
@@ -916,6 +942,7 @@ func (a *Analyzer) newQueryStmtAction(ctx context.Context, query string, args []
 			parameter := string(queryBytes[start:end])
 			formattedQuery = strings.ReplaceAll(formattedQuery, parameter, strings.ToLower(parameter))
 		}
+		formattedQuery = rewriteAtNamedToDollarForDuckDB(a.dialect, formattedQuery)
 	} else {
 		var err error
 		result, err := a.queryFactory.TransformQuery(ctx, node)
