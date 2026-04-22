@@ -56,6 +56,11 @@ func DecodeValue(v driver.Value) (Value, error) {
 			return StringValue(""), nil
 		}
 		return decodeStringOrLayout(string(vv))
+	case time.Time:
+		// Native drivers (e.g. DuckDB) scan DATE/TIMESTAMP into time.Time.
+		// Use TimestampValue as the widest temporal carrier; CastValue maps to
+		// DATE, DATETIME, TIME, or TIMESTAMP from column metadata.
+		return TimestampValue(vv), nil
 	}
 	s, ok := v.(string)
 	if !ok {
