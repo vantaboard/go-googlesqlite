@@ -857,7 +857,12 @@ func duckDBRewriteGenerateArrayToRange(args []*SQLExpression) (*SQLExpression, b
 	plusOne := NewBinaryExpression(quot, "+", one)
 	inc := NewBinaryExpression(plusOne, "*", step)
 	stopExcl := NewBinaryExpression(start, "+", inc)
-	rng := NewFunctionExpression("range", start, stopExcl, step)
+	// DuckDB only exposes range(BIGINT, BIGINT, BIGINT); date_part and mixed
+	// arithmetic otherwise produce DOUBLE and fail binding.
+	castI64 := func(e *SQLExpression) *SQLExpression {
+		return NewSQLCastExpression(e, "BIGINT", false)
+	}
+	rng := NewFunctionExpression("range", castI64(start), castI64(stopExcl), castI64(step))
 
 	empty := NewLiteralExpression("CAST([] AS BIGINT[])")
 	return NewCaseExpression([]*WhenClause{{Condition: valid, Result: rng}}, empty), true

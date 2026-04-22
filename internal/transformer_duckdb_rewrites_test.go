@@ -201,6 +201,9 @@ func TestTransformDuckDB_generateArrayToRange(t *testing.T) {
 	if !strings.Contains(got, "range(") || !strings.Contains(strings.ToUpper(got), "CASE") {
 		t.Fatalf("expected CASE + range(...), got %q", got)
 	}
+	if !strings.Contains(got, "BIGINT") {
+		t.Fatalf("expected BIGINT casts for DuckDB range() overload, got %q", got)
+	}
 }
 
 func TestTransformDuckDB_generateArrayThreeArgToRange(t *testing.T) {
