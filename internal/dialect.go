@@ -149,6 +149,8 @@ var duckDBNativeFunctions = map[string]string{
 	// JSON — path/json semantics still differ for some workloads; expand with tests as needed.
 	"googlesqlite_json_extract": "json_extract",
 	"googlesqlite_json_value":   "json_extract",
+	// Variadic SQL builtin (SQLite registers googlesqlite_coalesce UDF; DuckDB has native coalesce)
+	"googlesqlite_coalesce": "coalesce",
 }
 
 // DuckDBDialect is the GoogleSQL-to-DuckDB codegen target (incremental parity).

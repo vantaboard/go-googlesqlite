@@ -15,6 +15,7 @@ func TestDialectGolden_emitStringBuiltinRenames(t *testing.T) {
 		duckNeed   string
 	}{
 		{"googlesqlite_trim", "googlesqlite_trim(", "trim("},
+		{"googlesqlite_coalesce", "googlesqlite_coalesce(", "coalesce("},
 		{"googlesqlite_concat", "googlesqlite_concat(", "concat("},
 		{"googlesqlite_strpos", "googlesqlite_strpos(", "strpos("},
 		{"googlesqlite_replace", "googlesqlite_replace(", "replace("},
