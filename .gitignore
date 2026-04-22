@@ -22,6 +22,9 @@
 # Local direnv overrides (optional; see .envrc)
 .envrc.local
 
+# Unpacked libduckdb shared library for `task test:duckdb-lib` (local path via DUCKDB_LIB_DIR)
+.duckdb-lib/
+
 # Dependency directories (remove the comment below to include it)
 # vendor/
 .googlesqlite_history

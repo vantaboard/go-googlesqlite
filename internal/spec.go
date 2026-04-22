@@ -134,10 +134,10 @@ func (s *TableSpec) PhysicalDDL(d Dialect) string {
 		d = SQLiteDialect{}
 	}
 	if s.IsView {
-		return viewSQLiteSchema(s)
+		return viewPhysicalDDL(s, d)
 	}
 	if s.Query != "" {
-		return fmt.Sprintf("CREATE TABLE `%s` AS %s", s.TableName(), s.Query)
+		return fmt.Sprintf("CREATE TABLE %s AS %s", d.QuoteIdent(s.TableName()), s.Query)
 	}
 	columns := []string{}
 	for _, c := range s.Columns {
@@ -163,14 +163,17 @@ func (s *TableSpec) PhysicalDDL(d Dialect) string {
 	default:
 		stmt = "CREATE TABLE"
 	}
-	return fmt.Sprintf("%s `%s` (%s)%s", stmt, s.TableName(), strings.Join(columns, ","), suffix)
+	return fmt.Sprintf("%s %s (%s)%s", stmt, d.QuoteIdent(s.TableName()), strings.Join(columns, ","), suffix)
 }
 
 func (s *TableSpec) SQLiteSchema() string {
 	return s.PhysicalDDL(SQLiteDialect{})
 }
 
-func viewSQLiteSchema(s *TableSpec) string {
+func viewPhysicalDDL(s *TableSpec, d Dialect) string {
+	if d == nil {
+		d = SQLiteDialect{}
+	}
 	var stmt string
 	switch s.CreateMode {
 	case ast.CreateDefaultMode:
@@ -180,7 +183,7 @@ func viewSQLiteSchema(s *TableSpec) string {
 	case ast.CreateIfNotExistsMode:
 		stmt = "CREATE VIEW IF NOT EXISTS"
 	}
-	return fmt.Sprintf("%s `%s` AS %s", stmt, s.TableName(), s.Query)
+	return fmt.Sprintf("%s %s AS %s", stmt, d.QuoteIdent(s.TableName()), s.Query)
 }
 
 type ColumnSpec struct {
@@ -293,7 +296,7 @@ func (s *ColumnSpec) PhysicalDDL(d Dialect) string {
 		d = SQLiteDialect{}
 	}
 	typ := d.PhysicalColumnStorageType(types.TypeKind(s.Type.Kind))
-	schema := fmt.Sprintf("`%s` %s", s.Name, typ)
+	schema := fmt.Sprintf("%s %s", d.QuoteIdent(s.Name), typ)
 	if s.IsNotNull {
 		schema += " NOT NULL"
 	}

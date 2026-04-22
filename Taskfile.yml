@@ -76,10 +76,19 @@ tasks:
         : "${DUCKDB_LIB_DIR:?set DUCKDB_LIB_DIR to the directory with libduckdb (see duckdb-go README)}"
         export CGO_ENABLED=1
         export CGO_LDFLAGS="${CGO_LDFLAGS} -lduckdb -L${DUCKDB_LIB_DIR}"
+        # Nounset-safe prepend: ${VAR:+...} trips `set -u` under zsh when VAR is unset.
         if [[ "$(uname -s)" == "Darwin" ]]; then
-          export DYLD_LIBRARY_PATH="${DUCKDB_LIB_DIR}${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PATH}}"
+          if [[ -n "${DYLD_LIBRARY_PATH-}" ]]; then
+            export DYLD_LIBRARY_PATH="${DUCKDB_LIB_DIR}:${DYLD_LIBRARY_PATH}"
+          else
+            export DYLD_LIBRARY_PATH="${DUCKDB_LIB_DIR}"
+          fi
         else
-          export LD_LIBRARY_PATH="${DUCKDB_LIB_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+          if [[ -n "${LD_LIBRARY_PATH-}" ]]; then
+            export LD_LIBRARY_PATH="${DUCKDB_LIB_DIR}:${LD_LIBRARY_PATH}"
+          else
+            export LD_LIBRARY_PATH="${DUCKDB_LIB_DIR}"
+          fi
         fi
         TAGS="${GOOGLESQL_BUILD_TAGS},duckdb,duckdb_use_lib"
         go test -tags "${TAGS}" -p 1 -count=1 ./...

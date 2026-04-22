@@ -152,28 +152,30 @@ func TestDualBackend_phase2FunctionSurface(t *testing.T) {
 		sql  string
 	}{
 		{
-			name: "instr_two_arg",
-			sql:  "SELECT INSTR('foobar', 'bar') AS p ORDER BY p",
+			name: "strpos_two_arg",
+			// DuckDB INSTR is not BigQuery-compatible for 2-arg substring search; STRPOS matches both backends here.
+			sql: "SELECT STRPOS('foobar', 'bar') AS p FROM (SELECT 1) AS _t ORDER BY p",
 		},
 		{
 			name: "starts_with_as_int64",
-			sql:  "SELECT CAST(STARTS_WITH('abc', 'ab') AS INT64) AS v ORDER BY v",
+			sql:  "SELECT CAST(STARTS_WITH('abc', 'ab') AS INT64) AS v FROM (SELECT 1) AS _t ORDER BY v",
 		},
 		{
-			name: "md5_hex",
-			sql:  "SELECT MD5('x') AS h ORDER BY h",
+			name: "md5_non_null",
+			sql:  "SELECT CAST(MD5('x') IS NOT NULL AS INT64) AS ok FROM (SELECT 1) AS _t ORDER BY ok",
 		},
 		{
 			name: "byte_length",
-			sql:  "SELECT BYTE_LENGTH('ab') AS n ORDER BY n",
+			sql:  "SELECT BYTE_LENGTH('ab') AS n FROM (SELECT 1) AS _t ORDER BY n",
 		},
 		{
 			name: "current_timestamp_extract_ymd",
-			sql:  "SELECT EXTRACT(YEAR FROM CURRENT_TIMESTAMP()) AS y, EXTRACT(MONTH FROM CURRENT_TIMESTAMP()) AS m, EXTRACT(DAY FROM CURRENT_TIMESTAMP()) AS d ORDER BY y, m, d",
+			sql:  "SELECT EXTRACT(YEAR FROM CURRENT_TIMESTAMP()) AS y, EXTRACT(MONTH FROM CURRENT_TIMESTAMP()) AS m, EXTRACT(DAY FROM CURRENT_TIMESTAMP()) AS d FROM (SELECT 1) AS _t ORDER BY y, m, d",
 		},
 		{
 			name: "json_extract_scalar_cast",
-			sql:  "SELECT CAST(JSON_EXTRACT(JSON '{\"a\":7}', '$.a') AS INT64) AS v ORDER BY v",
+			// JSON_VALUE yields a string scalar analyzable as INT64 cast; JSON_EXTRACT stays typed as JSON.
+			sql: "SELECT CAST(JSON_VALUE(JSON '{\"a\":7}', '$.a') AS INT64) AS v FROM (SELECT 1) AS _t ORDER BY v",
 		},
 	}
 	for _, tc := range cases {

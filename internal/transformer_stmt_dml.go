@@ -53,11 +53,10 @@ func (t *DMLStmtTransformer) transformInsert(data StatementData, ctx TransformCo
 	}
 
 	insertData := data.Insert
-	
-	// Format column names
+
 	columns := make([]string, 0, len(insertData.Columns))
 	for _, col := range insertData.Columns {
-		columns = append(columns, fmt.Sprintf("`%s`", col))
+		columns = append(columns, col)
 	}
 
 	insertStmt := &InsertStatement{
@@ -100,7 +99,7 @@ func (t *DMLStmtTransformer) transformInsert(data StatementData, ctx TransformCo
 				if err != nil {
 					return nil, fmt.Errorf("failed to transform insert value: %w", err)
 				}
-				valueStrings = append(valueStrings, expr.String())
+				valueStrings = append(valueStrings, SQLFragmentString(expr, ctx.Dialect()))
 			}
 
 			rows = append(rows, &SQLExpression{

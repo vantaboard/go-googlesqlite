@@ -1,7 +1,11 @@
 package internal
 
 import (
+	"encoding/base64"
 	"fmt"
+	"strings"
+
+	"github.com/goccy/go-json"
 	"github.com/vantaboard/go-googlesql/types"
 )
 
@@ -379,10 +383,59 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, d Dialect) (*
 		return nil, false
 	}
 	switch name {
+	case "googlesqlite_add", "googlesqlite_safe_add":
+		if len(args) == 2 {
+			return NewBinaryExpression(args[0], "+", args[1]), true
+		}
+	case "googlesqlite_subtract", "googlesqlite_safe_subtract":
+		if len(args) == 2 {
+			return NewBinaryExpression(args[0], "-", args[1]), true
+		}
+	case "googlesqlite_multiply", "googlesqlite_safe_multiply":
+		if len(args) == 2 {
+			return NewBinaryExpression(args[0], "*", args[1]), true
+		}
+	case "googlesqlite_divide", "googlesqlite_safe_divide":
+		if len(args) == 2 {
+			return NewBinaryExpression(args[0], "/", args[1]), true
+		}
+	case "googlesqlite_extract":
+		if len(args) >= 2 {
+			part, ok := googlesqliteWireStringArg(args[1])
+			if !ok {
+				break
+			}
+			duckPart, ok := duckDBDatePartComponent(part)
+			if !ok {
+				break
+			}
+			srcExpr := args[0]
+			if len(args) == 3 {
+				if zone, zok := googlesqliteWireStringArg(args[2]); zok && zone != "" && !strings.EqualFold(zone, "UTC") {
+					zoneLit := "'" + strings.ReplaceAll(zone, "'", "''") + "'"
+					srcExpr = NewFunctionExpression("timezone", NewLiteralExpression(zoneLit), srcExpr)
+				}
+			}
+			partLit := "'" + strings.ReplaceAll(duckPart, "'", "''") + "'"
+			return NewFunctionExpression("date_part", NewLiteralExpression(partLit), srcExpr), true
+		}
 	case "googlesqlite_parse_json":
 		if len(args) >= 1 {
-			// DuckDB parse_json(string); drop BigQuery optional widen mode when present.
-			return NewFunctionExpression("parse_json", args[0]), true
+			// DuckDB: CAST(string AS JSON); drop BigQuery optional widen mode when present.
+			return NewSQLCastExpression(args[0], "JSON", false), true
+		}
+	case "googlesqlite_is_null":
+		if len(args) == 1 {
+			return NewBinaryExpression(args[0], "IS", NewLiteralExpression("NULL")), true
+		}
+	case "googlesqlite_not":
+		if len(args) == 1 {
+			return NewNotExpression(args[0]), true
+		}
+	case "googlesqlite_byte_length":
+		if len(args) == 1 {
+			blob := NewSQLCastExpression(args[0], "BLOB", false)
+			return NewFunctionExpression("octet_length", blob), true
 		}
 	case "googlesqlite_instr":
 		if len(args) == 2 {
@@ -411,6 +464,55 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, d Dialect) (*
 		}
 	}
 	return nil, false
+}
+
+// googlesqliteWireStringArg decodes a string literal produced by LiteralFromValue (double-quoted base64 JSON layout).
+func googlesqliteWireStringArg(expr *SQLExpression) (string, bool) {
+	if expr == nil || expr.Type != ExpressionTypeLiteral {
+		return "", false
+	}
+	s := strings.TrimSpace(expr.Value)
+	if len(s) < 2 || s[0] != '"' || s[len(s)-1] != '"' {
+		return "", false
+	}
+	inner := s[1 : len(s)-1]
+	b, err := base64.StdEncoding.DecodeString(inner)
+	if err != nil {
+		return "", false
+	}
+	var layout ValueLayout
+	if err := json.Unmarshal(b, &layout); err != nil || layout.Header != StringValueType {
+		return "", false
+	}
+	return layout.Body, true
+}
+
+var duckDBExtractPart = map[string]string{
+	"YEAR":        "year",
+	"MONTH":       "month",
+	"DAY":         "day",
+	"HOUR":        "hour",
+	"MINUTE":      "minute",
+	"SECOND":      "second",
+	"MICROSECOND": "microseconds",
+	"MILLISECOND": "milliseconds",
+	"QUARTER":     "quarter",
+	"DAYOFWEEK":   "dow",
+	"DAYOFYEAR":   "doy",
+	"WEEK":        "week",
+	"ISOWEEK":     "isoweek",
+	"ISOYEAR":     "isoyear",
+}
+
+func duckDBDatePartComponent(part string) (string, bool) {
+	p := strings.ToUpper(strings.TrimSpace(part))
+	if p == "" {
+		return "", false
+	}
+	if mapped, ok := duckDBExtractPart[p]; ok {
+		return mapped, true
+	}
+	return strings.ToLower(p), true
 }
 
 func duckDBToTimestampFromUnixNano(nanos *SQLExpression) *SQLExpression {

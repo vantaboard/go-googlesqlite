@@ -17,12 +17,57 @@ type SQLWriter struct {
 	builder     strings.Builder
 	indentLevel int
 	useNewlines bool
+	// dialect selects identifier quoting; nil means SQLite (backticks).
+	dialect Dialect
 }
 
 func NewSQLWriter() *SQLWriter {
 	return &SQLWriter{
 		useNewlines: true,
 	}
+}
+
+// NewSQLWriterForDialect creates a writer that quotes identifiers for the given engine (nil => SQLite).
+func NewSQLWriterForDialect(d Dialect) *SQLWriter {
+	return &SQLWriter{
+		useNewlines: true,
+		dialect:     d,
+	}
+}
+
+// SQLFragmentString renders a fragment with dialect-appropriate identifier quoting.
+func SQLFragmentString(f SQLFragment, d Dialect) string {
+	if f == nil {
+		return ""
+	}
+	if d == nil {
+		d = SQLiteDialect{}
+	}
+	w := NewSQLWriterForDialect(d)
+	f.WriteSql(w)
+	return strings.TrimSpace(w.String())
+}
+
+// WriteQuotedIdent writes a delimited identifier (backticks or double quotes).
+func (w *SQLWriter) WriteQuotedIdent(name string) {
+	d := w.dialect
+	if d == nil {
+		d = SQLiteDialect{}
+	}
+	w.Write(d.QuoteIdent(name))
+}
+
+// writeDialectLiteral emits a literal fragment. SQLite accepts double-quoted Googlesqlite wire
+// strings; DuckDB needs native SQL literals (or parse_json / list literals) decoded from that wire.
+func writeDialectLiteral(w *SQLWriter, val string) {
+	d := w.dialect
+	if d != nil && d.ID() == "duckdb" {
+		if sql, ok := duckDBNativeLiteralSQL(val); ok {
+			w.Write(sql)
+			return
+		}
+	}
+	w.Write(val)
 }
 
 func (w *SQLWriter) Write(s string) {
@@ -125,7 +170,7 @@ type ListExpression struct {
 func (e *ListExpression) WriteSql(writer *SQLWriter) {
 	writer.Write("(")
 	for i, expr := range e.Expressions {
-		writer.Write(expr.String())
+		expr.WriteSql(writer)
 		if i != len(e.Expressions)-1 {
 			writer.Write(",")
 		}
@@ -190,12 +235,14 @@ func (e *SQLExpression) WriteSql(writer *SQLWriter) {
 	switch e.Type {
 	case ExpressionTypeColumn:
 		if e.TableAlias != "" {
-			writer.Write(fmt.Sprintf("`%s`.`%s`", e.TableAlias, e.Value))
+			writer.WriteQuotedIdent(e.TableAlias)
+			writer.Write(".")
+			writer.WriteQuotedIdent(e.Value)
 		} else {
-			writer.Write("`" + e.Value + "`")
+			writer.WriteQuotedIdent(e.Value)
 		}
 	case ExpressionTypeLiteral:
-		writer.Write(e.Value)
+		writeDialectLiteral(writer, e.Value)
 	case ExpressionTypeList:
 		e.ListExpression.WriteSql(writer)
 	case ExpressionTypeUnary:
@@ -240,7 +287,7 @@ func (e *SQLExpression) WriteSql(writer *SQLWriter) {
 			writer.Write(")")
 		}
 	case ExpressionTypeParameter:
-		writer.Write(e.Value)
+		writer.Write(FormatParameterPlaceholder(writer.dialect, e.Value))
 	}
 
 	// Add collation if specified
@@ -250,7 +297,7 @@ func (e *SQLExpression) WriteSql(writer *SQLWriter) {
 
 	if e.Alias != "" && (e.Type != ExpressionTypeColumn || e.Alias != e.Value) {
 		writer.Write(" AS ")
-		writer.Write("`" + e.Alias + "`")
+		writer.WriteQuotedIdent(e.Alias)
 	}
 
 }
@@ -439,7 +486,7 @@ func (s *SelectListItem) WriteSql(writer *SQLWriter) {
 				if i > 0 {
 					writer.Write(", ")
 				}
-				writer.Write("`" + col + "`")
+				writer.WriteQuotedIdent(col)
 			}
 			writer.Write(")")
 		}
@@ -451,7 +498,8 @@ func (s *SelectListItem) WriteSql(writer *SQLWriter) {
 					writer.Write(", ")
 				}
 				expr.WriteSql(writer)
-				writer.Write(" AS `" + col + "`")
+				writer.Write(" AS ")
+				writer.WriteQuotedIdent(col)
 				i++
 			}
 			writer.Write(")")
@@ -459,7 +507,8 @@ func (s *SelectListItem) WriteSql(writer *SQLWriter) {
 	} else {
 		s.Expression.WriteSql(writer)
 		if s.Alias != "" && (s.Expression.Type != ExpressionTypeColumn || s.Alias != s.Expression.Value) {
-			writer.Write(" AS `" + s.Alias + "`")
+			writer.Write(" AS ")
+			writer.WriteQuotedIdent(s.Alias)
 		}
 	}
 }
@@ -517,10 +566,10 @@ type FromItem struct {
 func (f *FromItem) WriteSql(writer *SQLWriter) {
 	switch f.Type {
 	case FromItemTypeTable:
-		writer.Write("`" + f.TableName + "`")
+		writer.WriteQuotedIdent(f.TableName)
 		if f.Alias != "" {
 			writer.Write(" AS ")
-			writer.Write("`" + f.Alias + "`")
+			writer.WriteQuotedIdent(f.Alias)
 		}
 	case FromItemTypeSubquery:
 		writer.Write("(\n")
@@ -532,7 +581,7 @@ func (f *FromItem) WriteSql(writer *SQLWriter) {
 		writer.Write("\n)")
 		if f.Alias != "" {
 			writer.Write(" AS ")
-			writer.Write("`" + f.Alias + "`")
+			writer.WriteQuotedIdent(f.Alias)
 		}
 	case FromItemTypeJoin:
 		if f.Join != nil {
@@ -542,7 +591,7 @@ func (f *FromItem) WriteSql(writer *SQLWriter) {
 		writer.Write(f.WithRef)
 		if f.Alias != "" {
 			writer.Write(" AS ")
-			writer.Write("`" + f.Alias + "`")
+			writer.WriteQuotedIdent(f.Alias)
 		}
 	case FromItemTypeTableFunction:
 		if f.TableFunction != nil {
@@ -550,7 +599,7 @@ func (f *FromItem) WriteSql(writer *SQLWriter) {
 		}
 		if f.Alias != "" {
 			writer.Write(" AS ")
-			writer.Write("`" + f.Alias + "`")
+			writer.WriteQuotedIdent(f.Alias)
 		}
 	case FromItemTypeUnnest:
 		writer.Write("UNNEST(")
@@ -560,7 +609,7 @@ func (f *FromItem) WriteSql(writer *SQLWriter) {
 		writer.Write(")")
 		if f.Alias != "" {
 			writer.Write(" AS ")
-			writer.Write("`" + f.Alias + "`")
+			writer.WriteQuotedIdent(f.Alias)
 		}
 	}
 }
@@ -621,7 +670,7 @@ func (j *JoinClause) WriteSql(writer *SQLWriter) {
 				if i > 0 {
 					writer.Write(", ")
 				}
-				writer.Write(col)
+				writer.WriteQuotedIdent(col)
 			}
 			writer.Write(")")
 		} else if j.Condition != nil {
@@ -693,14 +742,14 @@ func (w *WithClause) String() string {
 }
 
 func (w *WithClause) WriteSql(writer *SQLWriter) {
-	writer.Write("`" + w.Name + "`")
+	writer.WriteQuotedIdent(w.Name)
 	if len(w.Columns) > 0 {
 		writer.Write(" (")
 		for i, col := range w.Columns {
 			if i > 0 {
 				writer.Write(", ")
 			}
-			writer.Write(col)
+			writer.WriteQuotedIdent(col)
 		}
 		writer.Write(")")
 	}
@@ -925,7 +974,7 @@ func (s *CreateTableStatement) WriteSql(writer *SQLWriter) {
 		writer.Write(" IF NOT EXISTS")
 	}
 	writer.Write(" ")
-	writer.Write("`" + s.TableName + "`")
+	writer.WriteQuotedIdent(s.TableName)
 
 	if s.AsSelect != nil {
 		writer.Write(" AS ")
@@ -956,7 +1005,7 @@ func (s *CreateTableStatement) String() string {
 
 // ColumnDefinition WriteSql implementation
 func (c *ColumnDefinition) WriteSql(writer *SQLWriter) {
-	writer.Write("`" + c.Name + "`")
+	writer.WriteQuotedIdent(c.Name)
 	writer.Write(" ")
 	writer.Write(c.Type)
 	if c.NotNull {
@@ -983,7 +1032,9 @@ func (s *CreateViewStatement) WriteSql(writer *SQLWriter) {
 	if s.IfNotExists {
 		writer.Write(" IF NOT EXISTS")
 	}
-	writer.Write(" `" + s.ViewName + "` AS ")
+	writer.Write(" ")
+	writer.WriteQuotedIdent(s.ViewName)
+	writer.Write(" AS ")
 	s.Query.WriteSql(writer)
 }
 
@@ -1000,7 +1051,7 @@ func (s *CreateFunctionStatement) WriteSql(writer *SQLWriter) {
 		writer.Write(" IF NOT EXISTS")
 	}
 	writer.Write(" ")
-	writer.Write("`" + s.FunctionName + "`")
+	writer.WriteQuotedIdent(s.FunctionName)
 	writer.Write("(")
 	for i, param := range s.Parameters {
 		if i > 0 {
@@ -1031,7 +1082,7 @@ func (s *CreateFunctionStatement) String() string {
 
 // ParameterDefinition WriteSql implementation
 func (p *ParameterDefinition) WriteSql(writer *SQLWriter) {
-	writer.Write("`" + p.Name + "`")
+	writer.WriteQuotedIdent(p.Name)
 	writer.Write(" ")
 	writer.Write(p.Type)
 }
@@ -1050,7 +1101,7 @@ func (s *DropStatement) WriteSql(writer *SQLWriter) {
 		writer.Write(" IF EXISTS")
 	}
 	writer.Write(" ")
-	writer.Write("`" + s.ObjectName + "`")
+	writer.WriteQuotedIdent(s.ObjectName)
 }
 
 func (s *DropStatement) String() string {
@@ -1062,7 +1113,7 @@ func (s *DropStatement) String() string {
 // TruncateStatement WriteSql implementation
 func (s *TruncateStatement) WriteSql(writer *SQLWriter) {
 	writer.Write("TRUNCATE TABLE ")
-	writer.Write("`" + s.TableName + "`")
+	writer.WriteQuotedIdent(s.TableName)
 }
 
 func (s *TruncateStatement) String() string {
@@ -1250,11 +1301,11 @@ func NewInnerJoin(left, right *FromItem, condition *SQLExpression) *FromItem {
 // DDL Statement types
 
 type CreateTableStatement struct {
-	IfNotExists  bool
-	IsTemporary  bool // MERGE simulation scratch table on DuckDB (session-local).
-	TableName    string
-	Columns      []*ColumnDefinition
-	AsSelect     *SelectStatement
+	IfNotExists bool
+	IsTemporary bool // MERGE simulation scratch table on DuckDB (session-local).
+	TableName   string
+	Columns     []*ColumnDefinition
+	AsSelect    *SelectStatement
 }
 
 type ColumnDefinition struct {
@@ -1302,7 +1353,7 @@ func (d *DeleteStatement) WriteSql(writer *SQLWriter) {
 	d.Table.WriteSql(writer)
 	if d.WhereExpr != nil {
 		writer.Write(" WHERE ")
-		writer.Write(d.WhereExpr.String())
+		d.WhereExpr.WriteSql(writer)
 	}
 }
 
@@ -1321,15 +1372,25 @@ func (d *InsertStatement) String() string {
 
 func (d *InsertStatement) WriteSql(writer *SQLWriter) {
 	writer.Write("INSERT INTO ")
-	writer.WriteLine("`" + d.TableName + "`")
-	writer.WriteLine(" (" + strings.Join(d.Columns, ", ") + ") ")
+	writer.WriteQuotedIdent(d.TableName)
+	writer.WriteLine("")
+	writer.Write("(")
+	for i, col := range d.Columns {
+		if i > 0 {
+			writer.Write(", ")
+		}
+		writer.WriteQuotedIdent(col)
+	}
+	writer.Write(")")
 	if d.Query != nil {
 		writer.Write(" ")
 		d.Query.WriteSql(writer)
 	} else if len(d.Rows) > 0 {
-		writer.WriteLine("VALUES ")
+		writer.WriteLine(" VALUES ")
 		for i, value := range d.Rows {
-			writer.Write("(" + value.String() + ")")
+			writer.Write("(")
+			value.WriteSql(writer)
+			writer.Write(")")
 			if len(d.Rows) != 1 && i != len(d.Rows)-1 {
 				writer.Write(",")
 			}

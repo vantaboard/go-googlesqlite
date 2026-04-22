@@ -97,7 +97,8 @@ type duckdbCatalogRepository struct {
 	selectSince string
 }
 
-// NewDuckDBCatalogRepository uses DuckDB-friendly types (VARCHAR) and the same parameter names as SQLite.
+// NewDuckDBCatalogRepository uses DuckDB-friendly types (VARCHAR) and positional parameters.
+// DuckDB's binder treats @ident as a column reference, not a database/sql named argument like SQLite.
 func NewDuckDBCatalogRepository() CatalogRepository {
 	return &duckdbCatalogRepository{
 		createTable: `
@@ -118,18 +119,17 @@ INSERT INTO googlesqlite_catalog (
   updatedAt,
   createdAt
 ) VALUES (
-  @name,
-  @kind,
-  @spec,
-  @updatedAt,
-  @createdAt
+  ?,
+  ?,
+  ?,
+  ?,
+  ?
 ) ON CONFLICT(name) DO UPDATE SET
-  spec = @spec,
-  updatedAt = @updatedAt
+  spec = excluded.spec,
+  updatedAt = excluded.updatedAt
 `,
-		deleteRow: `DELETE FROM googlesqlite_catalog WHERE name = @name`,
-		selectSince: `
-SELECT name, kind, spec FROM googlesqlite_catalog WHERE updatedAt >= @lastUpdatedAt`,
+		deleteRow:   `DELETE FROM googlesqlite_catalog WHERE name = ?`,
+		selectSince: `SELECT name, kind, spec FROM googlesqlite_catalog WHERE updatedAt >= ?`,
 	}
 }
 
@@ -144,21 +144,15 @@ func (r *duckdbCatalogRepository) EnsureSchema(ctx context.Context, conn *Conn) 
 }
 
 func (r *duckdbCatalogRepository) QueryUpdatedSince(ctx context.Context, conn *Conn, lastSyncedAt time.Time) (*sql.Rows, error) {
-	return conn.QueryContext(ctx, r.selectSince, sql.Named("lastUpdatedAt", lastSyncedAt))
+	return conn.QueryContext(ctx, r.selectSince, lastSyncedAt)
 }
 
 func (r *duckdbCatalogRepository) Upsert(ctx context.Context, conn *Conn, name string, kind CatalogSpecKind, specJSON string, at time.Time) error {
-	_, err := conn.ExecContext(ctx, r.upsert,
-		sql.Named("name", name),
-		sql.Named("kind", string(kind)),
-		sql.Named("spec", specJSON),
-		sql.Named("updatedAt", at),
-		sql.Named("createdAt", at),
-	)
+	_, err := conn.ExecContext(ctx, r.upsert, name, string(kind), specJSON, at, at)
 	return err
 }
 
 func (r *duckdbCatalogRepository) Delete(ctx context.Context, conn *Conn, name string) error {
-	_, err := conn.ExecContext(ctx, r.deleteRow, sql.Named("name", name))
+	_, err := conn.ExecContext(ctx, r.deleteRow, name)
 	return err
 }

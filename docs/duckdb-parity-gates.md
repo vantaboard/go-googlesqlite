@@ -29,7 +29,7 @@ This document locks the **parity contract**, **minimum test corpus**, **CI shape
   - Build tags: append `duckdb` and `duckdb_use_lib` to the stack tags.
   - Host env: `DUCKDB_LIB_DIR` must point at the directory containing `libduckdb.so` / `libduckdb.dylib`, plus `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` as in the Taskfile.
   - CI should pin a **DuckDB library version** when this job is enabled (exact pinning is org-specific; record the version in CI config or this doc when enabled).
-  - **Pinned version (record when the optional job is turned on):** _not enabled in default CI yet — when adding the job, set e.g. `DUCKDB_VERSION=1.x.y` in the workflow and paste the same value here for reproducibility._
+  - **Pinned version (libduckdb for `duckdb-go/v2 v2.10502.0` in this repo):** `DUCKDB_VERSION=1.5.2` (see [DuckDB releases](https://github.com/duckdb/duckdb/releases)). CI should use the same when the optional job is enabled.
 
 ## Failure policy (unsupported vs wrong answers)
 

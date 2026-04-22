@@ -18,22 +18,53 @@ func DecodeValue(v driver.Value) (Value, error) {
 	switch vv := v.(type) {
 	case int64:
 		return IntValue(vv), nil
+	case int32:
+		return IntValue(int64(vv)), nil
+	case int16:
+		return IntValue(int64(vv)), nil
+	case int8:
+		return IntValue(int64(vv)), nil
+	case int:
+		return IntValue(int64(vv)), nil
+	case uint64:
+		return IntValue(int64(vv)), nil
+	case uint32:
+		return IntValue(int64(vv)), nil
+	case uint16:
+		return IntValue(int64(vv)), nil
+	case uint8:
+		return IntValue(int64(vv)), nil
+	case uint:
+		return IntValue(int64(vv)), nil
 	case float64:
 		return FloatValue(vv), nil
+	case float32:
+		return FloatValue(float64(vv)), nil
 	case bool:
 		return BoolValue(vv), nil
+	case []byte:
+		if len(vv) == 0 {
+			return StringValue(""), nil
+		}
+		return decodeStringOrLayout(string(vv))
 	}
 	s, ok := v.(string)
 	if !ok {
 		return nil, fmt.Errorf("unexpected value type: %T", v)
 	}
+	return decodeStringOrLayout(s)
+}
+
+// decodeStringOrLayout decodes a SQLite/Googlesqlite base64+JSON wire value when present;
+// otherwise treats s as a plain SQL string (DuckDB and other native drivers).
+func decodeStringOrLayout(s string) (Value, error) {
 	decoded, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode value: %w", err)
+		return StringValue(s), nil
 	}
 	var layout ValueLayout
-	if err := json.Unmarshal(decoded, &layout); err != nil {
-		return nil, fmt.Errorf("failed to get value layout: %w", err)
+	if err := json.Unmarshal(decoded, &layout); err != nil || layout.Header == "" {
+		return StringValue(s), nil
 	}
 	return decodeFromValueLayout(&layout)
 }

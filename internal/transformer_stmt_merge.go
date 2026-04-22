@@ -90,7 +90,7 @@ func (t *MergeStmtTransformer) Transform(data StatementData, ctx TransformContex
 	var statements []string
 
 	// 1. Create temporary merged table
-	statements = append(statements, createTableStmt.String())
+	statements = append(statements, SQLFragmentString(createTableStmt, ctx.Dialect()))
 
 	// 2. Generate conditional statements based on WHEN clauses.
 	// After each mutating clause, rebuild the merged table from the current target so later
@@ -119,21 +119,21 @@ func (t *MergeStmtTransformer) Transform(data StatementData, ctx TransformContex
 			if nextWhen.MatchType == ast.MatchTypeNotMatchedBySource {
 				continue
 			}
-			statements = append(statements, fmt.Sprintf("DROP TABLE `%s`", mergeTable))
+			statements = append(statements, fmt.Sprintf("DROP TABLE %s", ctx.Dialect().QuoteIdent(mergeTable)))
 			recreate, _, err := t.createMergedTableStatement(mergeTable, sourceTable, targetTable, mergeData.SourceScan, mergeData.TargetScan, mergeExpr, ctx)
 			if err != nil {
 				return nil, fmt.Errorf("failed to recreate merged table after WHEN clause: %w", err)
 			}
-			statements = append(statements, recreate.String())
+			statements = append(statements, SQLFragmentString(recreate, ctx.Dialect()))
 		}
 	}
 
 	// 3. Drop temporary table
-	statements = append(statements, fmt.Sprintf("DROP TABLE `%s`", mergeTable))
+	statements = append(statements, fmt.Sprintf("DROP TABLE %s", ctx.Dialect().QuoteIdent(mergeTable)))
 
 	frag := NewCompoundSQLFragment(statements)
 	if mergeNeedsDuplicateSourceGuard(mergeData.WhenClauses) {
-		frag.MergeDupCheckSQL = mergeDuplicateSourceCheckSQL(mergeKeys, mergeTable)
+		frag.MergeDupCheckSQL = mergeDuplicateSourceCheckSQL(mergeKeys, mergeTable, ctx.Dialect())
 	}
 	return frag, nil
 }
@@ -161,18 +161,22 @@ func mergeNeedsDuplicateSourceGuard(whenClauses []*MergeWhenClauseData) bool {
 
 // mergeDuplicateSourceCheckSQL returns a query that yields a row iff two or more matched
 // (source+target) merged rows share the same target key — forbidden for WHEN MATCHED UPDATE/DELETE.
-func mergeDuplicateSourceCheckSQL(keys []mergeKeyPair, mergeTable string) string {
+func mergeDuplicateSourceCheckSQL(keys []mergeKeyPair, mergeTable string, d Dialect) string {
+	if d == nil {
+		d = SQLiteDialect{}
+	}
 	var whereParts []string
 	var groupBy []string
 	for _, k := range keys {
-		whereParts = append(whereParts, fmt.Sprintf("`%s` IS NOT NULL AND `%s` IS NOT NULL", k.mergedSourceName, k.mergedTargetName))
-		groupBy = append(groupBy, fmt.Sprintf("`%s`", k.mergedTargetName))
+		whereParts = append(whereParts, fmt.Sprintf("%s IS NOT NULL AND %s IS NOT NULL",
+			d.QuoteIdent(k.mergedSourceName), d.QuoteIdent(k.mergedTargetName)))
+		groupBy = append(groupBy, d.QuoteIdent(k.mergedTargetName))
 	}
 	where := strings.Join(whereParts, " AND ")
 	group := strings.Join(groupBy, ", ")
 	return fmt.Sprintf(
-		"SELECT 1 FROM `%s` WHERE %s GROUP BY %s HAVING COUNT(*) > 1 LIMIT 1",
-		mergeTable, where, group,
+		"SELECT 1 FROM %s WHERE %s GROUP BY %s HAVING COUNT(*) > 1 LIMIT 1",
+		d.QuoteIdent(mergeTable), where, group,
 	)
 }
 
@@ -457,7 +461,7 @@ func (t *MergeStmtTransformer) applyMergedColumnAliases(sql string, columnMappin
 		if err != nil {
 			return "", fmt.Errorf("failed to transform column for merge WHEN alias: %w", err)
 		}
-		list = append(list, repl{old: expr.String(), new: fmt.Sprintf("`%s`", mapping)})
+		list = append(list, repl{old: SQLFragmentString(expr, ctx.Dialect()), new: ctx.Dialect().QuoteIdent(mapping)})
 	}
 	sort.Slice(list, func(i, j int) bool { return len(list[i].old) > len(list[j].old) })
 	out := sql
@@ -480,7 +484,7 @@ func (t *MergeStmtTransformer) replaceMergedColumnRefsInUpdateValue(valueString 
 		if err != nil {
 			return "", err
 		}
-		list = append(list, repl{old: expr.String(), new: fmt.Sprintf("`%s`", mapping)})
+		list = append(list, repl{old: SQLFragmentString(expr, ctx.Dialect()), new: ctx.Dialect().QuoteIdent(mapping)})
 	}
 	sort.Slice(list, func(i, j int) bool { return len(list[i].old) > len(list[j].old) })
 	out := valueString
@@ -512,7 +516,7 @@ func (t *MergeStmtTransformer) transformWhenClause(
 		if err != nil {
 			return "", fmt.Errorf("failed to transform WHEN condition: %w", err)
 		}
-		condStr, err := t.applyMergedColumnAliases(condExpr.String(), columnMapping, ctx)
+		condStr, err := t.applyMergedColumnAliases(SQLFragmentString(condExpr, ctx.Dialect()), columnMapping, ctx)
 		if err != nil {
 			return "", err
 		}
@@ -532,14 +536,15 @@ func (t *MergeStmtTransformer) transformWhenClause(
 	// Generate the appropriate statement based on action type
 	switch whenClause.ActionType {
 	case ast.ActionTypeInsert:
-		return t.transformInsertAction(whenClause, targetTableName, sourceTable, existsStmt.String(), columnMapping, ctx)
+		return t.transformInsertAction(whenClause, targetTableName, sourceTable, SQLFragmentString(existsStmt, ctx.Dialect()), columnMapping, ctx)
 	case ast.ActionTypeUpdate:
-		return t.transformUpdateAction(whenClause, targetTableName, mergeTable, combinedWhere.String(), columnMapping, ctx)
+		return t.transformUpdateAction(whenClause, targetTableName, mergeTable, SQLFragmentString(combinedWhere, ctx.Dialect()), columnMapping, ctx)
 	case ast.ActionTypeDelete:
-		return (&DeleteStatement{
-			Table:     &FromItem{TableName: targetTableName},
+		del := &DeleteStatement{
+			Table:     &FromItem{Type: FromItemTypeTable, TableName: targetTableName},
 			WhereExpr: existsStmt,
-		}).String(), nil
+		}
+		return SQLFragmentString(del, ctx.Dialect()), nil
 	default:
 		return "", fmt.Errorf("unsupported action type: %v", whenClause.ActionType)
 	}
@@ -550,13 +555,15 @@ func (t *MergeStmtTransformer) transformWhenClause(
 // DEFAULT constraints on the target table are a separate catalog feature.
 func (t *MergeStmtTransformer) transformInsertAction(whenClause *MergeWhenClauseData, targetTableName string,
 	sourceTable SQLFragment, whereStmt string, columnMapping *ColumnMapping, ctx TransformContext) (string, error) {
+	d := ctx.Dialect()
+	if d == nil {
+		d = SQLiteDialect{}
+	}
 
 	values := make([]string, 0, len(whenClause.InsertValues))
 	columns := make([]string, 0, len(whenClause.InsertColumns))
 	for i, col := range whenClause.InsertColumns {
-		// Format column names
-		columns = append(columns, fmt.Sprintf("`%s`", col.Name))
-		// Transform INSERT values
+		columns = append(columns, d.QuoteIdent(col.Name))
 		value := whenClause.InsertValues[i]
 		valueExpr, err := t.coordinator.TransformExpression(value, ctx)
 		if err != nil {
@@ -564,16 +571,15 @@ func (t *MergeStmtTransformer) transformInsertAction(whenClause *MergeWhenClause
 		}
 
 		valueExpr.Alias = col.Name
-		values = append(values, valueExpr.String())
+		values = append(values, SQLFragmentString(valueExpr, ctx.Dialect()))
 	}
 
-	// Filter to rows that qualify for this WHEN clause (e.g. NOT MATCHED BY TARGET).
 	return fmt.Sprintf(
-		"INSERT INTO `%s` (%s) SELECT %s FROM %s WHERE %s",
-		targetTableName,
+		"INSERT INTO %s (%s) SELECT %s FROM %s WHERE %s",
+		d.QuoteIdent(targetTableName),
 		strings.Join(columns, ","),
 		strings.Join(values, ","),
-		sourceTable.String(),
+		SQLFragmentString(sourceTable, ctx.Dialect()),
 		whereStmt,
 	), nil
 }
@@ -581,8 +587,11 @@ func (t *MergeStmtTransformer) transformInsertAction(whenClause *MergeWhenClause
 // transformUpdateAction transforms an UPDATE action within a WHEN clause
 func (t *MergeStmtTransformer) transformUpdateAction(whenClause *MergeWhenClauseData, targetTableName, mergeTable, whereStmt string,
 	columnMapping *ColumnMapping, ctx TransformContext) (string, error) {
+	d := ctx.Dialect()
+	if d == nil {
+		d = SQLiteDialect{}
+	}
 
-	// Transform SET items
 	setItems := make([]string, 0, len(whenClause.SetItems))
 	for _, item := range whenClause.SetItems {
 		valueExpr, err := t.coordinator.TransformExpression(item.Value, ctx)
@@ -590,21 +599,20 @@ func (t *MergeStmtTransformer) transformUpdateAction(whenClause *MergeWhenClause
 			return "", fmt.Errorf("failed to transform update value: %w", err)
 		}
 
-		valueString := valueExpr.String()
+		valueString := SQLFragmentString(valueExpr, ctx.Dialect())
 		valueString, err = t.replaceMergedColumnRefsInUpdateValue(valueString, columnMapping, ctx)
 		if err != nil {
 			return "", fmt.Errorf("failed to transform update value: %w", err)
 		}
 
-		setItems = append(setItems, fmt.Sprintf("`%s`= %s", item.Column, valueString))
+		setItems = append(setItems, fmt.Sprintf("%s= %s", d.QuoteIdent(item.Column), valueString))
 	}
 
-	// Build UPDATE statement
 	return fmt.Sprintf(
-		"UPDATE `%s` SET %s FROM `%s` WHERE %s",
-		targetTableName,
+		"UPDATE %s SET %s FROM %s WHERE %s",
+		d.QuoteIdent(targetTableName),
 		strings.Join(setItems, ","),
-		mergeTable,
+		d.QuoteIdent(mergeTable),
 		whereStmt,
 	), nil
 }

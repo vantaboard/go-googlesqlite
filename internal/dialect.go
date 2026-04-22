@@ -1,6 +1,10 @@
 package internal
 
-import "github.com/vantaboard/go-googlesql/types"
+import (
+	"strings"
+
+	"github.com/vantaboard/go-googlesql/types"
+)
 
 // Dialect selects SQL generation and catalog persistence behavior for a physical engine.
 // The surface is intentionally small; extend with DDL helpers, placeholder style, etc. as needed.
@@ -33,6 +37,8 @@ type Dialect interface {
 	PhysicalUseWithoutRowID() bool
 	// PhysicalColumnStorageType maps a GoogleSQL type kind to a CREATE TABLE column type name.
 	PhysicalColumnStorageType(kind types.TypeKind) string
+	// QuoteIdent returns a delimited SQL identifier for this engine (SQLite: backticks, DuckDB: double quotes).
+	QuoteIdent(ident string) string
 }
 
 // ApplySortCollation sets expr.Collation when the dialect uses a sort collation (SQLite only today).
@@ -72,8 +78,12 @@ func (SQLiteDialect) MergeTempTableName() string { return "googlesqlite_merged_t
 
 func (SQLiteDialect) MergeScratchTableIsTemporary() bool { return false }
 
-func (SQLiteDialect) PhysicalPrimaryKeyColumnListEntry(columnName string) string {
-	return "`" + columnName + "` COLLATE googlesqlite_collate"
+func (d SQLiteDialect) PhysicalPrimaryKeyColumnListEntry(columnName string) string {
+	return d.QuoteIdent(columnName) + " COLLATE googlesqlite_collate"
+}
+
+func (SQLiteDialect) QuoteIdent(ident string) string {
+	return "`" + strings.ReplaceAll(ident, "`", "``") + "`"
 }
 
 func (SQLiteDialect) PhysicalUseWithoutRowID() bool { return true }
@@ -117,11 +127,11 @@ var duckDBNativeFunctions = map[string]string{
 	"googlesqlite_concat":  "concat",
 	"googlesqlite_replace": "replace",
 	"googlesqlite_reverse": "reverse",
-	"googlesqlite_repeat": "repeat",
+	"googlesqlite_repeat":  "repeat",
 	// INSTR with 3+ args has no single DuckDB builtin; keep SQLite UDF path until rewritten.
 	"googlesqlite_strpos": "strpos",
-	"googlesqlite_chr":     "chr",
-	"googlesqlite_ascii":   "ascii",
+	"googlesqlite_chr":    "chr",
+	"googlesqlite_ascii":  "ascii",
 	// String family (Phase 2 batch 2)
 	"googlesqlite_starts_with": "starts_with",
 	"googlesqlite_ends_with":   "ends_with",
@@ -131,7 +141,6 @@ var duckDBNativeFunctions = map[string]string{
 	"googlesqlite_rpad":        "rpad",
 	"googlesqlite_initcap":     "initcap",
 	"googlesqlite_unicode":     "unicode",
-	"googlesqlite_byte_length": "octet_length",
 	// Hash (often used near JSON pipelines)
 	"googlesqlite_md5":    "md5",
 	"googlesqlite_sha1":   "sha1",
@@ -139,6 +148,7 @@ var duckDBNativeFunctions = map[string]string{
 	"googlesqlite_sha512": "sha512",
 	// JSON — path/json semantics still differ for some workloads; expand with tests as needed.
 	"googlesqlite_json_extract": "json_extract",
+	"googlesqlite_json_value":   "json_extract",
 }
 
 // DuckDBDialect is the GoogleSQL-to-DuckDB codegen target (incremental parity).
@@ -165,8 +175,12 @@ func (DuckDBDialect) MergeTempTableName() string { return "googlesqlite_merged_t
 
 func (DuckDBDialect) MergeScratchTableIsTemporary() bool { return true }
 
-func (DuckDBDialect) PhysicalPrimaryKeyColumnListEntry(columnName string) string {
-	return "`" + columnName + "`"
+func (d DuckDBDialect) PhysicalPrimaryKeyColumnListEntry(columnName string) string {
+	return d.QuoteIdent(columnName)
+}
+
+func (DuckDBDialect) QuoteIdent(ident string) string {
+	return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
 }
 
 func (DuckDBDialect) PhysicalUseWithoutRowID() bool { return false }

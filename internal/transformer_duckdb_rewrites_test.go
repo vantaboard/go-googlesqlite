@@ -62,7 +62,7 @@ func TestTransformDuckDB_parseJsonFirstArgOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := expr.String()
-	if !strings.Contains(got, "parse_json(") || strings.Contains(got, "wide_padding_mode") {
-		t.Fatalf("expected parse_json with single arg, got %q", got)
+	if !strings.Contains(got, "CAST(") || !strings.Contains(got, " AS JSON)") || strings.Contains(got, "wide_padding_mode") {
+		t.Fatalf("expected CAST(... AS JSON) with single arg, got %q", got)
 	}
 }

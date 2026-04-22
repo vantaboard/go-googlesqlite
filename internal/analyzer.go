@@ -57,6 +57,10 @@ func NewAnalyzerWithDialect(catalog *Catalog, dialect Dialect) (*Analyzer, error
 	}, nil
 }
 
+func (a *Analyzer) formatSQLFragment(f SQLFragment) string {
+	return SQLFragmentString(f, a.dialect)
+}
+
 func newAnalyzerOptions() (*googlesql.AnalyzerOptions, error) {
 	langOpt := googlesql.NewLanguageOptions()
 	langOpt.SetNameResolutionMode(googlesql.NameResolutionDefault)
@@ -710,6 +714,7 @@ func (a *Analyzer) newCreateViewStmtAction(ctx context.Context, _ string, args [
 		query:   createViewStmt,
 		spec:    spec,
 		catalog: a.catalog,
+		dialect: a.dialect,
 	}, nil
 }
 
@@ -835,7 +840,7 @@ func (a *Analyzer) newDropStmtAction(ctx context.Context, query string, args []d
 		funcMap:        funcMapFromContext(ctx),
 		catalog:        a.catalog,
 		query:          query,
-		formattedQuery: result.Fragment.String(),
+		formattedQuery: a.formatSQLFragment(result.Fragment),
 		args:           queryArgs,
 	}, nil
 }
@@ -860,7 +865,7 @@ func (a *Analyzer) newDropFunctionStmtAction(ctx context.Context, query string, 
 		funcMap:        funcMapFromContext(ctx),
 		catalog:        a.catalog,
 		query:          query,
-		formattedQuery: result.Fragment.String(),
+		formattedQuery: a.formatSQLFragment(result.Fragment),
 		args:           queryArgs,
 	}, nil
 }
@@ -884,7 +889,7 @@ func (a *Analyzer) newDMLStmtAction(ctx context.Context, query string, args []dr
 		query:          query,
 		params:         params,
 		args:           queryArgs,
-		formattedQuery: result.Fragment.String(),
+		formattedQuery: a.formatSQLFragment(result.Fragment),
 		catalog:        a.catalog,
 	}, nil
 }
@@ -918,7 +923,7 @@ func (a *Analyzer) newQueryStmtAction(ctx context.Context, query string, args []
 			return nil, fmt.Errorf("failed to format query %s: %w", query, err)
 		}
 
-		formattedQuery = result.Fragment.String()
+		formattedQuery = a.formatSQLFragment(result.Fragment)
 	}
 
 	if formattedQuery == "" {
@@ -972,7 +977,7 @@ func (a *Analyzer) newTruncateStmtAction(ctx context.Context, query string, args
 		}
 	}
 	return &TruncateStmtAction{
-		query:   fmt.Sprintf("DELETE FROM `%s`", a.namePath.format(namePath)),
+		query:   fmt.Sprintf("DELETE FROM %s", a.dialect.QuoteIdent(a.namePath.format(namePath))),
 		catalog: a.catalog,
 	}, nil
 }
@@ -994,7 +999,7 @@ func (a *Analyzer) newMergeStmtAction(ctx context.Context, query string, args []
 		dupCheck = compoundFragment.MergeDupCheckSQL
 	} else {
 		// Fallback to single statement
-		stmts = []string{result.Fragment.String()}
+		stmts = []string{a.formatSQLFragment(result.Fragment)}
 	}
 
 	// Ingestion-time partitioned tables and partition decorators are not modeled in GoogleSQLite;

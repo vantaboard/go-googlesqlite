@@ -40,10 +40,10 @@ func TestTableSpecPhysicalDDL_sqliteVsDuckDB(t *testing.T) {
 	if strings.Contains(duck, "googlesqlite_collate") {
 		t.Fatalf("duckdb DDL should not use googlesqlite_collate: %s", duck)
 	}
-	if !strings.Contains(duck, "`name` VARCHAR") {
+	if !strings.Contains(duck, `"name" VARCHAR`) {
 		t.Fatalf("duckdb string column: %s", duck)
 	}
-	if !strings.Contains(duck, "`id` BIGINT") {
+	if !strings.Contains(duck, `"id" BIGINT`) {
 		t.Fatalf("duckdb int column: %s", duck)
 	}
 }

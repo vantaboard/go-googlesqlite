@@ -102,7 +102,7 @@ func (a *CreateTableStmtAction) Prepare(ctx context.Context, conn *Conn) (driver
 	if a.spec.CreateMode == ast.CreateOrReplaceMode {
 		if _, err := conn.ExecContext(
 			ctx,
-			fmt.Sprintf("DROP TABLE IF EXISTS `%s`", a.spec.TableName()),
+			fmt.Sprintf("DROP TABLE IF EXISTS %s", a.dialect.QuoteIdent(a.spec.TableName())),
 		); err != nil {
 			return nil, err
 		}
@@ -121,10 +121,10 @@ func (a *CreateTableStmtAction) createIndexAutomatically(ctx context.Context, co
 		}
 		indexName := fmt.Sprintf("googlesqlite_autoindex_%s_%s", col.Name, strings.Join(a.spec.NamePath, "_"))
 		createIndexQuery := fmt.Sprintf(
-			"CREATE INDEX IF NOT EXISTS %s ON `%s`(`%s`)",
-			indexName,
-			a.spec.TableName(),
-			col.Name,
+			"CREATE INDEX IF NOT EXISTS %s ON %s(%s)",
+			a.dialect.QuoteIdent(indexName),
+			a.dialect.QuoteIdent(a.spec.TableName()),
+			a.dialect.QuoteIdent(col.Name),
 		)
 		if _, err := conn.ExecContext(ctx, createIndexQuery); err != nil {
 			return fmt.Errorf("failed to create index automatically %s: %w", createIndexQuery, err)
@@ -137,7 +137,7 @@ func (a *CreateTableStmtAction) exec(ctx context.Context, conn *Conn) error {
 	if a.spec.CreateMode == ast.CreateOrReplaceMode {
 		if _, err := conn.ExecContext(
 			ctx,
-			fmt.Sprintf("DROP TABLE IF EXISTS `%s`", a.spec.TableName()),
+			fmt.Sprintf("DROP TABLE IF EXISTS %s", a.dialect.QuoteIdent(a.spec.TableName())),
 		); err != nil {
 			return err
 		}
@@ -184,7 +184,7 @@ func (a *CreateTableStmtAction) Cleanup(ctx context.Context, conn *Conn) error {
 
 	if _, err := conn.ExecContext(
 		ctx,
-		fmt.Sprintf("DROP TABLE IF EXISTS `%s`", a.spec.TableName()),
+		fmt.Sprintf("DROP TABLE IF EXISTS %s", a.dialect.QuoteIdent(a.spec.TableName())),
 	); err != nil {
 		return fmt.Errorf("failed to cleanup table %s: %w", a.spec.TableName(), err)
 	}
@@ -198,18 +198,19 @@ type CreateViewStmtAction struct {
 	query   SQLFragment
 	spec    *TableSpec
 	catalog *Catalog
+	dialect Dialect
 }
 
 func (a *CreateViewStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.Stmt, error) {
 	if a.spec.CreateMode == ast.CreateOrReplaceMode {
 		if _, err := conn.ExecContext(
 			ctx,
-			fmt.Sprintf("DROP VIEW IF EXISTS `%s`", a.spec.TableName()),
+			fmt.Sprintf("DROP VIEW IF EXISTS %s", a.dialect.QuoteIdent(a.spec.TableName())),
 		); err != nil {
 			return nil, err
 		}
 	}
-	stmt, err := conn.PrepareContext(ctx, a.query.String())
+	stmt, err := conn.PrepareContext(ctx, SQLFragmentString(a.query, a.dialect))
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare %s: %w", a.query, err)
 	}
@@ -220,12 +221,12 @@ func (a *CreateViewStmtAction) exec(ctx context.Context, conn *Conn) error {
 	if a.spec.CreateMode == ast.CreateOrReplaceMode {
 		if _, err := conn.ExecContext(
 			ctx,
-			fmt.Sprintf("DROP VIEW IF EXISTS `%s`", a.spec.TableName()),
+			fmt.Sprintf("DROP VIEW IF EXISTS %s", a.dialect.QuoteIdent(a.spec.TableName())),
 		); err != nil {
 			return err
 		}
 	}
-	if _, err := conn.ExecContext(ctx, a.query.String()); err != nil {
+	if _, err := conn.ExecContext(ctx, SQLFragmentString(a.query, a.dialect)); err != nil {
 		return fmt.Errorf("failed to exec %s: %w", a.query, err)
 	}
 
@@ -256,7 +257,7 @@ func (a *CreateViewStmtAction) Cleanup(ctx context.Context, conn *Conn) error {
 	}
 	if _, err := conn.ExecContext(
 		ctx,
-		fmt.Sprintf("DROP VIEW IF EXISTS `%s`", a.spec.TableName()),
+		fmt.Sprintf("DROP VIEW IF EXISTS %s", a.dialect.QuoteIdent(a.spec.TableName())),
 	); err != nil {
 		return fmt.Errorf("failed to cleanup view %s: %w", a.spec.TableName(), err)
 	}
