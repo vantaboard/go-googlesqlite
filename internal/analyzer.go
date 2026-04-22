@@ -652,7 +652,7 @@ func (a *Analyzer) newCreateTableAsSelectStmtAction(ctx context.Context, _ strin
 	}
 
 	query := createTableStmt.AsSelect
-	spec := newTableAsSelectSpec(a.namePath, query, node)
+	spec := newTableAsSelectSpec(a.namePath, query, node, a.dialect)
 	params := getParamsFromNode(node)
 	queryArgs, err := getArgsFromParams(args, params)
 	if err != nil {
@@ -709,7 +709,7 @@ func (a *Analyzer) newCreateViewStmtAction(ctx context.Context, _ string, args [
 		return nil, fmt.Errorf("expected CreateViewStatement from transformer, got %T", result.Fragment)
 	}
 
-	spec := newTableAsViewSpec(a.namePath, createViewStmt.Query, node)
+	spec := newTableAsViewSpec(a.namePath, createViewStmt.Query, node, a.dialect)
 	return &CreateViewStmtAction{
 		query:   createViewStmt,
 		spec:    spec,

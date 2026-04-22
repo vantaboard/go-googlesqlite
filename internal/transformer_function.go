@@ -383,6 +383,14 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, d Dialect) (*
 		return nil, false
 	}
 	switch name {
+	case "googlesqlite_equal":
+		if len(args) == 2 {
+			return NewBinaryExpression(args[0], "=", args[1]), true
+		}
+	case "googlesqlite_is_not_distinct_from":
+		if len(args) == 2 {
+			return NewBinaryExpression(args[0], "IS NOT DISTINCT FROM", args[1]), true
+		}
 	case "googlesqlite_add", "googlesqlite_safe_add":
 		if len(args) == 2 {
 			return NewBinaryExpression(args[0], "+", args[1]), true

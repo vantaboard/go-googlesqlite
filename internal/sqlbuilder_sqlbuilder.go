@@ -368,16 +368,21 @@ type FunctionCall struct {
 }
 
 func (f *FunctionCall) WriteSql(writer *SQLWriter) {
-	writer.Write(f.Name)
+	name, args, distinct, countStar := duckDBNormalizeAggregateCall(f, writer.dialect)
+	writer.Write(name)
 	writer.Write("(")
-	if f.IsDistinct {
-		writer.Write("DISTINCT ")
-	}
-	for i, arg := range f.Arguments {
-		if i > 0 {
-			writer.Write(", ")
+	if countStar {
+		writer.Write("*")
+	} else {
+		if distinct {
+			writer.Write("DISTINCT ")
 		}
-		arg.WriteSql(writer)
+		for i, arg := range args {
+			if i > 0 {
+				writer.Write(", ")
+			}
+			arg.WriteSql(writer)
+		}
 	}
 	writer.Write(")")
 	if f.WindowSpec != nil {
@@ -385,6 +390,30 @@ func (f *FunctionCall) WriteSql(writer *SQLWriter) {
 		f.WindowSpec.WriteSql(writer)
 		writer.Write(")")
 	}
+}
+
+// duckDBNormalizeAggregateCall strips SQLite-only synthetic args (e.g. googlesqlite_distinct) and
+// maps COUNT() with no arguments to COUNT(*) for DuckDB.
+func duckDBNormalizeAggregateCall(f *FunctionCall, d Dialect) (name string, args []*SQLExpression, distinct bool, countStar bool) {
+	name = f.Name
+	args = f.Arguments
+	distinct = f.IsDistinct
+	if d == nil || d.ID() != "duckdb" {
+		return name, args, distinct, false
+	}
+	for len(args) > 0 && isBareFunctionCall(args[0], "googlesqlite_distinct") {
+		distinct = true
+		args = args[1:]
+	}
+	if name == "count" && len(args) == 0 {
+		countStar = true
+	}
+	return name, args, distinct, countStar
+}
+
+func isBareFunctionCall(e *SQLExpression, want string) bool {
+	return e != nil && e.Type == ExpressionTypeFunction && e.FunctionCall != nil &&
+		e.FunctionCall.Name == want && len(e.FunctionCall.Arguments) == 0
 }
 
 func (f *FunctionCall) String() string {

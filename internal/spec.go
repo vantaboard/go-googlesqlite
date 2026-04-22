@@ -531,7 +531,7 @@ func newTableSpec(namePath *NamePath, stmt *ast.CreateTableStmtNode) *TableSpec 
 	}
 }
 
-func newTableAsViewSpec(namePath *NamePath, query SQLFragment, stmt *ast.CreateViewStmtNode) *TableSpec {
+func newTableAsViewSpec(namePath *NamePath, query SQLFragment, stmt *ast.CreateViewStmtNode, d Dialect) *TableSpec {
 	now := time.Now()
 	return &TableSpec{
 		IsTemp:     stmt.CreateScope() == ast.CreateScopeTemp,
@@ -539,13 +539,13 @@ func newTableAsViewSpec(namePath *NamePath, query SQLFragment, stmt *ast.CreateV
 		NamePath:   namePath.mergePath(stmt.NamePath()),
 		Columns:    newColumnsFromOutputColumns(stmt.OutputColumnList()),
 		CreateMode: stmt.CreateMode(),
-		Query:      query.String(),
+		Query:      SQLFragmentString(query, d),
 		UpdatedAt:  now,
 		CreatedAt:  now,
 	}
 }
 
-func newTableAsSelectSpec(namePath *NamePath, query SQLFragment, stmt *ast.CreateTableAsSelectStmtNode) *TableSpec {
+func newTableAsSelectSpec(namePath *NamePath, query SQLFragment, stmt *ast.CreateTableAsSelectStmtNode, d Dialect) *TableSpec {
 	now := time.Now()
 	return &TableSpec{
 		IsTemp:     stmt.CreateScope() == ast.CreateScopeTemp,
@@ -553,7 +553,7 @@ func newTableAsSelectSpec(namePath *NamePath, query SQLFragment, stmt *ast.Creat
 		Columns:    newColumnsFromDef(stmt.ColumnDefinitionList()),
 		PrimaryKey: newPrimaryKey(stmt.PrimaryKey()),
 		CreateMode: stmt.CreateMode(),
-		Query:      query.String(),
+		Query:      SQLFragmentString(query, d),
 		UpdatedAt:  now,
 		CreatedAt:  now,
 	}

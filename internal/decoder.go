@@ -42,6 +42,15 @@ func DecodeValue(v driver.Value) (Value, error) {
 		return FloatValue(float64(vv)), nil
 	case bool:
 		return BoolValue(vv), nil
+	case *big.Int:
+		if vv == nil {
+			return nil, nil
+		}
+		if vv.IsInt64() {
+			return IntValue(vv.Int64()), nil
+		}
+		r := new(big.Rat).SetInt(vv)
+		return &NumericValue{Rat: r}, nil
 	case []byte:
 		if len(vv) == 0 {
 			return StringValue(""), nil

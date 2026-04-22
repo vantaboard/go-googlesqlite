@@ -162,6 +162,12 @@ func (DuckDBDialect) RewriteEmittedFunctionName(name string) (string, bool) {
 	if alt, ok := duckDBNativeFunctions[name]; ok {
 		return alt, true
 	}
+	if alt, ok := duckDBWindowRenames[name]; ok {
+		return alt, true
+	}
+	if alt, ok := duckDBAggregateRenames[name]; ok {
+		return alt, true
+	}
 	return name, false
 }
 
