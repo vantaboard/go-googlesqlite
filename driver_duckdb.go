@@ -1,8 +1,25 @@
 //go:build duckdb
 
 // Package googlesqlite registers driver name "googlesqlduck" when built with -tags duckdb.
-// Linking pulls in duckdb-go (C++ static libs); ensure your CGO linker can resolve libstdc++
-// (or libc++) alongside the stack's usual CGO flags.
+//
+// Linking (see https://github.com/duckdb/duckdb-go#linking-duckdb ):
+//
+//   - Default: duckdb-go statically links pre-built DuckDB; you need a CGO toolchain that can
+//     link those C++ archives (libstdc++/libc++), consistent with your GOOGLESQL_* / mold setup.
+//
+//   - Dynamic library (recommended when static linking fails or for smaller binaries): download
+//     libduckdb from https://github.com/duckdb/duckdb/releases , then build with BOTH tags
+//     duckdb (this file) and duckdb_use_lib (upstream), set CGO_LDFLAGS, and at runtime set the
+//     loader path. Example on Linux (from upstream README):
+//
+//	CGO_ENABLED=1 CGO_LDFLAGS="-lduckdb -L/path/to/libs" \
+//	  go build -tags "duckdb,duckdb_use_lib,…" .
+//	LD_LIBRARY_PATH=/path/to/libs ./yourbinary
+//
+//     On macOS use DYLD_LIBRARY_PATH instead of LD_LIBRARY_PATH. Use `task test:duckdb-lib`
+//     in this repo when DUCKDB_LIB_DIR is set.
+//
+// Upstream details: https://github.com/duckdb/duckdb-go#linking-a-dynamic-library
 
 package googlesqlite
 

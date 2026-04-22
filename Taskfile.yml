@@ -64,6 +64,26 @@ tasks:
         source .envrc
         go test -tags "$GOOGLESQL_BUILD_TAGS" -p 1 -count=1 ./...
 
+  test:duckdb-lib:
+    desc: |
+      Tests with DuckDB dynamically linked (duckdb + duckdb_use_lib).
+      Set DUCKDB_LIB_DIR to the directory containing libduckdb.so (Linux) or libduckdb.dylib (macOS).
+      See https://github.com/duckdb/duckdb-go#linking-a-dynamic-library
+    cmds:
+      - |
+        set -euo pipefail
+        source .envrc
+        : "${DUCKDB_LIB_DIR:?set DUCKDB_LIB_DIR to the directory with libduckdb (see duckdb-go README)}"
+        export CGO_ENABLED=1
+        export CGO_LDFLAGS="${CGO_LDFLAGS} -lduckdb -L${DUCKDB_LIB_DIR}"
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+          export DYLD_LIBRARY_PATH="${DUCKDB_LIB_DIR}${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PATH}}"
+        else
+          export LD_LIBRARY_PATH="${DUCKDB_LIB_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+        fi
+        TAGS="${GOOGLESQL_BUILD_TAGS},duckdb,duckdb_use_lib"
+        go test -tags "${TAGS}" -p 1 -count=1 ./...
+
   docker:build-dev-googlesql:
     desc: Build go-googlesql:dev in the sibling checkout (required for test:linux)
     cmds:
