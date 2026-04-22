@@ -23,6 +23,7 @@ Legend:
 | Scalar CAST (simple types) | `googlesqlite_cast(...)` | `CAST` / `TRY_CAST` | **native-cast** (done for mapped kinds) |
 | CAST complex types | `googlesqlite_cast` | **unsupported** (error until mapped) | pending |
 | MERGE simulation | `CREATE TABLE` scratch + multi-statement + `googlesqlite_*` key preds | Same rewrite; scratch = **`CREATE TEMP TABLE`** on DuckDB via dialect | **structural** (done) |
+| `CREATE TABLE` column / PK DDL | `TEXT`, PK `COLLATE googlesqlite_collate`, `WITHOUT ROWID` | `VARCHAR` / `BIGINT`, no PK collation, no `WITHOUT ROWID`; [`Dialect` physical DDL](dialect.go) + [`spec.go` PhysicalDDL](spec.go) | **structural** (done starter) |
 
 ## Renames (`duckDBNativeFunctions`)
 

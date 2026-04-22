@@ -6,6 +6,10 @@ This document locks the **parity contract**, **minimum test corpus**, **CI shape
 
 - **In scope:** For an agreed **GoogleSQL corpus**, the same input must yield **logically equivalent results** on `googlesqlite` (SQLite) and `googlesqlduck` (DuckDB): same row counts and column values under a defined comparison order (see dual-backend tests).
 
+### Connection pooling (parity tests and apps)
+
+- The `googlesqlite` / `googlesqlduck` drivers cache `*sql.DB` per DSN; reuse of `""` shares one pool. Use **private DSNs** for isolated dual-backend cases (see [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.md)).
+
 ### Comparison order
 
 - Dual-backend tests compare row sets as **ordered sequences** after normalizing cell values to strings (see [`duckdb_integration_test.go`](../duckdb_integration_test.go)).

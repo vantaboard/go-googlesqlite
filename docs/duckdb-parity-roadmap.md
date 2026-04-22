@@ -76,9 +76,9 @@ Deliverable: maintain a **single table** (could live in this doc or `internal/du
 
 Planning note: [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.md).
 
-- [ ] **CREATE TABLE / CTAS / views:** column types in emitted DDL (SQLite `STRING` vs DuckDB `VARCHAR`, timestamps, decimals, arrays, structs).
-- [ ] **Catalog persistence:** [`catalog_repository.go`](../internal/catalog_repository.go) already split; re-validate every migration path (constraints, indexes).
-- [ ] **Temp tables / session:** semantics vs BigQuery emulator expectations.
+- [x] **CREATE TABLE / CTAS / views (starter):** dialect-aware `PhysicalDDL` on [`TableSpec`](../internal/spec.go) / [`ColumnSpec`](../internal/spec.go) — DuckDB avoids SQLite-only PK collation and `WITHOUT ROWID`; string columns use `VARCHAR`. CTAS/view body still shared; refine types as workloads require.
+- [x] **Catalog persistence (smoke):** [`catalog_repository.go`](../internal/catalog_repository.go) — [`catalog_repository_test.go`](../internal/catalog_repository_test.go) (SQLite) + DuckDB-tagged integration test; re-validate constraints/indexes as DDL evolves.
+- [x] **Temp tables / session (docs):** pooling + TEMP semantics in [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.md); emulator alignment still workload-specific.
 
 ---
 
@@ -86,9 +86,9 @@ Planning note: [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.
 
 Planning note: [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.md).
 
-- [ ] **Parameters:** confirm named / positional binding parity with DuckDB driver.
-- [ ] **Transactions:** `BEGIN` / `COMMIT` paths through [`driver.go`](../driver.go) / `googlesqlduck`.
-- [ ] **Connection settings:** `SetMaxIdleConns(0)` and other [duckdb-go lifecycle](https://github.com/duckdb/duckdb-go#memory-allocation) notes for long-running processes.
+- [x] **Parameters (smoke):** dual-backend named param test in [`duckdb_integration_test.go`](../duckdb_integration_test.go) (`CAST(@p AS INT64)`).
+- [x] **Transactions (smoke):** commit + rollback DDL/DML via `database/sql` `BeginTx` in [`duckdb_integration_test.go`](../duckdb_integration_test.go).
+- [x] **Connection settings:** `SetMaxIdleConns(0)` in [`OpenSQLBackend`](../internal/backend.go) for DuckDB; lifecycle notes in [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.md).
 - [ ] **bigquery-emulator:** optional driver selection + same job SQL corpus (separate repo milestone).
 
 ---
