@@ -3,6 +3,7 @@ package internal
 import (
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/goccy/go-json"
@@ -499,6 +500,27 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, d Dialect) (*
 			le := NewBinaryExpression(args[0], "<=", args[2])
 			return NewBinaryExpression(ge, "AND", le), true
 		}
+	case "googlesqlite_get_struct_field":
+		if len(args) == 2 {
+			idx, ok := googlesqliteWireIntArg(args[1])
+			if !ok || idx < 0 {
+				break
+			}
+			// GoogleSQL field index is 0-based; DuckDB struct_extract index form is 1-based (tuple fields).
+			duck1 := idx + 1
+			return NewFunctionExpression("struct_extract", args[0], NewLiteralExpression(strconv.FormatInt(duck1, 10))), true
+		}
+	case "googlesqlite_date":
+		switch len(args) {
+		case 1:
+			return NewSQLCastExpression(args[0], "DATE", false), true
+		case 2:
+			// DATE(ts, zone) -> CAST(timezone(zone, ts) AS DATE)
+			tz := NewFunctionExpression("timezone", args[1], args[0])
+			return NewSQLCastExpression(tz, "DATE", false), true
+		case 3:
+			return NewFunctionExpression("make_date", args[0], args[1], args[2]), true
+		}
 	case "googlesqlite_current_timestamp", "googlesqlite_current_datetime":
 		switch len(args) {
 		case 0:
@@ -525,6 +547,34 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, d Dialect) (*
 }
 
 // googlesqliteWireStringArg decodes a string literal produced by LiteralFromValue (double-quoted base64 JSON layout).
+// googlesqliteWireIntArg parses an integer literal emitted for the resolver (plain decimal or wire JSON layout).
+func googlesqliteWireIntArg(expr *SQLExpression) (int64, bool) {
+	if expr == nil || expr.Type != ExpressionTypeLiteral {
+		return 0, false
+	}
+	s := strings.TrimSpace(expr.Value)
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return i, true
+	}
+	if len(s) < 2 || s[0] != '"' || s[len(s)-1] != '"' {
+		return 0, false
+	}
+	inner := s[1 : len(s)-1]
+	b, err := base64.StdEncoding.DecodeString(inner)
+	if err != nil {
+		return 0, false
+	}
+	var layout ValueLayout
+	if err := json.Unmarshal(b, &layout); err != nil || layout.Header != IntValueType {
+		return 0, false
+	}
+	i, err := strconv.ParseInt(strings.TrimSpace(layout.Body), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return i, true
+}
+
 func googlesqliteWireStringArg(expr *SQLExpression) (string, bool) {
 	if expr == nil || expr.Type != ExpressionTypeLiteral {
 		return "", false

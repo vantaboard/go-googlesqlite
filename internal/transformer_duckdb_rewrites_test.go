@@ -47,6 +47,24 @@ func TestTransformDuckDB_instrTwoArgStrpos(t *testing.T) {
 	}
 }
 
+func TestTransformDuckDB_errorBuiltinRename(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	fn := NewFunctionCallExpressionData("googlesqlite_error",
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("boom")}},
+	)
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	expr, err := coord.TransformExpression(fn, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := expr.String(); !strings.Contains(got, "error(") || strings.Contains(got, "googlesqlite_error") {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestTransformDuckDB_betweenRangeAnd(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	fn := NewFunctionCallExpressionData("googlesqlite_between",

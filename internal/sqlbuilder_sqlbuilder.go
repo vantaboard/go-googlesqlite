@@ -368,7 +368,7 @@ type FunctionCall struct {
 }
 
 func (f *FunctionCall) WriteSql(writer *SQLWriter) {
-	name, args, distinct, countStar := duckDBNormalizeAggregateCall(f, writer.dialect)
+	name, args, distinct, countStar, aggFilter := duckDBNormalizeAggregateCall(f, writer.dialect)
 	writer.Write(name)
 	writer.Write("(")
 	if countStar {
@@ -385,6 +385,11 @@ func (f *FunctionCall) WriteSql(writer *SQLWriter) {
 		}
 	}
 	writer.Write(")")
+	if aggFilter != nil {
+		writer.Write(" FILTER (WHERE ")
+		aggFilter.WriteSql(writer)
+		writer.Write(")")
+	}
 	if f.WindowSpec != nil {
 		writer.Write(" OVER (")
 		f.WindowSpec.WriteSql(writer)
@@ -394,21 +399,34 @@ func (f *FunctionCall) WriteSql(writer *SQLWriter) {
 
 // duckDBNormalizeAggregateCall strips SQLite-only synthetic args (e.g. googlesqlite_distinct) and
 // maps COUNT() with no arguments to COUNT(*) for DuckDB.
-func duckDBNormalizeAggregateCall(f *FunctionCall, d Dialect) (name string, args []*SQLExpression, distinct bool, countStar bool) {
+func duckDBNormalizeAggregateCall(f *FunctionCall, d Dialect) (name string, args []*SQLExpression, distinct bool, countStar bool, aggFilter *SQLExpression) {
 	name = f.Name
 	args = f.Arguments
 	distinct = f.IsDistinct
 	if d == nil || d.ID() != "duckdb" {
-		return name, args, distinct, false
+		return name, args, distinct, false, nil
+	}
+	ignoreNulls := false
+	for len(args) > 0 && isBareFunctionCall(args[len(args)-1], "googlesqlite_ignore_nulls") {
+		ignoreNulls = true
+		args = args[:len(args)-1]
+	}
+	for len(args) > 0 && isBareFunctionCall(args[len(args)-1], "googlesqlite_distinct") {
+		distinct = true
+		args = args[:len(args)-1]
 	}
 	for len(args) > 0 && isBareFunctionCall(args[0], "googlesqlite_distinct") {
 		distinct = true
 		args = args[1:]
 	}
+	if ignoreNulls && len(args) == 1 {
+		// BigQuery IGNORE NULLS on aggregates — DuckDB FILTER (see struct.sql / aggregate docs).
+		aggFilter = NewBinaryExpression(args[0], "IS NOT", NewLiteralExpression("NULL"))
+	}
 	if name == "count" && len(args) == 0 {
 		countStar = true
 	}
-	return name, args, distinct, countStar
+	return name, args, distinct, countStar, aggFilter
 }
 
 func isBareFunctionCall(e *SQLExpression, want string) bool {
