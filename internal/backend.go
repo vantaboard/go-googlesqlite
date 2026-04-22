@@ -64,5 +64,9 @@ func OpenSQLBackend(b SQLBackend, dsn string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sql ping (%s): %w", b.DriverName(), err)
 	}
+	if _, ok := b.(DuckDBBackend); ok {
+		// duckdb-go: avoid retaining idle conns that keep DB state; see docs/duckdb-phase3-phase4-followon.md
+		db.SetMaxIdleConns(0)
+	}
 	return db, nil
 }

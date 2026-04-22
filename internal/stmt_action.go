@@ -95,6 +95,7 @@ type CreateTableStmtAction struct {
 	spec            *TableSpec
 	catalog         *Catalog
 	isAutoIndexMode bool
+	dialect         Dialect
 }
 
 func (a *CreateTableStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.Stmt, error) {
@@ -106,7 +107,7 @@ func (a *CreateTableStmtAction) Prepare(ctx context.Context, conn *Conn) (driver
 			return nil, err
 		}
 	}
-	stmt, err := conn.PrepareContext(ctx, a.spec.SQLiteSchema())
+	stmt, err := conn.PrepareContext(ctx, a.spec.PhysicalDDL(a.dialect))
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare %s: %w", a.query, err)
 	}
@@ -141,7 +142,7 @@ func (a *CreateTableStmtAction) exec(ctx context.Context, conn *Conn) error {
 			return err
 		}
 	}
-	if _, err := conn.ExecContext(ctx, a.spec.SQLiteSchema(), a.args...); err != nil {
+	if _, err := conn.ExecContext(ctx, a.spec.PhysicalDDL(a.dialect), a.args...); err != nil {
 		return fmt.Errorf("failed to exec %s: %w", a.query, err)
 	}
 	if a.isAutoIndexMode {

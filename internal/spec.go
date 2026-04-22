@@ -128,7 +128,11 @@ func (s *TableSpec) TableName() string {
 	return formatPath(s.NamePath)
 }
 
-func (s *TableSpec) SQLiteSchema() string {
+// PhysicalDDL emits CREATE TABLE / VIEW DDL for the given engine. Pass nil to default to SQLite.
+func (s *TableSpec) PhysicalDDL(d Dialect) string {
+	if d == nil {
+		d = SQLiteDialect{}
+	}
 	if s.IsView {
 		return viewSQLiteSchema(s)
 	}
@@ -137,36 +141,33 @@ func (s *TableSpec) SQLiteSchema() string {
 	}
 	columns := []string{}
 	for _, c := range s.Columns {
-		columns = append(columns, c.SQLiteSchema())
+		columns = append(columns, c.PhysicalDDL(d))
 	}
 	if len(s.PrimaryKey) != 0 {
 		primaryKeys := make([]string, len(s.PrimaryKey))
-
 		for i, key := range s.PrimaryKey {
-			primaryKeys[i] = fmt.Sprintf("%s COLLATE googlesqlite_collate", key)
+			primaryKeys[i] = d.PhysicalPrimaryKeyColumnListEntry(key)
 		}
-
-		columns = append(
-			columns,
-			fmt.Sprintf("PRIMARY KEY (%s)", strings.Join(primaryKeys, ",")),
-		)
+		columns = append(columns, fmt.Sprintf("PRIMARY KEY (%s)", strings.Join(primaryKeys, ",")))
 	}
-	var clustering string
-	if len(s.PrimaryKey) > 0 {
-		clustering = "WITHOUT ROWID"
-	} else {
-		clustering = ""
+	suffix := ""
+	if len(s.PrimaryKey) > 0 && d.PhysicalUseWithoutRowID() {
+		suffix = " WITHOUT ROWID"
 	}
 	var stmt string
 	switch s.CreateMode {
-	case ast.CreateDefaultMode:
-		stmt = "CREATE TABLE"
-	case ast.CreateOrReplaceMode:
+	case ast.CreateDefaultMode, ast.CreateOrReplaceMode:
 		stmt = "CREATE TABLE"
 	case ast.CreateIfNotExistsMode:
 		stmt = "CREATE TABLE IF NOT EXISTS"
+	default:
+		stmt = "CREATE TABLE"
 	}
-	return fmt.Sprintf("%s `%s` (%s) %s", stmt, s.TableName(), strings.Join(columns, ","), clustering)
+	return fmt.Sprintf("%s `%s` (%s)%s", stmt, s.TableName(), strings.Join(columns, ","), suffix)
+}
+
+func (s *TableSpec) SQLiteSchema() string {
+	return s.PhysicalDDL(SQLiteDialect{})
 }
 
 func viewSQLiteSchema(s *TableSpec) string {
@@ -287,59 +288,20 @@ func (t *Type) FormatType() string {
 	return types.TypeKind(t.Kind).String()
 }
 
-func (s *ColumnSpec) SQLiteSchema() string {
-	var typ string
-	switch types.TypeKind(s.Type.Kind) {
-	case types.INT32, types.INT64, types.UINT32, types.UINT64:
-		typ = "INT"
-	case types.ENUM:
-		typ = "INT"
-	case types.BOOL:
-		typ = "BOOLEAN"
-	case types.FLOAT:
-		typ = "FLOAT"
-	case types.BYTES:
-		typ = "BLOB"
-	case types.DOUBLE:
-		typ = "DOUBLE"
-	case types.JSON:
-		typ = "JSON"
-	case types.STRING:
-		typ = "TEXT"
-	case types.DATE:
-		typ = "TEXT"
-	case types.TIMESTAMP:
-		typ = "TEXT"
-	case types.ARRAY:
-		typ = "TEXT"
-	case types.STRUCT:
-		typ = "TEXT"
-	case types.PROTO:
-		typ = "TEXT"
-	case types.TIME:
-		typ = "TEXT"
-	case types.DATETIME:
-		typ = "TEXT"
-	case types.GEOGRAPHY:
-		typ = "TEXT"
-	case types.NUMERIC:
-		typ = "TEXT"
-	case types.BIG_NUMERIC:
-		typ = "TEXT"
-	case types.EXTENDED:
-		typ = "TEXT"
-	case types.INTERVAL:
-		typ = "TEXT"
-	case types.UNKNOWN:
-		fallthrough
-	default:
-		typ = "UNKNOWN"
+func (s *ColumnSpec) PhysicalDDL(d Dialect) string {
+	if d == nil {
+		d = SQLiteDialect{}
 	}
+	typ := d.PhysicalColumnStorageType(types.TypeKind(s.Type.Kind))
 	schema := fmt.Sprintf("`%s` %s", s.Name, typ)
 	if s.IsNotNull {
 		schema += " NOT NULL"
 	}
 	return schema
+}
+
+func (s *ColumnSpec) SQLiteSchema() string {
+	return s.PhysicalDDL(SQLiteDialect{})
 }
 
 func newTypeFromFunctionArgumentType(t *types.FunctionArgumentType) *Type {

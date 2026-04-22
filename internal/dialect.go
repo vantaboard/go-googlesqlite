@@ -1,5 +1,7 @@
 package internal
 
+import "github.com/vantaboard/go-googlesql/types"
+
 // Dialect selects SQL generation and catalog persistence behavior for a physical engine.
 // The surface is intentionally small; extend with DDL helpers, placeholder style, etc. as needed.
 type Dialect interface {
@@ -24,6 +26,13 @@ type Dialect interface {
 	MergeTempTableName() string
 	// MergeScratchTableIsTemporary uses CREATE TEMP TABLE for that scratch table (recommended on DuckDB).
 	MergeScratchTableIsTemporary() bool
+
+	// PhysicalPrimaryKeyColumnListEntry formats one column reference inside PRIMARY KEY (...).
+	PhysicalPrimaryKeyColumnListEntry(columnName string) string
+	// PhysicalUseWithoutRowID is true when CREATE TABLE should append WITHOUT ROWID (SQLite PK tables).
+	PhysicalUseWithoutRowID() bool
+	// PhysicalColumnStorageType maps a GoogleSQL type kind to a CREATE TABLE column type name.
+	PhysicalColumnStorageType(kind types.TypeKind) string
 }
 
 // ApplySortCollation sets expr.Collation when the dialect uses a sort collation (SQLite only today).
@@ -62,6 +71,36 @@ func (SQLiteDialect) ArrayUnnestUseLateralCorrelation() bool { return false }
 func (SQLiteDialect) MergeTempTableName() string { return "googlesqlite_merged_table" }
 
 func (SQLiteDialect) MergeScratchTableIsTemporary() bool { return false }
+
+func (SQLiteDialect) PhysicalPrimaryKeyColumnListEntry(columnName string) string {
+	return "`" + columnName + "` COLLATE googlesqlite_collate"
+}
+
+func (SQLiteDialect) PhysicalUseWithoutRowID() bool { return true }
+
+func (SQLiteDialect) PhysicalColumnStorageType(kind types.TypeKind) string {
+	switch kind {
+	case types.INT32, types.INT64, types.UINT32, types.UINT64, types.ENUM:
+		return "INT"
+	case types.BOOL:
+		return "BOOLEAN"
+	case types.FLOAT:
+		return "FLOAT"
+	case types.BYTES:
+		return "BLOB"
+	case types.DOUBLE:
+		return "DOUBLE"
+	case types.JSON:
+		return "JSON"
+	case types.STRING:
+		return "TEXT"
+	case types.DATE, types.TIMESTAMP, types.ARRAY, types.STRUCT, types.PROTO, types.TIME,
+		types.DATETIME, types.GEOGRAPHY, types.NUMERIC, types.BIG_NUMERIC, types.EXTENDED, types.INTERVAL:
+		return "TEXT"
+	default:
+		return "UNKNOWN"
+	}
+}
 
 // duckDBNativeFunctions maps googlesqlite-prefixed runtime names to DuckDB builtins where semantics align.
 var duckDBNativeFunctions = map[string]string{
@@ -108,5 +147,35 @@ func (DuckDBDialect) ArrayUnnestUseLateralCorrelation() bool { return true }
 func (DuckDBDialect) MergeTempTableName() string { return "googlesqlite_merged_table" }
 
 func (DuckDBDialect) MergeScratchTableIsTemporary() bool { return true }
+
+func (DuckDBDialect) PhysicalPrimaryKeyColumnListEntry(columnName string) string {
+	return "`" + columnName + "`"
+}
+
+func (DuckDBDialect) PhysicalUseWithoutRowID() bool { return false }
+
+func (DuckDBDialect) PhysicalColumnStorageType(kind types.TypeKind) string {
+	switch kind {
+	case types.INT32, types.INT64, types.UINT32, types.UINT64, types.ENUM:
+		return "BIGINT"
+	case types.BOOL:
+		return "BOOLEAN"
+	case types.FLOAT:
+		return "FLOAT"
+	case types.BYTES:
+		return "BLOB"
+	case types.DOUBLE:
+		return "DOUBLE"
+	case types.JSON:
+		return "JSON"
+	case types.STRING:
+		return "VARCHAR"
+	case types.DATE, types.TIMESTAMP, types.TIME, types.DATETIME, types.ARRAY, types.STRUCT, types.PROTO,
+		types.GEOGRAPHY, types.NUMERIC, types.BIG_NUMERIC, types.EXTENDED, types.INTERVAL:
+		return "VARCHAR"
+	default:
+		return "UNKNOWN"
+	}
+}
 
 // See docs/duckdb-parity-roadmap.md for remaining parity gaps.

@@ -628,6 +628,7 @@ func (a *Analyzer) newCreateTableStmtAction(ctx context.Context, args []driver.N
 		args:            queryArgs,
 		catalog:         a.catalog,
 		isAutoIndexMode: a.isAutoIndexMode,
+		dialect:         a.dialect,
 	}, nil
 }
 
@@ -659,6 +660,7 @@ func (a *Analyzer) newCreateTableAsSelectStmtAction(ctx context.Context, _ strin
 		args:            queryArgs,
 		catalog:         a.catalog,
 		isAutoIndexMode: a.isAutoIndexMode,
+		dialect:         a.dialect,
 	}, nil
 }
 
