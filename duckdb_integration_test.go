@@ -177,6 +177,22 @@ func TestDualBackend_phase2FunctionSurface(t *testing.T) {
 			// JSON_VALUE yields a string scalar analyzable as INT64 cast; JSON_EXTRACT stays typed as JSON.
 			sql: "SELECT CAST(JSON_VALUE(JSON '{\"a\":7}', '$.a') AS INT64) AS v FROM (SELECT 1) AS _t ORDER BY v",
 		},
+		{
+			name: "sum_group_by",
+			sql: `
+CREATE TEMP TABLE sum_g (k INT64, v INT64);
+INSERT INTO sum_g VALUES (1,10),(1,20),(2,5);
+SELECT k, SUM(v) AS s FROM sum_g GROUP BY k ORDER BY k;
+`,
+		},
+		{
+			name: "row_number_over",
+			sql: `
+CREATE TEMP TABLE win_g (x INT64);
+INSERT INTO win_g VALUES (30),(10),(20);
+SELECT x, ROW_NUMBER() OVER (ORDER BY x) AS rn FROM win_g ORDER BY x, rn;
+`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -225,6 +241,36 @@ func normalizeRows(rows [][]interface{}) [][]string {
 		}
 	}
 	return out
+}
+
+func TestDualBackend_phase3DDLCTAS(t *testing.T) {
+	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
+	// CTAS + multi-column DDL (workload-style). Keep projections simple so emitted SQL stays dialect-quoted.
+	q := `
+CREATE TABLE ctas_src (id INT64, v INT64);
+INSERT INTO ctas_src VALUES (1, 10), (2, 20), (3, 5);
+CREATE TABLE ctas_dst AS SELECT id, v FROM ctas_src WHERE v > 5;
+SELECT id, v FROM ctas_dst ORDER BY id;
+`
+	sqliteDSN := fmt.Sprintf("file:phase3_%d?mode=memory&cache=private", atomic.AddUint64(&duckDualBackendMemCounter, 1))
+	sqliteDB, err := sql.Open("googlesqlite", sqliteDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqliteDB.Close() })
+
+	duckPath := filepath.Join(t.TempDir(), "phase3_ctas.duckdb")
+	duckDB, err := sql.Open("googlesqlduck", duckPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = duckDB.Close() })
+
+	a := queryAll(t, sqliteDB, ctx, q)
+	b := queryAll(t, duckDB, ctx, q)
+	if !reflect.DeepEqual(normalizeRows(a), normalizeRows(b)) {
+		t.Fatalf("sqlite=%v duckdb=%v", a, b)
+	}
 }
 
 func TestDualBackend_namedParameter(t *testing.T) {
