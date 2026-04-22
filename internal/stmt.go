@@ -156,7 +156,7 @@ func (s *DMLStmt) Exec(args []driver.Value) (driver.Result, error) {
 }
 
 func (s *DMLStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	newArgs, err := getArgsFromParams(args, s.args)
+	newArgs, err := getArgsFromParams(ctx, args, s.args)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +237,7 @@ func (s *QueryStmt) Query(args []driver.Value) (driver.Rows, error) {
 }
 
 func (s *QueryStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	newArgs, err := getArgsFromParams(args, s.args)
+	newArgs, err := getArgsFromParams(ctx, args, s.args)
 	if err != nil {
 		return nil, err
 	}

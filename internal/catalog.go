@@ -229,10 +229,18 @@ func (c *Catalog) getFunctions(namePath *NamePath) []*FunctionSpec {
 	return specs
 }
 
+// catalogDriverCtx attaches keys so internal catalog DDL/DML goes to the backend as plain SQL
+// with native driver parameter types (required for DuckDB TIMESTAMP binds).
+func catalogDriverCtx(ctx context.Context) context.Context {
+	ctx = context.WithValue(ctx, DisableQueryFormattingKey{}, true)
+	return ctx
+}
+
 func (c *Catalog) Sync(ctx context.Context, conn *Conn) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	ctx = catalogDriverCtx(ctx)
 	if err := c.repo.EnsureSchema(ctx, conn); err != nil {
 		return fmt.Errorf("failed to create catalog tables: %w", err)
 	}
@@ -305,7 +313,7 @@ func (c *Catalog) DeleteTableSpec(ctx context.Context, conn *Conn, name string) 
 	if err := c.deleteTableSpecByName(name); err != nil {
 		return err
 	}
-	if err := c.repo.Delete(ctx, conn, name); err != nil {
+	if err := c.repo.Delete(catalogDriverCtx(ctx), conn, name); err != nil {
 		return err
 	}
 	return nil
@@ -318,7 +326,7 @@ func (c *Catalog) DeleteFunctionSpec(ctx context.Context, conn *Conn, name strin
 	if err := c.deleteFunctionSpecByName(name); err != nil {
 		return err
 	}
-	if err := c.repo.Delete(ctx, conn, name); err != nil {
+	if err := c.repo.Delete(catalogDriverCtx(ctx), conn, name); err != nil {
 		return err
 	}
 	return nil
@@ -391,7 +399,7 @@ func (c *Catalog) saveTableSpec(ctx context.Context, conn *Conn, spec *TableSpec
 	if spec.IsView {
 		kind = string(ViewSpecKind)
 	}
-	if err := c.repo.Upsert(ctx, conn, spec.TableName(), CatalogSpecKind(kind), string(encoded), now); err != nil {
+	if err := c.repo.Upsert(catalogDriverCtx(ctx), conn, spec.TableName(), CatalogSpecKind(kind), string(encoded), catalogBindTime(now)); err != nil {
 		return fmt.Errorf("failed to save a new table spec: %w", err)
 	}
 	return nil
@@ -403,7 +411,7 @@ func (c *Catalog) saveFunctionSpec(ctx context.Context, conn *Conn, spec *Functi
 		return fmt.Errorf("failed to encode function spec: %w", err)
 	}
 	now := catalogBindTime(time.Now())
-	if err := c.repo.Upsert(ctx, conn, spec.FuncName(), FunctionSpecKind, string(encoded), now); err != nil {
+	if err := c.repo.Upsert(catalogDriverCtx(ctx), conn, spec.FuncName(), FunctionSpecKind, string(encoded), now); err != nil {
 		return fmt.Errorf("failed to save a new function spec: %w", err)
 	}
 	return nil

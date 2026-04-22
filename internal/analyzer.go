@@ -31,6 +31,21 @@ type Analyzer struct {
 
 type DisableQueryFormattingKey struct{}
 
+// rawDriverQuery applies the same parameter-name normalization as newQueryStmtAction when
+// DisableQueryFormattingKey is set: lowercase @names and rewrite @ to $ for DuckDB.
+func rawDriverQuery(d Dialect, query string, params []*ast.ParameterNode) string {
+	formattedQuery := query
+	queryBytes := []byte(query)
+	for _, param := range params {
+		location := param.ParseLocationRange()
+		start := location.Start().ByteOffset()
+		end := location.End().ByteOffset()
+		parameter := string(queryBytes[start:end])
+		formattedQuery = strings.ReplaceAll(formattedQuery, parameter, strings.ToLower(parameter))
+	}
+	return rewriteAtNamedToDollarForDuckDB(d, formattedQuery)
+}
+
 // rewriteAtNamedToDollarForDuckDB converts GoogleSQL @param markers to DuckDB $param for raw SQL
 // (see DisableQueryFormattingKey) so underlying duckdb-go Prepare accepts the statement.
 func rewriteAtNamedToDollarForDuckDB(d Dialect, sql string) string {
@@ -648,7 +663,7 @@ func (a *Analyzer) newNullStmtAction(_ context.Context, query string, args []dri
 func (a *Analyzer) newCreateTableStmtAction(ctx context.Context, args []driver.NamedValue, node *ast.CreateTableStmtNode) (*CreateTableStmtAction, error) {
 	spec := newTableSpec(a.namePath, node)
 	params := getParamsFromNode(node)
-	queryArgs, err := getArgsFromParams(args, params)
+	queryArgs, err := getArgsFromParams(ctx, args, params)
 	if err != nil {
 		return nil, err
 	}
@@ -680,7 +695,7 @@ func (a *Analyzer) newCreateTableAsSelectStmtAction(ctx context.Context, _ strin
 	query := createTableStmt.AsSelect
 	spec := newTableAsSelectSpec(a.namePath, query, node, a.dialect)
 	params := getParamsFromNode(node)
-	queryArgs, err := getArgsFromParams(args, params)
+	queryArgs, err := getArgsFromParams(ctx, args, params)
 	if err != nil {
 		return nil, err
 	}
@@ -854,7 +869,7 @@ func (a *Analyzer) newDropStmtAction(ctx context.Context, query string, args []d
 		return nil, fmt.Errorf("failed to format query %s", query)
 	}
 	params := getParamsFromNode(node)
-	queryArgs, err := getArgsFromParams(args, params)
+	queryArgs, err := getArgsFromParams(ctx, args, params)
 	if err != nil {
 		return nil, err
 	}
@@ -880,7 +895,7 @@ func (a *Analyzer) newDropFunctionStmtAction(ctx context.Context, query string, 
 		return nil, fmt.Errorf("failed to format query %s", query)
 	}
 	params := getParamsFromNode(node)
-	queryArgs, err := getArgsFromParams(args, params)
+	queryArgs, err := getArgsFromParams(ctx, args, params)
 	if err != nil {
 		return nil, err
 	}
@@ -897,16 +912,22 @@ func (a *Analyzer) newDropFunctionStmtAction(ctx context.Context, query string, 
 }
 
 func (a *Analyzer) newDMLStmtAction(ctx context.Context, query string, args []driver.NamedValue, node ast.Node) (*DMLStmtAction, error) {
-	result, err := a.queryFactory.TransformQuery(ctx, node)
-	if err != nil {
-		return nil, fmt.Errorf("failed to format query %s: %w", query, err)
-	}
-	if result == nil || result.Fragment == nil {
-		return nil, fmt.Errorf("failed to format query %s", query)
+	params := getParamsFromNode(node)
+	var formattedQuery string
+	if disabledFormatting, ok := ctx.Value(DisableQueryFormattingKey{}).(bool); ok && disabledFormatting {
+		formattedQuery = rawDriverQuery(a.dialect, query, params)
+	} else {
+		result, err := a.queryFactory.TransformQuery(ctx, node)
+		if err != nil {
+			return nil, fmt.Errorf("failed to format query %s: %w", query, err)
+		}
+		if result == nil || result.Fragment == nil {
+			return nil, fmt.Errorf("failed to format query %s", query)
+		}
+		formattedQuery = a.formatSQLFragment(result.Fragment)
 	}
 
-	params := getParamsFromNode(node)
-	queryArgs, err := getArgsFromParams(args, params)
+	queryArgs, err := getArgsFromParams(ctx, args, params)
 	if err != nil {
 		return nil, err
 	}
@@ -915,7 +936,7 @@ func (a *Analyzer) newDMLStmtAction(ctx context.Context, query string, args []dr
 		query:          query,
 		params:         params,
 		args:           queryArgs,
-		formattedQuery: a.formatSQLFragment(result.Fragment),
+		formattedQuery: formattedQuery,
 		catalog:        a.catalog,
 	}, nil
 }
@@ -931,18 +952,7 @@ func (a *Analyzer) newQueryStmtAction(ctx context.Context, query string, args []
 	var formattedQuery string
 	params := getParamsFromNode(node)
 	if disabledFormatting, ok := ctx.Value(DisableQueryFormattingKey{}).(bool); ok && disabledFormatting {
-		formattedQuery = query
-		// GoogleSQL will always lowercase parameter names, so we must match it in the query
-		queryBytes := []byte(query)
-		for _, param := range params {
-			location := param.ParseLocationRange()
-			start := location.Start().ByteOffset()
-			end := location.End().ByteOffset()
-			// Finds the parameter including its prefix i.e. @itemID
-			parameter := string(queryBytes[start:end])
-			formattedQuery = strings.ReplaceAll(formattedQuery, parameter, strings.ToLower(parameter))
-		}
-		formattedQuery = rewriteAtNamedToDollarForDuckDB(a.dialect, formattedQuery)
+		formattedQuery = rawDriverQuery(a.dialect, query, params)
 	} else {
 		var err error
 		result, err := a.queryFactory.TransformQuery(ctx, node)
@@ -956,7 +966,7 @@ func (a *Analyzer) newQueryStmtAction(ctx context.Context, query string, args []
 	if formattedQuery == "" {
 		return nil, fmt.Errorf("failed to format query %s", query)
 	}
-	queryArgs, err := getArgsFromParams(args, params)
+	queryArgs, err := getArgsFromParams(ctx, args, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1058,7 +1068,10 @@ func getParamsFromNode(node ast.Node) []*ast.ParameterNode {
 	return params
 }
 
-func getArgsFromParams(values []driver.NamedValue, params []*ast.ParameterNode) ([]interface{}, error) {
+func getArgsFromParams(ctx context.Context, values []driver.NamedValue, params []*ast.ParameterNode) ([]interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if values == nil {
 		return nil, nil
 	}
@@ -1093,6 +1106,13 @@ func getArgsFromParams(values []driver.NamedValue, params []*ast.ParameterNode) 
 		} else {
 			namedValues = append(namedValues, values[idx])
 		}
+	}
+	if v, ok := ctx.Value(DisableQueryFormattingKey{}).(bool); ok && v {
+		args := make([]interface{}, 0, argNum)
+		for _, nv := range namedValues {
+			args = append(args, nv.Value)
+		}
+		return args, nil
 	}
 	newNamedValues, err := EncodeNamedValues(namedValues, params)
 	if err != nil {
