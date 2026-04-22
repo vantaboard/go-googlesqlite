@@ -121,6 +121,24 @@ func TestDuckDBTemporalComparisonCoercion(t *testing.T) {
 	}
 }
 
+func TestDuckDBTemporalComparisonCoercionExprDataTwoDateColumns(t *testing.T) {
+	left := NewColumnExpression("EnrollmentDate__54")
+	right := NewColumnExpression("StartDate__10")
+	ld := ExpressionData{
+		Type:   ExpressionTypeColumn,
+		Column: &ColumnRefData{ColumnName: "EnrollmentDate__54", Type: types.DateType()},
+	}
+	rd := ExpressionData{
+		Type:   ExpressionTypeColumn,
+		Column: &ColumnRefData{ColumnName: "StartDate__10", Type: types.DateType()},
+	}
+	l, r := duckDBApplyTemporalComparisonCoercionWithExprData(left, right, ld, rd, ">=")
+	got := NewBinaryExpression(l, ">=", r).String()
+	if !strings.Contains(got, "TRY_CAST(") || strings.Count(got, "TRY_CAST(") < 2 {
+		t.Fatalf("expected TRY_CAST on both DATE-typed column refs, got %q", got)
+	}
+}
+
 func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	// Emulate CAST(col AS DATE) vs a STRING-typed column ref (primitive for optimizer).

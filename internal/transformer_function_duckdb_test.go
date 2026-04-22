@@ -8,7 +8,7 @@ import (
 func TestDuckDBRewrite_getStructField_oneBased(t *testing.T) {
 	s := NewColumnExpression("s", "t")
 	idx := NewLiteralExpression("0")
-	out, ok := duckDBRewriteFunctionCall("googlesqlite_get_struct_field", []*SQLExpression{s, idx}, DuckDBDialect{})
+	out, ok := duckDBRewriteFunctionCall("googlesqlite_get_struct_field", []*SQLExpression{s, idx}, nil, DuckDBDialect{})
 	if !ok {
 		t.Fatal("expected rewrite")
 	}
@@ -28,7 +28,7 @@ func TestDuckDBRewrite_getStructField_namedKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	keyLit := NewLiteralExpression(wire)
-	out, ok := duckDBRewriteFunctionCall("googlesqlite_get_struct_field", []*SQLExpression{s, keyLit}, DuckDBDialect{})
+	out, ok := duckDBRewriteFunctionCall("googlesqlite_get_struct_field", []*SQLExpression{s, keyLit}, nil, DuckDBDialect{})
 	if !ok {
 		t.Fatal("expected rewrite")
 	}
@@ -40,7 +40,7 @@ func TestDuckDBRewrite_getStructField_namedKey(t *testing.T) {
 
 func TestDuckDBRewrite_dateCastAndMakeDate(t *testing.T) {
 	x := NewColumnExpression("x")
-	out1, ok := duckDBRewriteFunctionCall("googlesqlite_date", []*SQLExpression{x}, DuckDBDialect{})
+	out1, ok := duckDBRewriteFunctionCall("googlesqlite_date", []*SQLExpression{x}, nil, DuckDBDialect{})
 	if !ok {
 		t.Fatal("expected rewrite")
 	}
@@ -48,7 +48,7 @@ func TestDuckDBRewrite_dateCastAndMakeDate(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	y, m, d := NewLiteralExpression("2024"), NewLiteralExpression("6"), NewLiteralExpression("15")
-	out3, ok := duckDBRewriteFunctionCall("googlesqlite_date", []*SQLExpression{y, m, d}, DuckDBDialect{})
+	out3, ok := duckDBRewriteFunctionCall("googlesqlite_date", []*SQLExpression{y, m, d}, nil, DuckDBDialect{})
 	if !ok {
 		t.Fatal("expected rewrite")
 	}
