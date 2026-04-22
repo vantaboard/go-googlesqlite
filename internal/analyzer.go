@@ -198,6 +198,23 @@ func (a *Analyzer) parseScript(query string) ([]parsed_ast.StatementNode, error)
 	return stmts, nil
 }
 
+// parsedASTForNodeMap returns the parsed AST to pair with the resolved tree for [googlesql.NewNodeMap].
+// Script parsing records byte offsets in the full query; analysis runs on [stmtQuery] and resolves
+// locations in that substring. Reusing the script parse is only correct when a single top-level
+// statement starts at offset 0 in the query, so resolved and parsed location keys align.
+func (a *Analyzer) parsedASTForNodeMap(stmts []parsed_ast.StatementNode, scriptStmt parsed_ast.StatementNode, stmtQuery string) (parsed_ast.StatementNode, error) {
+	if len(stmts) == 1 {
+		if loc := scriptStmt.ParseLocationRange(); loc != nil && loc.Start() != nil && loc.Start().ByteOffset() == 0 {
+			return scriptStmt, nil
+		}
+	}
+	aligned, err := googlesql.ParseStatement(stmtQuery, a.opt.ParserOptions())
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse statement for analysis alignment: %w", err)
+	}
+	return aligned, nil
+}
+
 func normalizePositionalParameters(query string, parameters []*bigquery.QueryParameter) (string, []*bigquery.QueryParameter) {
 	if !strings.Contains(query, "?") {
 		return query, parameters
@@ -420,9 +437,9 @@ func (a *Analyzer) Analyze(ctx context.Context, conn *Conn, query string, args [
 			if err := validateLiteralCast(stmtQuery); err != nil {
 				return nil, fmt.Errorf("failed to analyze: %w", err)
 			}
-			alignedStmt, err := googlesql.ParseStatement(stmtQuery, a.opt.ParserOptions())
+			parsedForNodeMap, err := a.parsedASTForNodeMap(stmts, stmt, stmtQuery)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse statement for analysis alignment: %w", err)
+				return nil, err
 			}
 			mode, err := a.getParameterMode(stmt)
 			if err != nil {
@@ -434,7 +451,7 @@ func (a *Analyzer) Analyze(ctx context.Context, conn *Conn, query string, args [
 				return nil, fmt.Errorf("failed to analyze: %w", err)
 			}
 			stmtNode := out.Statement()
-			ctx = a.context(ctx, funcMap, stmtNode, alignedStmt)
+			ctx = a.context(ctx, funcMap, stmtNode, parsedForNodeMap)
 			action, err := a.newStmtAction(ctx, query, args, stmtNode)
 			if err != nil {
 				return nil, err

@@ -456,11 +456,31 @@ func (c *Catalog) saveFunctionSpec(ctx context.Context, conn *Conn, spec *Functi
 }
 
 func (c *Catalog) createCatalogTablesIfNotExists(ctx context.Context, conn *Conn) error {
-	if _, err := conn.ExecContext(ctx, createCatalogTableQuery); err != nil {
-		return fmt.Errorf("failed to create catalog table: %w", err)
+	// Re-read the schema each time (no in-memory "already created" flag) so a rolled-back
+	// transaction cannot leave the catalog table missing while we think it exists.
+	var tableCount int
+	if err := conn.QueryRowContext(
+		ctx,
+		`SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'googlesqlite_catalog'`,
+	).Scan(&tableCount); err != nil {
+		return fmt.Errorf("failed to check catalog table: %w", err)
 	}
-	if _, err := conn.ExecContext(ctx, indexCatalogTableQuery); err != nil {
-		return fmt.Errorf("failed to index catalog table: %w", err)
+	if tableCount == 0 {
+		if _, err := conn.ExecContext(ctx, createCatalogTableQuery); err != nil {
+			return fmt.Errorf("failed to create catalog table: %w", err)
+		}
+	}
+	var indexCount int
+	if err := conn.QueryRowContext(
+		ctx,
+		`SELECT COUNT(1) FROM sqlite_master WHERE type = 'index' AND name = 'catalog_last_updated_index'`,
+	).Scan(&indexCount); err != nil {
+		return fmt.Errorf("failed to check catalog index: %w", err)
+	}
+	if indexCount == 0 {
+		if _, err := conn.ExecContext(ctx, indexCatalogTableQuery); err != nil {
+			return fmt.Errorf("failed to index catalog table: %w", err)
+		}
 	}
 	return nil
 }

@@ -6,10 +6,15 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	_ "github.com/vantaboard/go-googlesqlite"
 )
+
+// benchRichCTASTableSeq avoids table name reuse when the benchmark driver re-runs the loop with increasing b.N
+// (same in-memory DB for the whole benchmark function).
+var benchRichCTASTableSeq atomic.Uint64
 
 // benchRichTortoiseSQL matches [bigquery-emulator/server/ctas_engine_harness_test.go] harnessTortoiseRichCTASSQL
 // (single backtick-wrapped table name for an in-memory DB without project.dataset).
@@ -68,8 +73,8 @@ func BenchmarkCTAS_RichTortoiseExec(b *testing.B) {
 	defer func() { _ = db.Close() }()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		tname := fmt.Sprintf("bench_rich_ctas_%d", i)
+	for range b.N {
+		tname := fmt.Sprintf("bench_rich_ctas_%d", benchRichCTASTableSeq.Add(1))
 		_, err := db.ExecContext(ctx, benchRichTortoiseSQL(tname, outer, inner))
 		if err != nil {
 			b.Fatal(err)

@@ -93,12 +93,19 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args ...interface
 	return c.conn.QueryContext(ctx, query, args...)
 }
 
+func (c *Conn) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	if c.tx != nil {
+		return c.tx.QueryRowContext(ctx, query, args...)
+	}
+	return c.conn.QueryRowContext(ctx, query, args...)
+}
+
 func (c *Conn) addTable(spec *TableSpec) {
 	c.removeFromDeletedTablesIfExists(spec)
 	c.cc.Table.Added = append(c.cc.Table.Added, spec)
 }
 
-//nolint: unused
+// nolint: unused
 func (c *Conn) updateTable(spec *TableSpec) {
 	c.cc.Table.Updated = append(c.cc.Table.Updated, spec)
 }
