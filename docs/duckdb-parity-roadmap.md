@@ -19,9 +19,11 @@ This document tracks work to make the **DuckDB** path (`googlesqlduck` driver, [
 
 ## Phase 0 — Definition and gates
 
-- [ ] **Parity definition:** Same GoogleSQL → same *logical* results on SQLite vs DuckDB for an agreed **test corpus** (start with existing `go test` packages + emulator integration tests, then grow).
-- [ ] **CI split:** Default CI stays **SQLite-only**; optional job builds with `duckdb` + `duckdb_use_lib` and a pinned `libduckdb` (or static build if linker allows).
-- [ ] **Failure policy:** Decide whether DuckDB returns a clear “unsupported on this backend” error vs silent wrong results for unimplemented features.
+See **[duckdb-parity-gates.md](duckdb-parity-gates.md)** for the locked parity definition, initial corpus, CI split, and failure policy.
+
+- [x] **Parity definition:** Same GoogleSQL → same *logical* results on SQLite vs DuckDB for an agreed **test corpus** (start with existing `go test` packages + emulator integration tests, then grow).
+- [x] **CI split:** Default CI stays **SQLite-only**; optional job builds with `duckdb` + `duckdb_use_lib` and a pinned `libduckdb` (or static build if linker allows).
+- [x] **Failure policy:** Decide whether DuckDB returns a clear “unsupported on this backend” error vs silent wrong results for unimplemented features.
 
 ---
 
@@ -39,11 +41,11 @@ These files still embed **SQLite-specific** function names, temp table names, or
 
 Checklist:
 
-- [ ] Subquery array: dialect-specific wrapper or inline shape + golden tests.
-- [ ] Array scan / UNNEST: DuckDB-native FROM clause + tests.
-- [ ] Cast: split simple casts to SQL `CAST` vs retain multi-step UDF path on SQLite only.
+- [x] Subquery array: dialect-specific wrapper or inline shape + golden tests.
+- [x] Array scan / UNNEST: DuckDB-native FROM clause + tests.
+- [x] Cast: split simple casts to SQL `CAST` vs retain multi-step UDF path on SQLite only.
 - [ ] MERGE: one documented strategy (native vs temp-table parity with SQLite).
-- [ ] `googlesqlite_group_by`: semantic parity or documented divergence + tests.
+- [x] `googlesqlite_group_by`: semantic parity or documented divergence + tests (DuckDB: omit wrapper; see [`internal/dialect.go`](../internal/dialect.go)).
 
 ---
 
