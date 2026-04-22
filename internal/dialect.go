@@ -122,6 +122,23 @@ var duckDBNativeFunctions = map[string]string{
 	"googlesqlite_strpos": "strpos",
 	"googlesqlite_chr":     "chr",
 	"googlesqlite_ascii":   "ascii",
+	// String family (Phase 2 batch 2)
+	"googlesqlite_starts_with": "starts_with",
+	"googlesqlite_ends_with":   "ends_with",
+	"googlesqlite_left":        "left",
+	"googlesqlite_right":       "right",
+	"googlesqlite_lpad":        "lpad",
+	"googlesqlite_rpad":        "rpad",
+	"googlesqlite_initcap":     "initcap",
+	"googlesqlite_unicode":     "unicode",
+	"googlesqlite_byte_length": "octet_length",
+	// Hash (often used near JSON pipelines)
+	"googlesqlite_md5":    "md5",
+	"googlesqlite_sha1":   "sha1",
+	"googlesqlite_sha256": "sha256",
+	"googlesqlite_sha512": "sha512",
+	// JSON — path/json semantics still differ for some workloads; expand with tests as needed.
+	"googlesqlite_json_extract": "json_extract",
 }
 
 // DuckDBDialect is the GoogleSQL-to-DuckDB codegen target (incremental parity).

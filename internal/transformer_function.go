@@ -205,6 +205,14 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 			}
 		}
 
+		// DuckDB-native rewrites (arity-sensitive or frozen-clock current time). Skip when a window
+		// is attached; OVER on these shapes is rare and needs per-case design.
+		if windowSpec == nil {
+			if rewritten, ok := duckDBRewriteFunctionCall(function.Name, args, ctx.Dialect()); ok {
+				return rewritten, nil
+			}
+		}
+
 		// Fast path optimization: bypass function calls for primitive type operations
 		// Function calls incur huge overheads: as each call's args must be decoded/encoded, as well as
 		// allocated within both the modernc.org/sqlite driver and the go-googlesqlite driver
@@ -362,4 +370,50 @@ func isPrimitiveSQLiteType(expr ExpressionData) bool {
 	default:
 		return false
 	}
+}
+
+// duckDBRewriteFunctionCall returns a DuckDB-native expression for special cases that are not
+// covered by RewriteEmittedFunctionName alone (extra args, frozen clock, or arity-specific INSTR).
+func duckDBRewriteFunctionCall(name string, args []*SQLExpression, d Dialect) (*SQLExpression, bool) {
+	if d == nil || d.ID() != "duckdb" {
+		return nil, false
+	}
+	switch name {
+	case "googlesqlite_parse_json":
+		if len(args) >= 1 {
+			// DuckDB parse_json(string); drop BigQuery optional widen mode when present.
+			return NewFunctionExpression("parse_json", args[0]), true
+		}
+	case "googlesqlite_instr":
+		if len(args) == 2 {
+			return NewFunctionExpression("strpos", args...), true
+		}
+	case "googlesqlite_current_timestamp", "googlesqlite_current_datetime":
+		switch len(args) {
+		case 0:
+			return NewFunctionExpression("current_timestamp"), true
+		case 1:
+			return duckDBToTimestampFromUnixNano(args[0]), true
+		}
+	case "googlesqlite_current_date":
+		switch len(args) {
+		case 0:
+			return NewFunctionExpression("current_date"), true
+		case 1:
+			return NewSQLCastExpression(duckDBToTimestampFromUnixNano(args[0]), "DATE", false), true
+		}
+	case "googlesqlite_current_time":
+		switch len(args) {
+		case 0:
+			return NewFunctionExpression("current_time"), true
+		case 1:
+			return NewSQLCastExpression(duckDBToTimestampFromUnixNano(args[0]), "TIME", false), true
+		}
+	}
+	return nil, false
+}
+
+func duckDBToTimestampFromUnixNano(nanos *SQLExpression) *SQLExpression {
+	sec := NewBinaryExpression(nanos, "/", NewLiteralExpression("1000000000.0"))
+	return NewFunctionExpression("to_timestamp", sec)
 }

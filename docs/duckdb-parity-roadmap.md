@@ -60,15 +60,15 @@ SQLite registers a large UDF set in [`function_register.go`](../internal/functio
 
 Suggested order (high leverage first):
 
-- [ ] **Comparison / logic:** Already optimized to SQL operators in many paths; audit remaining `googlesqlite_*` in [`transformer_function.go`](../internal/transformer_function.go) and window variants (`googlesqlite_window_*` from resolver).
+- [x] **Comparison / logic:** Audited (Phase 2): comparison and boolean ops lower to SQL `=`, `AND`, `IN`, … when [`canOptimizeFunction`](../internal/transformer_function.go) accepts primitive args; MERGE key paths still use `googlesqlite_*` comparators by design; window `googlesqlite_window_*` remains follow-on (see [`duckdb_function_matrix.md`](../internal/duckdb_function_matrix.md) inventory notes).
 - [x] **Strings (batch 1):** low-risk renames (`trim`, `ltrim`, `rtrim`, `concat`, `replace`, `reverse`, `repeat`, `strpos`, `chr`, `ascii`) in [`dialect.go`](../internal/dialect.go); `INSTR` with extra args still uses SQLite UDF until rewritten.
-- [ ] **Strings / bytes / regex (remainder):** map or macro where DuckDB builtins align.
-- [ ] **Date/time:** many paths use UDFs; DuckDB has rich date functions—systematic mapping table + tests.
-- [ ] **JSON:** align with DuckDB `json_*` where possible.
+- [x] **Strings / bytes / regex (batch 2):** DuckDB renames (`starts_with`, `ends_with`, `left`, `right`, `lpad`, `rpad`, `initcap`, `unicode`, `byte_length` → `octet_length`, `md5`/`sha1`/`sha256`/`sha512`); **INSTR** 2-arg → `strpos` rewrite in [`transformer_function.go`](../internal/transformer_function.go); golden + [`transformer_duckdb_rewrites_test.go`](../internal/transformer_duckdb_rewrites_test.go) + [`duckdb_integration_test.go`](../duckdb_integration_test.go) Phase 2 corpus.
+- [x] **Date/time (batch 1):** `CURRENT_TIMESTAMP` / `CURRENT_DATE` / `CURRENT_TIME` DuckDB rewrites (including frozen clock via [`WithCurrentTime`](../context.go) → `to_timestamp`); see matrix + rewrite tests.
+- [x] **JSON (batch 1):** `googlesqlite_json_extract` → `json_extract` rename; `PARSE_JSON` first-arg-only rewrite (optional BigQuery widen mode dropped on DuckDB); dual-backend smoke on `JSON_EXTRACT` + `CAST` in [`duckdb_integration_test.go`](../duckdb_integration_test.go).
 - [ ] **Aggregates / window builtins:** `FunctionSpec.CallSQL` and custom SQLite aggregates—largest gap; consider per-function issues.
 - [ ] **Geography / ML / rare builtins:** lowest priority unless your corpus needs them.
 
-Deliverable: maintain a **single table** (could live in this doc or `internal/duckdb_function_matrix.md`) listing GoogleSQL name → strategy (rename / rewrite / macro / unsupported).
+Deliverable: **`internal/duckdb_function_matrix.md`** is the single strategy table (rename / rewrite / macro / unsupported); this roadmap links to it.
 
 ---
 

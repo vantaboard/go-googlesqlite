@@ -45,13 +45,39 @@ Legend:
 | `googlesqlite_strpos` | `strpos` | rename |
 | `googlesqlite_chr` | `chr` | rename |
 | `googlesqlite_ascii` | `ascii` | rename |
-| `googlesqlite_instr` | — | **rewrite** / SQLite UDF (3–4 arg `INSTR` ≠ single DuckDB builtin) |
+| `googlesqlite_instr` | `strpos` (2-arg only) | **rewrite** in [`transformer_function.go`](transformer_function.go) `duckDBRewriteFunctionCall`; 3–4 arg stays SQLite UDF until mapped |
+| `googlesqlite_starts_with` | `starts_with` | rename |
+| `googlesqlite_ends_with` | `ends_with` | rename |
+| `googlesqlite_left` | `left` | rename |
+| `googlesqlite_right` | `right` | rename |
+| `googlesqlite_lpad` | `lpad` | rename |
+| `googlesqlite_rpad` | `rpad` | rename |
+| `googlesqlite_initcap` | `initcap` | rename |
+| `googlesqlite_unicode` | `unicode` | rename |
+| `googlesqlite_byte_length` | `octet_length` | rename |
+| `googlesqlite_md5` | `md5` | rename |
+| `googlesqlite_sha1` | `sha1` | rename |
+| `googlesqlite_sha256` | `sha256` | rename |
+| `googlesqlite_sha512` | `sha512` | rename |
+| `googlesqlite_json_extract` | `json_extract` | rename (path/typing may differ; test per corpus) |
+| `googlesqlite_parse_json` | `parse_json` | **rewrite** (first arg only; optional BQ widen mode dropped on DuckDB) |
+| `googlesqlite_current_timestamp` / `datetime` | `current_timestamp` / `to_timestamp(nanos/1e9)` | **rewrite** in [`transformer_function.go`](transformer_function.go) |
+| `googlesqlite_current_date` | `current_date` / `CAST(to_timestamp(...) AS DATE)` | **rewrite** |
+| `googlesqlite_current_time` | `current_time` / `CAST(to_timestamp(...) AS TIME)` | **rewrite** |
+
+## Phase 2 inventory notes (emission)
+
+| Area | Where emitted | DuckDB notes |
+|------|---------------|--------------|
+| Comparison / logic (`googlesqlite_equal`, `googlesqlite_and`, …) | Lowered to SQL `=`, `AND`, … when [`canOptimizeFunction`](transformer_function.go) passes (primitive args) | **Phase 2 audit done:** no DuckDB leak on that path; merge/key paths still intentionally use `googlesqlite_*` helpers; window `googlesqlite_window_*` still follow-on |
+| Window builtins | `googlesqlite_window_*` in [`coordinator_extractor.go`](coordinator_extractor.go) | Phase 2 follow-on: per-function |
+| Resolver-registered normal funcs | `googlesqlite_<name>` from [`function_register.go`](function_register.go) | Extend [`duckDBNativeFunctions`](dialect.go) or rewrites only after arity/semantics check |
 
 ## High-priority families (Phase 2 — inventory)
 
 | Family | Typical approach | Notes |
 |--------|------------------|-------|
-| Comparison / logic (`googlesqlite_equal`, `googlesqlite_and`, …) | **rewrite** (often already SQL operators via `transformer_function.go`) | Audit residuals |
+| Comparison / logic (`googlesqlite_equal`, `googlesqlite_and`, …) | **rewrite** (often already SQL operators via `transformer_function.go`) | Audited; residuals only in merge keys / windows (see inventory notes above) |
 | Strings / bytes / regex | **rename** or **rewrite** | Per-function semantics check |
 | Date/time | **rewrite** / **macro** | Map to DuckDB date functions |
 | JSON | **rewrite** | DuckDB `json_*` |

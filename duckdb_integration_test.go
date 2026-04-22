@@ -144,6 +144,63 @@ SELECT id, name FROM ddl_corpus_t ORDER BY id;
 	}
 }
 
+func TestDualBackend_phase2FunctionSurface(t *testing.T) {
+	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
+
+	cases := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "instr_two_arg",
+			sql:  "SELECT INSTR('foobar', 'bar') AS p ORDER BY p",
+		},
+		{
+			name: "starts_with_as_int64",
+			sql:  "SELECT CAST(STARTS_WITH('abc', 'ab') AS INT64) AS v ORDER BY v",
+		},
+		{
+			name: "md5_hex",
+			sql:  "SELECT MD5('x') AS h ORDER BY h",
+		},
+		{
+			name: "byte_length",
+			sql:  "SELECT BYTE_LENGTH('ab') AS n ORDER BY n",
+		},
+		{
+			name: "current_timestamp_extract_ymd",
+			sql:  "SELECT EXTRACT(YEAR FROM CURRENT_TIMESTAMP()) AS y, EXTRACT(MONTH FROM CURRENT_TIMESTAMP()) AS m, EXTRACT(DAY FROM CURRENT_TIMESTAMP()) AS d ORDER BY y, m, d",
+		},
+		{
+			name: "json_extract_scalar_cast",
+			sql:  "SELECT CAST(JSON_EXTRACT(JSON '{\"a\":7}', '$.a') AS INT64) AS v ORDER BY v",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sqliteDSN := fmt.Sprintf("file:phase2_%d?mode=memory&cache=private", atomic.AddUint64(&duckDualBackendMemCounter, 1))
+			sqliteDB, err := sql.Open("googlesqlite", sqliteDSN)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = sqliteDB.Close() })
+
+			duckPath := filepath.Join(t.TempDir(), "phase2.duckdb")
+			duckDB, err := sql.Open("googlesqlduck", duckPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = duckDB.Close() })
+
+			a := queryAll(t, sqliteDB, ctx, tc.sql)
+			b := queryAll(t, duckDB, ctx, tc.sql)
+			if !reflect.DeepEqual(normalizeRows(a), normalizeRows(b)) {
+				t.Fatalf("sqlite=%v duckdb=%v", a, b)
+			}
+		})
+	}
+}
+
 // normalizeRows stringifies values so int64 vs int driver differences still compare equal for simple literals.
 func normalizeRows(rows [][]interface{}) [][]string {
 	if rows == nil {

@@ -57,6 +57,79 @@ func TestDialectGolden_emitStringBuiltinRenames(t *testing.T) {
 	}
 }
 
+func TestDialectGolden_emitPhase2StringAndHashRenames(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	ctx := context.Background()
+	for _, tc := range []struct {
+		fnName     string
+		args       []ExpressionData
+		sqliteNeed string
+		duckNeed   string
+	}{
+		{
+			fnName: "googlesqlite_starts_with",
+			args: []ExpressionData{
+				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("abc")}},
+				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("a")}},
+			},
+			sqliteNeed: "googlesqlite_starts_with(",
+			duckNeed:   "starts_with(",
+		},
+		{
+			fnName: "googlesqlite_left",
+			args: []ExpressionData{
+				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("abcd")}},
+				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(2)}},
+			},
+			sqliteNeed: "googlesqlite_left(",
+			duckNeed:   "left(",
+		},
+		{
+			fnName: "googlesqlite_byte_length",
+			args: []ExpressionData{
+				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("x")}},
+			},
+			sqliteNeed: "googlesqlite_byte_length(",
+			duckNeed:   "octet_length(",
+		},
+		{
+			fnName: "googlesqlite_md5",
+			args: []ExpressionData{
+				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("x")}},
+			},
+			sqliteNeed: "googlesqlite_md5(",
+			duckNeed:   "md5(",
+		},
+	} {
+		t.Run(tc.fnName, func(t *testing.T) {
+			fn := NewFunctionCallExpressionData(tc.fnName, tc.args...)
+			for _, pair := range []struct {
+				name    string
+				dialect Dialect
+				substr  string
+			}{
+				{"sqlite", SQLiteDialect{}, tc.sqliteNeed},
+				{"duckdb", DuckDBDialect{}, tc.duckNeed},
+			} {
+				t.Run(pair.name, func(t *testing.T) {
+					cfg := DefaultTransformConfig()
+					cfg.Dialect = pair.dialect
+					factory := NewQueryTransformFactory(cfg, coord)
+					tctx := factory.CreateTransformContext(ctx)
+					expr, err := coord.TransformExpression(fn, tctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					got := expr.String()
+					if !strings.Contains(got, pair.substr) {
+						t.Fatalf("got %q, want substring %q", got, pair.substr)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestDialectGolden_emitFunctionNameLength(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	// String literal argument for LENGTH(...)
