@@ -232,7 +232,14 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 		// allocated within both the modernc.org/sqlite driver and the go-googlesqlite driver
 		// This could happen potentially hundreds of thousands of times per query in the case of complex JOINs
 		if canOptimizeFunction(function) {
-			return optimizeFunctionToSQL(function.Name, args)
+			e, err := optimizeFunctionToSQL(function.Name, args)
+			if err != nil {
+				return nil, err
+			}
+			if ctx.Dialect() != nil && ctx.Dialect().ID() == "duckdb" {
+				return duckDBCoerceTemporalComparisons(e), nil
+			}
+			return e, nil
 		}
 
 		funcMap := funcMapFromContext(ctx.Context())
@@ -262,6 +269,100 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 	}
 }
 
+// duckDBComparisonOps is the set of binary operators emitted from googlesqlite_* comparators
+// that require homogeneous temporal types in DuckDB (physical VARCHAR vs CAST DATE, etc.).
+var duckDBComparisonOps = map[string]struct{}{
+	"=": {}, "!=": {}, "<": {}, ">": {}, "<=": {}, ">=": {},
+	"IS NOT DISTINCT FROM": {}, "IS DISTINCT FROM": {},
+}
+
+func isDuckDBComparisonOperator(op string) bool {
+	_, ok := duckDBComparisonOps[op]
+	return ok
+}
+
+func duckDBExprIsList(e *SQLExpression) bool {
+	return e != nil && e.Type == ExpressionTypeList && e.ListExpression != nil
+}
+
+// duckDBExprTemporalCastTarget reports whether expr is CAST/TRY_CAST to a temporal scalar type
+// and returns the DuckDB type name to use for TRY_CAST on the other side of a comparison.
+func duckDBExprTemporalCastTarget(e *SQLExpression) (target string, ok bool) {
+	if e == nil || e.Type != ExpressionTypeCast || e.Cast == nil {
+		return "", false
+	}
+	t := strings.ToUpper(strings.TrimSpace(e.Cast.TargetType))
+	switch t {
+	case "DATE", "TIME", "TIMESTAMP", "TIMESTAMPTZ", "DATETIME":
+		if t == "DATETIME" {
+			return "TIMESTAMP", true
+		}
+		return t, true
+	default:
+		return "", false
+	}
+}
+
+// duckDBApplyTemporalComparisonCoercion wraps the non-cast side with TRY_CAST when exactly one
+// operand is already a temporal CAST/TRY_CAST. Skips when the other side is an IN-list.
+func duckDBApplyTemporalComparisonCoercion(left, right *SQLExpression, op string) (*SQLExpression, *SQLExpression) {
+	if !isDuckDBComparisonOperator(op) {
+		return left, right
+	}
+	lt, lok := duckDBExprTemporalCastTarget(left)
+	rt, rok := duckDBExprTemporalCastTarget(right)
+	if lok && !rok && !duckDBExprIsList(right) {
+		right = NewSQLCastExpression(right, lt, true)
+	} else if rok && !lok && !duckDBExprIsList(left) {
+		left = NewSQLCastExpression(left, rt, true)
+	}
+	return left, right
+}
+
+// duckDBCoerceTemporalComparisons walks AND/OR/NOT and comparison nodes so DuckDB sees
+// TRY_CAST on VARCHAR operands paired with CAST(... AS DATE/TIMESTAMP/...).
+func duckDBCoerceTemporalComparisons(e *SQLExpression) *SQLExpression {
+	if e == nil {
+		return nil
+	}
+	switch e.Type {
+	case ExpressionTypeBinary:
+		if e.BinaryExpression == nil {
+			return e
+		}
+		be := e.BinaryExpression
+		switch be.Operator {
+		case "AND", "OR":
+			return NewBinaryExpression(
+				duckDBCoerceTemporalComparisons(be.Left),
+				be.Operator,
+				duckDBCoerceTemporalComparisons(be.Right),
+			)
+		default:
+			if isDuckDBComparisonOperator(be.Operator) {
+				l := duckDBCoerceTemporalComparisons(be.Left)
+				r := duckDBCoerceTemporalComparisons(be.Right)
+				l, r = duckDBApplyTemporalComparisonCoercion(l, r, be.Operator)
+				return NewBinaryExpression(l, be.Operator, r)
+			}
+			return NewBinaryExpression(
+				duckDBCoerceTemporalComparisons(be.Left),
+				be.Operator,
+				duckDBCoerceTemporalComparisons(be.Right),
+			)
+		}
+	case ExpressionTypeUnary:
+		if e.UnaryExpression == nil {
+			return e
+		}
+		ue := *e.UnaryExpression
+		ue.Expression = duckDBCoerceTemporalComparisons(e.UnaryExpression.Expression)
+		return &SQLExpression{Type: ExpressionTypeUnary, UnaryExpression: &ue}
+	default:
+		return e
+	}
+}
+
 // duckDBOptimizeComparatorOrLogical maps googlesqlite_* helpers to native SQL operators for DuckDB
 // without requiring primitive-only arguments (see canOptimizeFunction).
 func duckDBOptimizeComparatorOrLogical(name string, args []*SQLExpression) (*SQLExpression, bool) {
@@ -271,19 +372,28 @@ func duckDBOptimizeComparatorOrLogical(name string, args []*SQLExpression) (*SQL
 			return nil, false
 		}
 		e, err := optimizeFunctionToSQL(name, args)
-		return e, err == nil
+		if err != nil {
+			return nil, false
+		}
+		return duckDBCoerceTemporalComparisons(e), true
 	case "googlesqlite_not":
 		if len(args) != 1 {
 			return nil, false
 		}
 		e, err := optimizeFunctionToSQL(name, args)
-		return e, err == nil
+		if err != nil {
+			return nil, false
+		}
+		return duckDBCoerceTemporalComparisons(e), true
 	case "googlesqlite_in":
 		if len(args) < 2 {
 			return nil, false
 		}
 		e, err := optimizeFunctionToSQL(name, args)
-		return e, err == nil
+		if err != nil {
+			return nil, false
+		}
+		return duckDBCoerceTemporalComparisons(e), true
 	default:
 		if _, found := functionToOperator[name]; !found {
 			return nil, false
@@ -292,7 +402,10 @@ func duckDBOptimizeComparatorOrLogical(name string, args []*SQLExpression) (*SQL
 			return nil, false
 		}
 		e, err := optimizeFunctionToSQL(name, args)
-		return e, err == nil
+		if err != nil {
+			return nil, false
+		}
+		return duckDBCoerceTemporalComparisons(e), true
 	}
 }
 
@@ -429,11 +542,11 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, d Dialect) (*
 	switch name {
 	case "googlesqlite_equal":
 		if len(args) == 2 {
-			return NewBinaryExpression(args[0], "=", args[1]), true
+			return duckDBCoerceTemporalComparisons(NewBinaryExpression(args[0], "=", args[1])), true
 		}
 	case "googlesqlite_is_not_distinct_from":
 		if len(args) == 2 {
-			return NewBinaryExpression(args[0], "IS NOT DISTINCT FROM", args[1]), true
+			return duckDBCoerceTemporalComparisons(NewBinaryExpression(args[0], "IS NOT DISTINCT FROM", args[1])), true
 		}
 	case "googlesqlite_add", "googlesqlite_safe_add":
 		if len(args) == 2 {
@@ -496,8 +609,8 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, d Dialect) (*
 	case "googlesqlite_between":
 		if len(args) == 3 {
 			// Matches runtime BETWEEN (bindBetween): inclusive bounds; any NULL arg -> NULL via SQL 3VL.
-			ge := NewBinaryExpression(args[0], ">=", args[1])
-			le := NewBinaryExpression(args[0], "<=", args[2])
+			ge := duckDBCoerceTemporalComparisons(NewBinaryExpression(args[0], ">=", args[1]))
+			le := duckDBCoerceTemporalComparisons(NewBinaryExpression(args[0], "<=", args[2]))
 			return NewBinaryExpression(ge, "AND", le), true
 		}
 	case "googlesqlite_get_struct_field":

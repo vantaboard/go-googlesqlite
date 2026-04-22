@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/vantaboard/go-googlesql/types"
 )
 
 func TestTransformDuckDB_frozenClockCurrentTimestamp(t *testing.T) {
@@ -106,5 +108,56 @@ func TestTransformDuckDB_parseJsonFirstArgOnly(t *testing.T) {
 	got := expr.String()
 	if !strings.Contains(got, "CAST(") || !strings.Contains(got, " AS JSON)") || strings.Contains(got, "wide_padding_mode") {
 		t.Fatalf("expected CAST(... AS JSON) with single arg, got %q", got)
+	}
+}
+
+func TestDuckDBTemporalComparisonCoercion(t *testing.T) {
+	castDate := NewSQLCastExpression(NewColumnExpression("enrollmentDate"), "DATE", false)
+	startCol := NewColumnExpression("startDate")
+	raw := NewBinaryExpression(castDate, ">=", startCol)
+	got := duckDBCoerceTemporalComparisons(raw).String()
+	if !strings.Contains(got, "TRY_CAST(") || !strings.Contains(got, " AS DATE)") {
+		t.Fatalf("expected TRY_CAST on VARCHAR side for DATE comparison, got %q", got)
+	}
+}
+
+func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	// Emulate CAST(col AS DATE) vs a STRING-typed column ref (primitive for optimizer).
+	castArg := ExpressionData{
+		Type: ExpressionTypeCast,
+		Cast: &CastData{
+			FromType:        types.StringType(),
+			ToType:          types.DateType(),
+			ReturnNullOnErr: false,
+			SafeCast:        false,
+			Expression: ExpressionData{
+				Type: ExpressionTypeColumn,
+				Column: &ColumnRefData{
+					ColumnName: "x",
+					Type:       types.StringType(),
+				},
+			},
+		},
+	}
+	colArg := ExpressionData{
+		Type: ExpressionTypeColumn,
+		Column: &ColumnRefData{
+			ColumnName: "y",
+			Type:       types.StringType(),
+		},
+	}
+	fn := NewFunctionCallExpressionData("googlesqlite_greater_or_equal", castArg, colArg)
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	expr, err := coord.TransformExpression(fn, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if !strings.Contains(got, "TRY_CAST(") || !strings.Contains(got, " AS DATE)") {
+		t.Fatalf("expected TRY_CAST for mixed DATE cast vs VARCHAR column, got %q", got)
 	}
 }
