@@ -22,7 +22,7 @@ Legend:
 | GROUP BY keys | `googlesqlite_group_by(expr)` | raw expression | **rewrite** (done) |
 | Scalar CAST (simple types) | `googlesqlite_cast(...)` | `CAST` / `TRY_CAST` | **native-cast** (done for mapped kinds) |
 | CAST complex types | `googlesqlite_cast` | **unsupported** (error until mapped) | pending |
-| MERGE rewrite | temp tables + SQLite helpers | TBD | **unsupported** / TBD |
+| MERGE simulation | `CREATE TABLE` scratch + multi-statement + `googlesqlite_*` key preds | Same rewrite; scratch = **`CREATE TEMP TABLE`** on DuckDB via dialect | **structural** (done) |
 
 ## Renames (`duckDBNativeFunctions`)
 
@@ -34,6 +34,17 @@ Legend:
 | `googlesqlite_lower` | `lower` | rename |
 | `googlesqlite_upper` | `upper` | rename |
 | `googlesqlite_substr` | `substr` | rename |
+| `googlesqlite_trim` | `trim` | rename |
+| `googlesqlite_ltrim` | `ltrim` | rename |
+| `googlesqlite_rtrim` | `rtrim` | rename |
+| `googlesqlite_concat` | `concat` | rename |
+| `googlesqlite_replace` | `replace` | rename |
+| `googlesqlite_reverse` | `reverse` | rename |
+| `googlesqlite_repeat` | `repeat` | rename |
+| `googlesqlite_strpos` | `strpos` | rename |
+| `googlesqlite_chr` | `chr` | rename |
+| `googlesqlite_ascii` | `ascii` | rename |
+| `googlesqlite_instr` | — | **rewrite** / SQLite UDF (3–4 arg `INSTR` ≠ single DuckDB builtin) |
 
 ## High-priority families (Phase 2 — inventory)
 

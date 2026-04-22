@@ -5,6 +5,12 @@ This document locks the **parity contract**, **minimum test corpus**, **CI shape
 ## Parity definition
 
 - **In scope:** For an agreed **GoogleSQL corpus**, the same input must yield **logically equivalent results** on `googlesqlite` (SQLite) and `googlesqlduck` (DuckDB): same row counts and column values under a defined comparison order (see dual-backend tests).
+
+### Comparison order
+
+- Dual-backend tests compare row sets as **ordered sequences** after normalizing cell values to strings (see [`duckdb_integration_test.go`](../duckdb_integration_test.go)).
+- **When order is not guaranteed** by the engine or the GoogleSQL text, the corpus query must end with an **`ORDER BY`** (or a deterministic key) so parity failures are not conflated with benign reordering.
+- Aggregations without `ORDER BY` in the outer query are acceptable only when the expected result is a **single row**.
 - **Out of scope for “parity” claims:** Byte-identical emitted SQL text between backends.
 - **Initial corpus (grow over time):**
   - All `go test` packages in this module (SQLite default tags).
@@ -19,6 +25,7 @@ This document locks the **parity contract**, **minimum test corpus**, **CI shape
   - Build tags: append `duckdb` and `duckdb_use_lib` to the stack tags.
   - Host env: `DUCKDB_LIB_DIR` must point at the directory containing `libduckdb.so` / `libduckdb.dylib`, plus `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` as in the Taskfile.
   - CI should pin a **DuckDB library version** when this job is enabled (exact pinning is org-specific; record the version in CI config or this doc when enabled).
+  - **Pinned version (record when the optional job is turned on):** _not enabled in default CI yet — when adding the job, set e.g. `DUCKDB_VERSION=1.x.y` in the workflow and paste the same value here for reproducibility._
 
 ## Failure policy (unsupported vs wrong answers)
 

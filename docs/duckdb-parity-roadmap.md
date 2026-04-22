@@ -7,7 +7,7 @@ This document tracks work to make the **DuckDB** path (`googlesqlduck` driver, [
 - **Plumbing:** [`SQLBackend`](../internal/backend.go), [`CatalogRepository`](../internal/catalog_repository.go) (SQLite vs DuckDB DDL for metadata), [`driver_duckdb.go`](../driver_duckdb.go) (`//go:build duckdb`), optional **dynamic link** via [`task test:duckdb-lib`](../Taskfile.yml) and `duckdb_use_lib` (see [duckdb-go linking](https://github.com/duckdb/duckdb-go#linking-duckdb)).
 - **Dialect:** [`WindowPartitionCollation`](../internal/dialect.go), [`RewriteEmittedFunctionName`](../internal/dialect.go), [`ApplySortCollation`](../internal/dialect.go) wired through window / ORDER BY / aggregate ordering paths.
 - **Golden tests:** [`internal/dialect_golden_test.go`](../internal/dialect_golden_test.go) (collation + a few function renames).
-- **Small DuckDB rename map:** `length`, `abs`, `lower`, `upper`, `substr`, `char_length` in [`dialect.go`](../internal/dialect.go).
+- **DuckDB rename map:** `length`, `abs`, `lower`, `upper`, `substr`, `char_length`, plus common string builtins (`trim`, `concat`, `replace`, …) in [`dialect.go`](../internal/dialect.go); see [`duckdb_function_matrix.md`](../internal/duckdb_function_matrix.md).
 
 ## How to use this roadmap
 
@@ -36,7 +36,7 @@ These files still embed **SQLite-specific** function names, temp table names, or
 | Array subquery wrap | [`transformer_subquery.go`](../internal/transformer_subquery.go) (`googlesqlite_array`) | DuckDB may need `LIST` / `ARRAY` / subquery shape different from SQLite UDF. |
 | UNNEST / `json_each` | [`transformer_scan_array.go`](../internal/transformer_scan_array.go) (`googlesqlite_decode_array`) | Likely native `UNNEST` or list functions in DuckDB. |
 | Complex casts | [`transformer_cast.go`](../internal/transformer_cast.go) (`googlesqlite_cast`) | Map to DuckDB `CAST` / `TRY_CAST` where possible; keep SQLite UDF where not. |
-| MERGE temp pattern | [`transformer_stmt_merge.go`](../internal/transformer_stmt_merge.go) (`googlesqlite_merged_table`, `googlesqlite_and`, key comparisons) | May need DuckDB `MERGE` or alternate rewrite; table name + predicate shape. |
+| MERGE simulation | [`transformer_stmt_merge.go`](../internal/transformer_stmt_merge.go) | **Dialect:** scratch table name + `CREATE TEMP TABLE … AS` on DuckDB (session-local); SQLite keeps plain `CREATE TABLE … AS`. Same multi-statement rewrite as SQLite; native `MERGE INTO` deferred. |
 | GROUP BY wrapper | [`transformer_scan_aggregate.go`](../internal/transformer_scan_aggregate.go) (`googlesqlite_group_by`) | GoogleSQL semantics vs DuckDB `GROUP BY`; may require expression rewrite, not only rename. |
 
 Checklist:
@@ -44,7 +44,7 @@ Checklist:
 - [x] Subquery array: dialect-specific wrapper or inline shape + golden tests.
 - [x] Array scan / UNNEST: DuckDB-native FROM clause + tests.
 - [x] Cast: split simple casts to SQL `CAST` vs retain multi-step UDF path on SQLite only.
-- [ ] MERGE: one documented strategy (native vs temp-table parity with SQLite).
+- [x] MERGE: temp-table simulation aligned with SQLite; DuckDB uses `CREATE TEMP TABLE` for the scratch table via [`Dialect`](../internal/dialect.go) (`MergeTempTableName`, `MergeScratchTableIsTemporary`).
 - [x] `googlesqlite_group_by`: semantic parity or documented divergence + tests (DuckDB: omit wrapper; see [`internal/dialect.go`](../internal/dialect.go)).
 
 ---
@@ -61,7 +61,8 @@ SQLite registers a large UDF set in [`function_register.go`](../internal/functio
 Suggested order (high leverage first):
 
 - [ ] **Comparison / logic:** Already optimized to SQL operators in many paths; audit remaining `googlesqlite_*` in [`transformer_function.go`](../internal/transformer_function.go) and window variants (`googlesqlite_window_*` from resolver).
-- [ ] **Strings / bytes / regex:** map or macro where DuckDB builtins align.
+- [x] **Strings (batch 1):** low-risk renames (`trim`, `ltrim`, `rtrim`, `concat`, `replace`, `reverse`, `repeat`, `strpos`, `chr`, `ascii`) in [`dialect.go`](../internal/dialect.go); `INSTR` with extra args still uses SQLite UDF until rewritten.
+- [ ] **Strings / bytes / regex (remainder):** map or macro where DuckDB builtins align.
 - [ ] **Date/time:** many paths use UDFs; DuckDB has rich date functions—systematic mapping table + tests.
 - [ ] **JSON:** align with DuckDB `json_*` where possible.
 - [ ] **Aggregates / window builtins:** `FunctionSpec.CallSQL` and custom SQLite aggregates—largest gap; consider per-function issues.
@@ -73,6 +74,8 @@ Deliverable: maintain a **single table** (could live in this doc or `internal/du
 
 ## Phase 3 — DDL, types, and catalog
 
+Planning note: [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.md).
+
 - [ ] **CREATE TABLE / CTAS / views:** column types in emitted DDL (SQLite `STRING` vs DuckDB `VARCHAR`, timestamps, decimals, arrays, structs).
 - [ ] **Catalog persistence:** [`catalog_repository.go`](../internal/catalog_repository.go) already split; re-validate every migration path (constraints, indexes).
 - [ ] **Temp tables / session:** semantics vs BigQuery emulator expectations.
@@ -80,6 +83,8 @@ Deliverable: maintain a **single table** (could live in this doc or `internal/du
 ---
 
 ## Phase 4 — Runtime and integration
+
+Planning note: [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.md).
 
 - [ ] **Parameters:** confirm named / positional binding parity with DuckDB driver.
 - [ ] **Transactions:** `BEGIN` / `COMMIT` paths through [`driver.go`](../driver.go) / `googlesqlduck`.
@@ -91,7 +96,7 @@ Deliverable: maintain a **single table** (could live in this doc or `internal/du
 ## Phase 5 — Verification toward “100%”
 
 - [ ] **Expand golden tests:** one file per concern or table-driven corpus under `internal/` (SQL text) + optional `testdata/`.
-- [ ] **Dual-backend integration tests:** same GoogleSQL file → run on `googlesqlite` and `googlesqlduck`, compare rows (allow ordered comparison rules).
+- [x] **Dual-backend integration tests (starter corpus):** [`duckdb_integration_test.go`](../duckdb_integration_test.go) (`//go:build duckdb && duckdb_use_lib`) — Phase 1 surfaces + strings; comparison rules in [duckdb-parity-gates.md](duckdb-parity-gates.md).
 - [ ] **Performance / OOM:** large CTAS / analytics workloads (original motivation); track separately from correctness parity.
 
 ---

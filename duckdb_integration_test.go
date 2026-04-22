@@ -1,17 +1,24 @@
 //go:build duckdb && duckdb_use_lib
 
+// Dual-backend tests run the same GoogleSQL through googlesqlite (SQLite) and googlesqlduck (DuckDB).
+// Use ORDER BY when row order is part of the contract; see docs/duckdb-parity-gates.md.
+
 package googlesqlite_test
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	googlesqlite "github.com/vantaboard/go-googlesqlite"
 )
+
+var duckDualBackendMemCounter uint64
 
 func TestGooglesqlduckOpenAndSimpleQuery(t *testing.T) {
 	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
@@ -59,29 +66,69 @@ func queryAll(t *testing.T, db *sql.DB, ctx context.Context, q string) [][]inter
 	return out
 }
 
-func TestDualBackend_paritySampleQueries(t *testing.T) {
+func TestDualBackend_phase1Corpus(t *testing.T) {
 	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
 
-	sqliteDB, err := sql.Open("googlesqlite", "")
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "select_literal",
+			sql:  "SELECT 1 AS x",
+		},
+		{
+			name: "cast_string",
+			sql:  "SELECT CAST(42 AS STRING) AS s",
+		},
+		{
+			name: "unnest_ordered",
+			sql:  "SELECT val FROM UNNEST([1, 2, 3]) AS val ORDER BY val",
+		},
+		{
+			name: "trim",
+			sql:  "SELECT TRIM('  x  ') AS t",
+		},
+		{
+			name: "concat",
+			sql:  "SELECT CONCAT('a', 'b') AS c",
+		},
+		{
+			name: "strpos",
+			sql:  "SELECT STRPOS('abc', 'b') AS p",
+		},
+		{
+			name: "merge_matched_and_insert",
+			sql: `
+CREATE TEMP TABLE target(id INT64, name STRING);
+CREATE TEMP TABLE source(id INT64, name STRING);
+INSERT INTO target(id, name) VALUES (1, 'old');
+INSERT INTO source(id, name) VALUES (1, 'new'), (2, 'only_source');
+MERGE target T USING source S ON T.id = S.id
+WHEN MATCHED THEN UPDATE SET name = S.name
+WHEN NOT MATCHED BY TARGET THEN INSERT (id, name) VALUES (id, name);
+SELECT id, name FROM target ORDER BY id;
+`,
+		},
 	}
-	t.Cleanup(func() { _ = sqliteDB.Close() })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sqliteDSN := fmt.Sprintf("file:phase1_%d?mode=memory&cache=private", atomic.AddUint64(&duckDualBackendMemCounter, 1))
+			sqliteDB, err := sql.Open("googlesqlite", sqliteDSN)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = sqliteDB.Close() })
 
-	duckDB, err := sql.Open("googlesqlduck", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = duckDB.Close() })
+			duckPath := filepath.Join(t.TempDir(), "corpus.duckdb")
+			duckDB, err := sql.Open("googlesqlduck", duckPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = duckDB.Close() })
 
-	cases := []string{
-		"SELECT 1 AS x",
-		"SELECT CAST(42 AS STRING) AS s",
-	}
-	for _, q := range cases {
-		t.Run(q, func(t *testing.T) {
-			a := queryAll(t, sqliteDB, ctx, q)
-			b := queryAll(t, duckDB, ctx, q)
+			a := queryAll(t, sqliteDB, ctx, tc.sql)
+			b := queryAll(t, duckDB, ctx, tc.sql)
 			if !reflect.DeepEqual(normalizeRows(a), normalizeRows(b)) {
 				t.Fatalf("sqlite=%v duckdb=%v", a, b)
 			}
