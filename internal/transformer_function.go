@@ -329,6 +329,38 @@ func duckDBExpressionDataTemporalTarget(d ExpressionData) (string, bool) {
 	}
 }
 
+// duckDBIntervalExpressionData reports whether d is logically an INTERVAL (no temporal cast for date_part).
+func duckDBIntervalExpressionData(d ExpressionData) bool {
+	switch d.Type {
+	case ExpressionTypeColumn:
+		return d.Column != nil && d.Column.Type != nil && d.Column.Type.IsInterval()
+	case ExpressionTypeCast:
+		return d.Cast != nil && d.Cast.ToType != nil && d.Cast.ToType.IsInterval()
+	default:
+		return false
+	}
+}
+
+// duckDBWrapExprForDuckDBDatePart casts VARCHAR-backed GoogleSQL temporals so DuckDB date_part
+// sees DATE / TIMESTAMP / TIME (DuckDB has no date_part(..., VARCHAR)).
+func duckDBWrapExprForDuckDBDatePart(src *SQLExpression, srcMeta ExpressionData, duckPart string) *SQLExpression {
+	if duckDBIntervalExpressionData(srcMeta) {
+		return src
+	}
+	if castTo, ok := duckDBExpressionDataTemporalTarget(srcMeta); ok {
+		return NewSQLCastExpression(src, castTo, true)
+	}
+	// Unknown static type (still often VARCHAR in DuckDB storage): pick a TRY_CAST target from part.
+	switch strings.ToLower(strings.TrimSpace(duckPart)) {
+	case "year", "month", "day", "quarter", "dow", "doy", "week", "isoweek", "isoyear":
+		return NewSQLCastExpression(src, "DATE", true)
+	case "hour", "minute", "second", "milliseconds", "microseconds":
+		return NewSQLCastExpression(src, "TIMESTAMP", true)
+	default:
+		return NewSQLCastExpression(src, "TIMESTAMP", true)
+	}
+}
+
 func expressionDataIsIntegralFamily(d ExpressionData) bool {
 	if d.Type != ExpressionTypeColumn || d.Column == nil || d.Column.Type == nil {
 		return false
@@ -728,6 +760,9 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 				}
 			}
 			partLit := "'" + strings.ReplaceAll(duckPart, "'", "''") + "'"
+			if len(argData) >= 1 {
+				srcExpr = duckDBWrapExprForDuckDBDatePart(srcExpr, argData[0], duckPart)
+			}
 			return NewFunctionExpression("date_part", NewLiteralExpression(partLit), srcExpr), true
 		}
 	case "googlesqlite_parse_json":

@@ -180,6 +180,34 @@ func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
 	}
 }
 
+func TestTransformDuckDB_extractYearCastsDateColumnForDatePart(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	colED := ExpressionData{
+		Type:   ExpressionTypeColumn,
+		Column: &ColumnRefData{ColumnName: "StartDate__15", Type: types.DateType()},
+	}
+	yearED := ExpressionData{
+		Type:    ExpressionTypeLiteral,
+		Literal: &LiteralData{Value: StringValue("YEAR")},
+	}
+	fn := NewFunctionCallExpressionData("googlesqlite_extract", colED, yearED)
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	expr, err := coord.TransformExpression(fn, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if !strings.Contains(got, "date_part(") {
+		t.Fatalf("expected date_part, got %q", got)
+	}
+	if !strings.Contains(got, "TRY_CAST(") || !strings.Contains(got, " AS DATE)") {
+		t.Fatalf("expected TRY_CAST ... AS DATE for VARCHAR-backed DATE column, got %q", got)
+	}
+}
+
 func TestTransformDuckDB_generateArrayToRange(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	fn := NewFunctionCallExpressionData("googlesqlite_generate_array",
