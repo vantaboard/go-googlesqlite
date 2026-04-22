@@ -21,6 +21,23 @@ func TestDuckDBRewrite_getStructField_oneBased(t *testing.T) {
 	}
 }
 
+func TestDuckDBRewrite_getStructField_namedKey(t *testing.T) {
+	s := NewColumnExpression("y", "t")
+	wire, err := LiteralFromValue(StringValue("enrollmentDate"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyLit := NewLiteralExpression(wire)
+	out, ok := duckDBRewriteFunctionCall("googlesqlite_get_struct_field", []*SQLExpression{s, keyLit}, DuckDBDialect{})
+	if !ok {
+		t.Fatal("expected rewrite")
+	}
+	got := out.String()
+	if !strings.Contains(got, "struct_extract(") || !strings.Contains(got, "'enrollmentDate'") {
+		t.Fatalf("expected struct_extract(..., 'enrollmentDate'), got %q", got)
+	}
+}
+
 func TestDuckDBRewrite_dateCastAndMakeDate(t *testing.T) {
 	x := NewColumnExpression("x")
 	out1, ok := duckDBRewriteFunctionCall("googlesqlite_date", []*SQLExpression{x}, DuckDBDialect{})

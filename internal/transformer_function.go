@@ -502,11 +502,16 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, d Dialect) (*
 		}
 	case "googlesqlite_get_struct_field":
 		if len(args) == 2 {
+			// Named STRUCT: second arg is a string field key (see extractGetStructFieldData for DuckDB).
+			if key, ok := googlesqliteWireStringArg(args[1]); ok {
+				esc := strings.ReplaceAll(key, "'", "''")
+				return NewFunctionExpression("struct_extract", args[0], NewLiteralExpression("'"+esc+"'")), true
+			}
 			idx, ok := googlesqliteWireIntArg(args[1])
 			if !ok || idx < 0 {
 				break
 			}
-			// GoogleSQL field index is 0-based; DuckDB struct_extract index form is 1-based (tuple fields).
+			// Anonymous tuple: GoogleSQL field index is 0-based; DuckDB struct_extract index form is 1-based.
 			duck1 := idx + 1
 			return NewFunctionExpression("struct_extract", args[0], NewLiteralExpression(strconv.FormatInt(duck1, 10))), true
 		}

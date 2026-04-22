@@ -404,11 +404,28 @@ func bindStructField(args ...Value) (Value, error) {
 	if existsNull(args) {
 		return nil, nil
 	}
-	i64, err := args[1].ToInt64()
+	if len(args) != 2 {
+		return nil, fmt.Errorf("get_struct_field: expected 2 arguments, got %d", len(args))
+	}
+	// Prefer 0-based index when the second argument is numeric (legacy path).
+	if i64, err := args[1].ToInt64(); err == nil {
+		return STRUCT_FIELD(args[0], int(i64))
+	}
+	name, err := args[1].ToString()
 	if err != nil {
 		return nil, err
 	}
-	return STRUCT_FIELD(args[0], int(i64))
+	sv, err := args[0].ToStruct()
+	if err != nil {
+		return nil, err
+	}
+	if sv == nil {
+		return nil, nil
+	}
+	if v, ok := sv.m[name]; ok {
+		return v, nil
+	}
+	return nil, fmt.Errorf("struct field %q not found", name)
 }
 
 func bindJsonField(args ...Value) (Value, error) {

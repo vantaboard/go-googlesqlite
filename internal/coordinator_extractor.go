@@ -407,6 +407,34 @@ func (e *NodeExtractor) extractGetStructFieldData(node *ast.GetStructFieldNode, 
 	// Get the field index from the node
 	fieldIndex := node.FieldIdx()
 
+	// DuckDB struct_extract(..., idx) only matches anonymous tuples; named STRUCTs need the field key.
+	// Emit a STRING literal second arg so the DuckDB rewrite can call struct_extract(expr, 'name').
+	if ctx != nil && ctx.Dialect() != nil && ctx.Dialect().ID() == "duckdb" {
+		et := node.Expr().Type()
+		if et != nil && et.IsStruct() {
+			st := et.AsStruct()
+			if st != nil && fieldIndex >= 0 && fieldIndex < st.NumFields() {
+				fieldName := st.Field(fieldIndex).Name()
+				return ExpressionData{
+					Type: ExpressionTypeFunction,
+					Function: &FunctionCallData{
+						Name: "googlesqlite_get_struct_field",
+						Arguments: []ExpressionData{
+							exprData,
+							{
+								Type: ExpressionTypeLiteral,
+								Literal: &LiteralData{
+									Value:    StringValue(fieldName),
+									TypeName: "STRING",
+								},
+							},
+						},
+					},
+				}, nil
+			}
+		}
+	}
+
 	return ExpressionData{
 		Type: ExpressionTypeFunction,
 		Function: &FunctionCallData{
