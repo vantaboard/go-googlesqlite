@@ -814,8 +814,53 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 		case 1:
 			return NewSQLCastExpression(duckDBToTimestampFromUnixNano(args[0]), "TIME", false), true
 		}
+	case "googlesqlite_generate_array":
+		if out, ok := duckDBRewriteGenerateArrayToRange(args); ok {
+			return out, true
+		}
 	}
 	return nil, false
+}
+
+// duckDBRewriteGenerateArrayToRange maps BigQuery GENERATE_ARRAY (inclusive endpoints) to DuckDB
+// range(start, stop_exclusive, step). SQLite registers googlesqlite_generate_array; DuckDB has no
+// such UDF, so this rewrite is required for native execution.
+func duckDBRewriteGenerateArrayToRange(args []*SQLExpression) (*SQLExpression, bool) {
+	if len(args) != 2 && len(args) != 3 {
+		return nil, false
+	}
+	start, end := args[0], args[1]
+	var step *SQLExpression
+	if len(args) == 3 {
+		step = args[2]
+	} else {
+		step = NewLiteralExpression("1")
+	}
+	zero := NewLiteralExpression("0")
+	one := NewLiteralExpression("1")
+	stepNonZero := NewBinaryExpression(step, "<>", zero)
+	posRun := NewBinaryExpression(
+		NewBinaryExpression(step, ">", zero),
+		"AND",
+		NewBinaryExpression(start, "<=", end),
+	)
+	negRun := NewBinaryExpression(
+		NewBinaryExpression(step, "<", zero),
+		"AND",
+		NewBinaryExpression(start, ">=", end),
+	)
+	validDir := NewBinaryExpression(posRun, "OR", negRun)
+	valid := NewBinaryExpression(stepNonZero, "AND", validDir)
+
+	diff := NewBinaryExpression(end, "-", start)
+	quot := NewBinaryExpression(diff, "/", step)
+	plusOne := NewBinaryExpression(quot, "+", one)
+	inc := NewBinaryExpression(plusOne, "*", step)
+	stopExcl := NewBinaryExpression(start, "+", inc)
+	rng := NewFunctionExpression("range", start, stopExcl, step)
+
+	empty := NewLiteralExpression("CAST([] AS BIGINT[])")
+	return NewCaseExpression([]*WhenClause{{Condition: valid, Result: rng}}, empty), true
 }
 
 // googlesqliteWireStringArg decodes a string literal produced by LiteralFromValue (double-quoted base64 JSON layout).

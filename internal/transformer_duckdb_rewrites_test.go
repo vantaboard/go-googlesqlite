@@ -179,3 +179,50 @@ func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
 		t.Fatalf("expected TRY_CAST for mixed DATE cast vs VARCHAR column, got %q", got)
 	}
 }
+
+func TestTransformDuckDB_generateArrayToRange(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	fn := NewFunctionCallExpressionData("googlesqlite_generate_array",
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(2003)}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(2027)}},
+	)
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	expr, err := coord.TransformExpression(fn, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if strings.Contains(got, "googlesqlite_generate_array") {
+		t.Fatalf("expected rewrite off googlesqlite_generate_array, got %q", got)
+	}
+	if !strings.Contains(got, "range(") || !strings.Contains(strings.ToUpper(got), "CASE") {
+		t.Fatalf("expected CASE + range(...), got %q", got)
+	}
+}
+
+func TestTransformDuckDB_generateArrayThreeArgToRange(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	fn := NewFunctionCallExpressionData("googlesqlite_generate_array",
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(0)}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(10)}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(3)}},
+	)
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	expr, err := coord.TransformExpression(fn, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if strings.Contains(got, "googlesqlite_generate_array") {
+		t.Fatalf("expected rewrite, got %q", got)
+	}
+	if !strings.Contains(got, "range(") {
+		t.Fatalf("expected range(...), got %q", got)
+	}
+}
