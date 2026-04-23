@@ -207,6 +207,46 @@ func TestTransformDuckDB_concatUnwrapsWireBeforeNativeConcat(t *testing.T) {
 	}
 }
 
+func TestTransformDuckDB_simpleCaseUsesSearchedCaseWithUnwiredEquality(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	gl := ExpressionData{
+		Type:   ExpressionTypeColumn,
+		Column: &ColumnRefData{ColumnName: "GradeLevel__4", Type: types.StringType()},
+	}
+	fn := NewFunctionCallExpressionData("googlesqlite_case_with_value",
+		gl,
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("01")}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("1st")}},
+	)
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	expr, err := coord.TransformExpression(fn, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	u := strings.ToUpper(strings.TrimSpace(got))
+	if !strings.HasPrefix(u, "CASE WHEN ") {
+		t.Fatalf("expected searched CASE WHEN ... for DuckDB wire-safe simple CASE, got %q", got)
+	}
+	if !strings.Contains(got, "from_base64(") || !strings.Contains(got, "=") {
+		t.Fatalf("expected unwire + equality in CASE branches, got %q", got)
+	}
+	cfg2 := DefaultTransformConfig()
+	cfg2.Dialect = SQLiteDialect{}
+	tctx2 := NewQueryTransformFactory(cfg2, coord).CreateTransformContext(ctx)
+	sqliteExpr, err := coord.TransformExpression(fn, tctx2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqliteGot := sqliteExpr.String()
+	if !strings.Contains(strings.ToUpper(sqliteGot), "CASE ") {
+		t.Fatalf("sqlite still uses simple CASE form, got %q", sqliteGot)
+	}
+}
+
 func TestTransformDuckDB_extractYearCastsDateColumnForDatePart(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	colED := ExpressionData{

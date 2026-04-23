@@ -130,6 +130,12 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 		if len(remainingArgs) > (len(remainingArgs)/2)*2 {
 			elseExpr = remainingArgs[len(remainingArgs)-1]
 		}
+		if ctx.Dialect() != nil && ctx.Dialect().ID() == "duckdb" {
+			// Simple CASE compares CASE expr to each WHEN value with '='. VARCHAR columns often
+			// hold googlesqlite wire while literals decode to plain text — no branch matches (see
+			// UNNEST vs table column). Rewrite to searched CASE on unwire(expr) = unwire(when).
+			return duckDBSimpleCaseExprToSearchedCaseForWireStrings(valueExpr, whenClauses, elseExpr), nil
+		}
 		return NewSimpleCaseExpression(valueExpr, whenClauses, elseExpr), nil
 
 	default:
@@ -702,10 +708,10 @@ func isPrimitiveSQLiteType(expr ExpressionData) bool {
 	}
 }
 
-// duckDBUnwireGooglesqlStringScalarForConcatArg mirrors decodeStringOrLayout for a single SQL
-// expression: VARCHAR columns often store googlesqlite base64+JSON wire; native concat() would
-// concatenate those blobs. Decode to plain text when the payload is a string wire layout.
-func duckDBUnwireGooglesqlStringScalarForConcatArg(arg *SQLExpression) *SQLExpression {
+// duckDBUnwireGooglesqlStringOperand mirrors decodeStringOrLayout for a single SQL expression.
+// VARCHAR columns often store googlesqlite base64+JSON wire; use for CONCAT operands and for
+// simple-CASE equality so table values match plain WHEN literals (UNNEST literals are already plain).
+func duckDBUnwireGooglesqlStringOperand(arg *SQLExpression) *SQLExpression {
 	raw := NewSQLCastExpression(arg, "VARCHAR", false)
 	// Trim only for base64 decode: coalesce fallback must use raw (e.g. CONCAT(a, ' ', b) — TRIM(' ') is '').
 	trimmed := NewFunctionExpression("trim", raw)
@@ -722,6 +728,19 @@ func duckDBUnwireGooglesqlStringScalarForConcatArg(arg *SQLExpression) *SQLExpre
 	return NewFunctionExpression("coalesce", pick, raw)
 }
 
+func duckDBSimpleCaseExprToSearchedCaseForWireStrings(valueExpr *SQLExpression, whenClauses []*WhenClause, elseExpr *SQLExpression) *SQLExpression {
+	left := duckDBUnwireGooglesqlStringOperand(valueExpr)
+	searched := make([]*WhenClause, len(whenClauses))
+	for i, w := range whenClauses {
+		right := duckDBUnwireGooglesqlStringOperand(w.Condition)
+		searched[i] = &WhenClause{
+			Condition: NewBinaryExpression(left, "=", right),
+			Result:    w.Result,
+		}
+	}
+	return NewCaseExpression(searched, elseExpr)
+}
+
 // duckDBRewriteFunctionCall returns a DuckDB-native expression for special cases that are not
 // covered by RewriteEmittedFunctionName alone (extra args, frozen clock, or arity-specific INSTR).
 func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []ExpressionData, d Dialect) (*SQLExpression, bool) {
@@ -735,7 +754,7 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 		}
 		unwrapped := make([]*SQLExpression, len(args))
 		for i, a := range args {
-			unwrapped[i] = duckDBUnwireGooglesqlStringScalarForConcatArg(a)
+			unwrapped[i] = duckDBUnwireGooglesqlStringOperand(a)
 		}
 		return NewFunctionExpression("concat", unwrapped...), true
 	case "googlesqlite_equal":
