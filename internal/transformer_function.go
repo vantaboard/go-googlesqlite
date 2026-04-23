@@ -708,7 +708,8 @@ func isPrimitiveSQLiteType(expr ExpressionData) bool {
 func duckDBUnwireGooglesqlStringScalarForConcatArg(arg *SQLExpression) *SQLExpression {
 	s := NewFunctionExpression("trim", NewSQLCastExpression(arg, "VARCHAR", false))
 	tryB64 := NewFunctionExpression("try", NewFunctionExpression("from_base64", s))
-	utf8raw := NewFunctionExpression("convert_from", tryB64, NewLiteralExpression("'utf8'"))
+	// DuckDB: from_base64 -> BLOB; decode(blob) -> UTF-8 VARCHAR (convert_from is not always available).
+	utf8raw := NewFunctionExpression("decode", tryB64)
 	utf8 := NewFunctionExpression("try", utf8raw)
 	j := NewSQLCastExpression(utf8, "JSON", true)
 	header := NewFunctionExpression("try", NewFunctionExpression("lower", NewFunctionExpression("json_extract_string", j, NewLiteralExpression(`'$.header'`))))
