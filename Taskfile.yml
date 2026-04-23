@@ -63,6 +63,9 @@ tasks:
       - |
         set -euo pipefail
         source .envrc
+        if [ -f go.work ]; then export GOWORK="$PWD/go.work"
+        else export GOWORK=off
+        fi
         go test -tags "$GOOGLESQL_BUILD_TAGS" -p 1 -count=1 ${TESTFLAGS:-} ./...
 
   test:duckdb-lib:
@@ -95,6 +98,9 @@ tasks:
           fi
         fi
         TAGS="${GOOGLESQL_BUILD_TAGS},duckdb,duckdb_use_lib"
+        if [ -f go.work ]; then export GOWORK="$PWD/go.work"
+        else export GOWORK=off
+        fi
         go test -tags "${TAGS}" -p 1 -count=1 ${TESTFLAGS:-} ./...
 
   docker:build-dev-googlesql:
