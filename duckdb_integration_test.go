@@ -9,8 +9,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -319,6 +321,57 @@ func TestDualBackend_transactionCommitAndRollback(t *testing.T) {
 		t.Cleanup(func() { _ = db.Close() })
 		runTransactionSmoke(t, db, ctx)
 	})
+}
+
+// TestDualBackend_dateBetweenTableSeed loads DATE seed rows into a real table (VARCHAR wire on DuckDB),
+// then checks BETWEEN vs >= / <= and expected match count. See testdata/date_between_table_seed.sql.
+func TestDualBackend_dateBetweenTableSeed(t *testing.T) {
+	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
+	b, err := os.ReadFile("testdata/date_between_table_seed.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := strings.TrimSpace(string(b))
+
+	sqliteDSN := fmt.Sprintf("file:date_between_%d?mode=memory&cache=private", atomic.AddUint64(&duckDualBackendMemCounter, 1))
+	sqliteDB, err := sql.Open("googlesqlite", sqliteDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqliteDB.Close() })
+
+	duckPath := filepath.Join(t.TempDir(), "date_between.duckdb")
+	duckDB, err := sql.Open("googlesqlduck", duckPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = duckDB.Close() })
+
+	a := queryAll(t, sqliteDB, ctx, q)
+	bRows := queryAll(t, duckDB, ctx, q)
+	if !reflect.DeepEqual(normalizeRows(a), normalizeRows(bRows)) {
+		t.Fatalf("sqlite=%v duckdb=%v", normalizeRows(a), normalizeRows(bRows))
+	}
+
+	na := normalizeRows(a)
+	if len(na) != 20 {
+		t.Fatalf("want 20 seed rows, got %d", len(na))
+	}
+	var inRange int
+	for i, r := range na {
+		if len(r) != 5 {
+			t.Fatalf("row %d: want 5 cols, got %d %v", i, len(r), r)
+		}
+		if r[3] != r[4] {
+			t.Fatalf("row %d: is_between %q != is_range %q (row %v)", i, r[3], r[4], r)
+		}
+		if r[3] == "1" {
+			inRange++
+		}
+	}
+	if inRange != 10 {
+		t.Fatalf("want 10 rows with StartDateA in [StartDateB, EndDateB], got %d", inRange)
+	}
 }
 
 func runTransactionSmoke(t *testing.T, db *sql.DB, ctx context.Context) {
