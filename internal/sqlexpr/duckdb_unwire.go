@@ -56,30 +56,29 @@ func DuckDBUnwireGooglesqlStringOperand(arg *SQLExpression) *SQLExpression {
 	return NewFunctionExpression("coalesce", pick, raw)
 }
 
-// DuckDBGooglesqlWireArraySplitList builds a DuckDB VARCHAR[] list from a VARCHAR ARRAY column
-// without JSON casts. Accepts:
-//   - googlesql wire object with body as JSON value: {"header":"array","body":[...]}
-//   - googlesql wire object with body as JSON string (engine codec ValueLayout): {"header":"array","body":"[...]"}
-//   - a plain flat JSON array cell: [...] (when storage omits the wire wrapper)
-// Inner elements are split on commas; trim with DuckDBTrimWireArrayElement after UNNEST/list_extract.
+// DuckDBGooglesqlWireArraySplitList builds a DuckDB JSON[] list for UNNEST from a VARCHAR ARRAY column.
+// Comma-splitting bracket text is incorrect when array elements are JSON objects (nested commas).
+// Engine ValueLayout stores array body as a JSON string; json_extract_string yields valid JSON text for TRY_CAST.
+// Steps:
+//   1) TRY_CAST(payload AS JSON), json_extract_string(..., '$.body'), TRY_CAST AS JSON then JSON[] (wire object).
+//   2) Else TRY_CAST(trim(payload) AS JSON) as JSON[] (plain "[1,2,3]" or DuckDB LIST text).
+//   3) Else empty JSON[].
 func DuckDBGooglesqlWireArraySplitList(arg *SQLExpression) *SQLExpression {
 	payload := duckDBWireGooglesqlUtf8Payload(arg)
-	trimmed := NewFunctionExpression("trim", payload)
-	fromWireBodyJSON := duckDBRegexpExtractFirstGroup(trimmed, `"body"\s*:\s*(\[[^\]]*\])`)
-	fromWireBodyString := duckDBRegexpExtractFirstGroup(trimmed, `"body"\s*:\s*"(\[[^\]]*\])"`)
-	fromPlainCell := duckDBRegexpExtractFirstGroup(trimmed, `^(\[[^\]]*\])\s*$`)
-	bracketArray := NewFunctionExpression("coalesce", fromWireBodyJSON, fromWireBodyString, fromPlainCell)
-	innerTrim := NewFunctionExpression("trim", NewFunctionExpression("coalesce", bracketArray, NewLiteralExpression(`''`)), NewLiteralExpression(`'[]'`))
-	split := NewFunctionExpression("string_split", innerTrim, NewLiteralExpression(`','`))
-	emptyList := NewLiteralExpression(`CAST([] AS VARCHAR[])`)
-	isEmpty := NewBinaryExpression(innerTrim, "=", NewLiteralExpression(`''`))
-	return NewCaseExpression([]*WhenClause{
-		{Condition: isEmpty, Result: emptyList},
-	}, split)
+	trimmedPayload := NewFunctionExpression("trim", payload)
+
+	payloadJSON := NewSQLCastExpression(trimmedPayload, "JSON", true)
+	bodyStr := NewFunctionExpression("json_extract_string", payloadJSON, NewLiteralExpression(`'$.body'`))
+	bodyJSON := NewSQLCastExpression(bodyStr, "JSON", true)
+	wireList := NewSQLCastExpression(bodyJSON, "JSON[]", true)
+
+	plainList := NewSQLCastExpression(NewSQLCastExpression(trimmedPayload, "JSON", true), "JSON[]", true)
+	empty := NewLiteralExpression(`CAST([] AS JSON[])`)
+	return NewFunctionExpression("coalesce", wireList, plainList, empty)
 }
 
-// DuckDBTrimWireArrayElement strips outer whitespace and JSON-style double quotes from one split element.
-func DuckDBTrimWireArrayElement(elem *SQLExpression) *SQLExpression {
-	t1 := NewFunctionExpression("trim", elem)
-	return NewFunctionExpression("trim", t1, NewLiteralExpression(`'"'`))
+// DuckDBArrayElementToVarchar converts a JSON unnest element (or any ARRAY element value) to VARCHAR
+// for downstream Googlesql/DuckDB equality and projections.
+func DuckDBArrayElementToVarchar(elem *SQLExpression) *SQLExpression {
+	return NewSQLCastExpression(elem, "VARCHAR", false)
 }

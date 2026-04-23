@@ -105,7 +105,7 @@ func (t *ArrayScanTransformer) unnestExpansionFromItem(
 			},
 		}
 		body.SelectList = []*SelectListItem{
-			{Expression: sqlexpr.DuckDBTrimWireArrayElement(NewColumnExpression("value", "_je")), Alias: "value"},
+			{Expression: sqlexpr.DuckDBArrayElementToVarchar(NewColumnExpression("value", "_je")), Alias: "value"},
 		}
 		return NewSubqueryFromItem(body, arrayAlias)
 	}
@@ -123,7 +123,7 @@ func (t *ArrayScanTransformer) unnestExpansionFromItem(
 	wrap := NewSelectStatement()
 	wrap.FromClause = unnestInner
 	wrap.SelectList = []*SelectListItem{
-		{Expression: sqlexpr.DuckDBTrimWireArrayElement(NewColumnExpression("value", "_u")), Alias: "value"},
+		{Expression: sqlexpr.DuckDBArrayElementToVarchar(NewColumnExpression("value", "_u")), Alias: "value"},
 	}
 	return NewSubqueryFromItem(wrap, arrayAlias)
 }
@@ -157,7 +157,7 @@ func duckDBJoinSplitListWithRange(listFrom *FromItem, arrayAlias string) *FromIt
 	}
 	rngIdx := NewColumnExpression("range", "_gs")
 	extracted := NewFunctionExpression("list_extract", lstRef, rngIdx)
-	trimmedVal := sqlexpr.DuckDBTrimWireArrayElement(extracted)
+	trimmedVal := sqlexpr.DuckDBArrayElementToVarchar(extracted)
 	keyExpr := NewBinaryExpression(NewSQLCastExpression(rngIdx, "BIGINT", true), "-", NewLiteralExpression("1"))
 
 	body := NewSelectStatement()
