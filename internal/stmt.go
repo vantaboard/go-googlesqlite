@@ -31,6 +31,9 @@ type CreateViewStmt struct {
 }
 
 func (s *CreateTableStmt) Close() error {
+	if s == nil || s.stmt == nil {
+		return nil
+	}
 	return s.stmt.Close()
 }
 
@@ -71,6 +74,9 @@ func newCreateViewStmt(stmt *sql.Stmt, conn *Conn, catalog *Catalog, spec *Table
 }
 
 func (s *CreateViewStmt) Close() error {
+	if s == nil || s.stmt == nil {
+		return nil
+	}
 	return s.stmt.Close()
 }
 
@@ -144,6 +150,10 @@ func (s *DMLStmt) CheckNamedValue(value *driver.NamedValue) error {
 }
 
 func (s *DMLStmt) Close() error {
+	// database/sql may invoke Close on a (*T, nil) driver.Stmt; guard receiver and inner stmt.
+	if s == nil || s.stmt == nil {
+		return nil
+	}
 	return s.stmt.Close()
 }
 
@@ -201,6 +211,9 @@ func (s *QueryStmt) CheckNamedValue(value *driver.NamedValue) error {
 }
 
 func (s *QueryStmt) Close() error {
+	if s == nil || s.stmt == nil {
+		return nil
+	}
 	return s.stmt.Close()
 }
 
