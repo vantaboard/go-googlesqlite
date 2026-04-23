@@ -142,6 +142,27 @@ func TestDuckDBTemporalComparisonCoercionExprDataTwoDateColumns(t *testing.T) {
 	}
 }
 
+func TestDuckDBIntegralStringEqualityCoercion(t *testing.T) {
+	left := NewColumnExpression("StaffID__47")
+	right := NewColumnExpression("StaffIdentifier__32")
+	ld := ExpressionData{
+		Type:   ExpressionTypeColumn,
+		Column: &ColumnRefData{ColumnName: "StaffID__47", Type: types.Int64Type()},
+	}
+	rd := ExpressionData{
+		Type:   ExpressionTypeColumn,
+		Column: &ColumnRefData{ColumnName: "StaffIdentifier__32", Type: types.StringType()},
+	}
+	l, r := duckDBApplyTemporalComparisonCoercionWithExprData(left, right, ld, rd, "=")
+	got := NewBinaryExpression(l, "=", r).String()
+	if !strings.Contains(got, "TRY_CAST(") || !strings.Contains(got, " AS BIGINT)") {
+		t.Fatalf("expected TRY_CAST BIGINT on VARCHAR wire for INT64 = STRING join, got %q", got)
+	}
+	if !strings.Contains(got, "from_base64(") {
+		t.Fatalf("expected wire unwrap on STRING column before TRY_CAST, got %q", got)
+	}
+}
+
 func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	// Emulate CAST(col AS DATE) vs a STRING-typed column ref (primitive for optimizer).

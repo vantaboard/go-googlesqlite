@@ -409,6 +409,31 @@ func expressionDataIsIntegralFamily(d ExpressionData) bool {
 	return t.IsInt32() || t.IsInt64() || t.IsUint32() || t.IsUint64()
 }
 
+func expressionDataIsStringFamily(d ExpressionData) bool {
+	if d.Type != ExpressionTypeColumn || d.Column == nil || d.Column.Type == nil {
+		return false
+	}
+	return d.Column.Type.IsString()
+}
+
+// duckDBApplyIntegralStringEqualityCoercion compares INT64 (and UINT*) to STRING VARCHAR wire by
+// unwrapping the string side and TRY_CAST to BIGINT so DuckDB does not compare BIGINT to raw wire.
+func duckDBApplyIntegralStringEqualityCoercion(left, right *SQLExpression, ld, rd ExpressionData) (*SQLExpression, *SQLExpression, bool) {
+	il := expressionDataIsIntegralFamily(ld)
+	ir := expressionDataIsIntegralFamily(rd)
+	sl := expressionDataIsStringFamily(ld)
+	sr := expressionDataIsStringFamily(rd)
+	if !((il && sr) || (sl && ir)) {
+		return left, right, false
+	}
+	if il && sr {
+		unw := sqlexpr.DuckDBUnwireGooglesqlStringOperand(right)
+		return left, NewSQLCastExpression(unw, "BIGINT", true), true
+	}
+	unw := sqlexpr.DuckDBUnwireGooglesqlStringOperand(left)
+	return NewSQLCastExpression(unw, "BIGINT", true), right, true
+}
+
 func duckDBMergeTemporalTargets(picks []string) string {
 	hasTS := false
 	hasDate := false
@@ -502,6 +527,9 @@ func duckDBApplyTemporalComparisonCoercionWithExprData(left, right *SQLExpressio
 	}
 	if duckDBExprIsList(left) || duckDBExprIsList(right) {
 		return left, right
+	}
+	if l2, r2, ok := duckDBApplyIntegralStringEqualityCoercion(left, right, ld, rd); ok {
+		return l2, r2
 	}
 	target := duckDBPickTemporalComparisonTarget(left, right, ld, rd)
 	if target != "" {

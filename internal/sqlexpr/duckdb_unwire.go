@@ -1,13 +1,17 @@
 package sqlexpr
 
 // duckDBGooglesqlWireAsJSON decodes a VARCHAR googlesqlengine wire column to a JSON value expression.
+// Cells may be base64(JSON layout), plain JSON text, or non-JSON plain scalars — use try() + coalesce so
+// TRY_CAST(... AS JSON) errors never abort the expression (see DuckDBUnwireGooglesqlStringOperand).
 func duckDBGooglesqlWireAsJSON(arg *SQLExpression) *SQLExpression {
 	raw := NewSQLCastExpression(arg, "VARCHAR", false)
 	trimmed := NewFunctionExpression("trim", raw)
 	tryB64 := NewFunctionExpression("try", NewFunctionExpression("from_base64", trimmed))
 	utf8raw := NewFunctionExpression("decode", tryB64)
 	utf8 := NewFunctionExpression("try", utf8raw)
-	return NewSQLCastExpression(utf8, "JSON", true)
+	jsonFromB64 := NewFunctionExpression("try", NewSQLCastExpression(utf8, "JSON", true))
+	jsonFromPlain := NewFunctionExpression("try", NewSQLCastExpression(trimmed, "JSON", true))
+	return NewFunctionExpression("coalesce", jsonFromB64, jsonFromPlain)
 }
 
 // DuckDBUnwireGooglesqlStringOperand mirrors decodeStringOrLayout for a single SQL expression.
@@ -20,6 +24,7 @@ func DuckDBUnwireGooglesqlStringOperand(arg *SQLExpression) *SQLExpression {
 	body := NewFunctionExpression("try", NewFunctionExpression("json_extract_string", j, NewLiteralExpression(`'$.body'`)))
 	decoded := NewCaseExpression([]*WhenClause{
 		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'string'`)), Result: body},
+		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'int64'`)), Result: body},
 		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'date'`)), Result: body},
 		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'datetime'`)), Result: body},
 		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'time'`)), Result: body},
