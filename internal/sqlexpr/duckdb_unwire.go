@@ -77,8 +77,3 @@ func DuckDBGooglesqlWireArraySplitList(arg *SQLExpression) *SQLExpression {
 	return NewFunctionExpression("coalesce", wireList, plainList, empty)
 }
 
-// DuckDBArrayElementToVarchar converts a JSON unnest element (or any ARRAY element value) to VARCHAR
-// for downstream Googlesql/DuckDB equality and projections.
-func DuckDBArrayElementToVarchar(elem *SQLExpression) *SQLExpression {
-	return NewSQLCastExpression(elem, "VARCHAR", false)
-}
