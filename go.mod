@@ -1,4 +1,4 @@
-module github.com/vantaboard/go-googlesqlite
+module github.com/vantaboard/go-googlesql-engine
 
 go 1.26.0
 

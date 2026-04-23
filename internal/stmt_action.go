@@ -24,7 +24,7 @@ type StmtAction interface {
 // envLogPhysicalSQL enables Info-level logging of the final SQL sent to the
 // physical backend without turning on full debug logs. Debug logs always
 // include the same event when a context logger is configured.
-const envLogPhysicalSQL = "GOOGLESQLITE_LOG_PHYSICAL_SQL"
+const envLogPhysicalSQL = "GOOGLESQL_ENGINE_LOG_PHYSICAL_SQL"
 
 const (
 	physicalSQLLogMax  = 4096
@@ -60,7 +60,7 @@ func logPhysicalSQL(ctx context.Context, sourceSQL, physicalSQL string, args []i
 	if len(args) > 0 && len(args) <= physicalSQLMaxArgs {
 		attrs = append(attrs, slog.Any("args", args))
 	}
-	Logger(ctx).LogAttrs(ctx, level, "googlesqlite physical sql", attrs...)
+	Logger(ctx).LogAttrs(ctx, level, "googlesqlengine physical sql", attrs...)
 }
 
 type NullStmtAction struct{}
@@ -163,7 +163,7 @@ func (a *CreateTableStmtAction) createIndexAutomatically(ctx context.Context, co
 		if !col.Type.AvailableAutoIndex() {
 			continue
 		}
-		indexName := fmt.Sprintf("googlesqlite_autoindex_%s_%s", col.Name, strings.Join(a.spec.NamePath, "_"))
+		indexName := fmt.Sprintf("googlesqlengine_autoindex_%s_%s", col.Name, strings.Join(a.spec.NamePath, "_"))
 		createIndexQuery := fmt.Sprintf(
 			"CREATE INDEX IF NOT EXISTS %s ON %s(%s)",
 			a.dialect.QuoteIdent(indexName),

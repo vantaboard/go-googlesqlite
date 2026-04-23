@@ -10,7 +10,7 @@ type TransformConfig struct {
 
 // DefaultTransformConfig returns a default configuration
 func DefaultTransformConfig() *TransformConfig {
-	debug := os.Getenv("GOOGLESQLITE_DEBUG") == "true"
+	debug := os.Getenv("GOOGLESQL_ENGINE_DEBUG") == "true"
 	return &TransformConfig{
 		Debug:   debug,
 		Dialect: SQLiteDialect{},
