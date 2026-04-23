@@ -4,7 +4,7 @@ version: "3"
 # Tasks source `.envrc` so CGO/linker env matches direnv.
 
 vars:
-  PKG: github.com/vantaboard/go-googlesqlite
+  PKG: github.com/vantaboard/go-googlesql-engine
   # Must be built with Go >= go.mod (1.26); older releases error: "lower than the targeted Go version"
   GOLANGCI_LINT_VERSION: v2.11.4
   DOCKER_DEV_IMAGE: go-googlesql:dev
@@ -14,17 +14,17 @@ tasks:
     desc: Show common tasks (full list task --list-all)
     cmds:
       - |
-        echo "go-googlesqlite — https://taskfile.dev (task --list-all)"
+        echo "go-googlesql-engine — https://taskfile.dev (task --list-all)"
         echo "Common: task build | task test:prebuilt | task test:linux | task cover"
         echo "Partial tests: TESTFLAGS='-run SomeTest -count=1' task test:prebuilt  (always use task; sources .envrc / stack bootstrap)"
 
   build:
-    desc: Build googlesqlite-cli with unified prebuilt tags
+    desc: Build googlesqlengine-cli with unified prebuilt tags
     cmds:
       - |
         set -euo pipefail
         source .envrc
-        cd ./cmd/googlesqlite-cli && go build -tags "$GOOGLESQL_BUILD_TAGS" .
+        cd ./cmd/googlesqlengine-cli && go build -tags "$GOOGLESQL_BUILD_TAGS" .
 
   cover:
     desc: Run tests with coverage (cover.out)
@@ -121,11 +121,11 @@ tasks:
         docker run --rm \
           -e CGO_ENABLED=1 -e CC=clang -e CXX=clang++ \
           -e CCACHE_DIR=/root/.ccache -e CCACHE_COMPRESS=1 \
-          -v "$PWD":/work/go-googlesqlite \
+          -v "$PWD":/work/go-googlesql-engine \
           -v "$GO_GOOGLESQL_ROOT":/work/go-googlesql \
           -v "$GO_CACHE_ROOT/gocache":/root/.cache/go-build \
           -v "$GO_CACHE_ROOT/gomodcache":/go/pkg/mod \
           -v "$GO_CACHE_ROOT/ccache":/root/.ccache \
-          -w /work/go-googlesqlite \
+          -w /work/go-googlesql-engine \
           {{.DOCKER_DEV_IMAGE}} \
           bash -c 'set -euo pipefail; source /work/go-googlesql/scripts/go-googlesql-stack-bootstrap.sh; go test -race -v ./... -count=1'

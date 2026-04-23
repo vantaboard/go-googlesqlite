@@ -20,14 +20,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout go-googlesqlite
+      - name: Checkout go-googlesql-engine
         uses: actions/checkout@v6
         with:
-          path: go-googlesqlite
+          path: go-googlesql-engine
       - name: Resolve go-googlesql version
         id: gsql
         run: |
-          v=$(awk '/github.com\/vantaboard\/go-googlesql /{print $2; exit}' go-googlesqlite/go.mod)
+          v=$(awk '/github.com\/vantaboard\/go-googlesql /{print $2; exit}' go-googlesql-engine/go.mod)
           echo "v=${v}" >> "$GITHUB_OUTPUT"
       - name: Checkout go-googlesql
         uses: actions/checkout@v6
@@ -40,7 +40,7 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
-          cache-dependency-path: go-googlesqlite/go.sum
+          cache-dependency-path: go-googlesql-engine/go.sum
       - name: Install Task
         run: |
           go install github.com/go-task/task/v3/cmd/task@latest
@@ -83,7 +83,7 @@ jobs:
             ln -sfn "$ga/libcxxabi_prebuilt.a" "$p/libcxxabi_prebuilt.a"
           fi
       - name: Point go.mod at local go-googlesql
-        working-directory: go-googlesqlite
+        working-directory: go-googlesql-engine
         run: |
           set -euo pipefail
           R="${{ github.workspace }}/go-googlesql"
@@ -99,7 +99,7 @@ jobs:
           unzip -q /tmp/duckdb.zip -d /tmp/duckdb-extract
           echo "DUCKDB_LIB_DIR=/tmp/duckdb-extract" >> "$GITHUB_ENV"
       - name: task test:duckdb-lib
-        working-directory: go-googlesqlite
+        working-directory: go-googlesql-engine
         env:
           GO_GOOGLESQL_ROOT: ${{ github.workspace }}/go-googlesql
           DUCKDB_LIB_DIR: /tmp/duckdb-extract
