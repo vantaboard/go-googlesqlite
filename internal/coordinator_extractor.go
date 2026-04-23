@@ -1720,8 +1720,11 @@ func (e *NodeExtractor) extractArrayScanData(node *ast.ArrayScanNode, ctx Transf
 
 	// Extract element column data
 	var elementColumnData *ColumnData
+	var elementColumnExpr *ExpressionData
 	if node.ElementColumn() != nil {
 		elementColumnData = extractColumnData(node.ElementColumn())
+		ref := NewColumnExpressionData(node.ElementColumn())
+		elementColumnExpr = &ref
 	}
 
 	// Extract optional array offset column data
@@ -1747,6 +1750,7 @@ func (e *NodeExtractor) extractArrayScanData(node *ast.ArrayScanNode, ctx Transf
 			InputScan:         inputScanData,
 			ArrayExpr:         arrayExprData,
 			ElementColumn:     elementColumnData,
+			ElementColumnExpr: elementColumnExpr,
 			ArrayOffsetColumn: arrayOffsetColumnData,
 			IsOuter:           node.IsOuter(),
 			JoinExpr:          joinExprData,

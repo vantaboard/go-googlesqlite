@@ -976,6 +976,17 @@ func duckDBStructFieldAccessBaseExpr(base *SQLExpression, argData []ExpressionDa
 	if !ok {
 		return base
 	}
+	// UNNEST for ARRAY<STRUCT<...>> projects one native struct column (alias "gs__<id>") on DuckDB;
+	// get_struct_field then sees a plain column ref — return it and let struct_extract read the struct.
+	if st.IsStruct() && argData[0].Type == ExpressionTypeColumn && argData[0].Column != nil &&
+		base.Type == ExpressionTypeColumn && base.Value == generateIDBasedAlias("gs", argData[0].Column.ColumnID) {
+		return base
+	}
+	// If the base is already a matching TRY_CAST to the same struct type (e.g. a projected UNNEST
+	// payload column), do not re-wrap: avoids inflating physical SQL and duplicate unwire work.
+	if base.Type == ExpressionTypeCast && base.Cast != nil && base.Cast.Try && base.Cast.TargetType == castSQL {
+		return base
+	}
 	unwired := sqlexpr.DuckDBUnwireGooglesqlStringOperand(base)
 	return NewSQLCastExpression(unwired, castSQL, true)
 }

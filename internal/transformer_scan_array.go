@@ -3,6 +3,7 @@ package internal
 import (
 	"fmt"
 
+	core "github.com/vantaboard/go-googlesql-engine/internal/dialect/core"
 	sqlexpr "github.com/vantaboard/go-googlesql-engine/internal/sqlexpr"
 )
 
@@ -20,6 +21,14 @@ func fromItemPrimaryAlias(f *FromItem) string {
 		}
 	}
 	return ""
+}
+
+func duckDBUnnestWantsStructPayloadColumn(d Dialect, el *ExpressionData) bool {
+	if d == nil || el == nil || d.ID() != core.IDDuckDB {
+		return false
+	}
+	st := duckDBStructTypeFromExpressionData(*el)
+	return st != nil && st.IsStruct()
 }
 
 // qualifyPlainColumnWithTable fills in TableAlias on an unqualified column reference (copy-on-write).
@@ -64,11 +73,16 @@ func NewArrayScanTransformer(coordinator Coordinator) *ArrayScanTransformer {
 
 // unnestExpansionFromItem builds a FROM item that expands an array into rows with columns
 // `value` (element) and optionally `key` (0-based offset, matching SQLite json_each).
+// When el/structColName are set for a STRUCT element on DuckDB, a single TRY_CAST struct column
+// is also projected (alias structColName) so struct field reads reference a short column name.
 func (t *ArrayScanTransformer) unnestExpansionFromItem(
 	arrayExpr *SQLExpression,
 	arrayAlias string,
 	includeOffset bool,
 	correlated bool,
+	el *ExpressionData,
+	d Dialect,
+	structColName string,
 ) *FromItem {
 	if !correlated {
 		// (SELECT expr AS _arr) CROSS JOIN LATERAL UNNEST(JSON[] from wire) with unwrapped elements.
@@ -84,7 +98,7 @@ func (t *ArrayScanTransformer) unnestExpansionFromItem(
 			listSel.SelectList = []*SelectListItem{{Expression: splitList, Alias: "lst"}}
 			listSel.FromClause = srcFrom
 			listFrom := NewSubqueryFromItem(listSel, "_ls")
-			return duckDBJoinSplitListWithRange(listFrom, arrayAlias)
+			return duckDBJoinSplitListWithRange(listFrom, arrayAlias, el, d, structColName)
 		}
 
 		unnestFrom := &FromItem{
@@ -104,14 +118,21 @@ func (t *ArrayScanTransformer) unnestExpansionFromItem(
 				RightIsLateral: true,
 			},
 		}
-		body.SelectList = []*SelectListItem{
+		selList := []*SelectListItem{
 			{Expression: sqlexpr.DuckDBUnwireGooglesqlStringOperand(NewColumnExpression("value", "_je")), Alias: "value"},
 		}
+		if structColName != "" && duckDBUnnestWantsStructPayloadColumn(d, el) {
+			structPayload := duckDBStructFieldAccessBaseExpr(NewColumnExpression("value", "_je"), []ExpressionData{*el})
+			if structPayload != nil {
+				selList = append(selList, &SelectListItem{Expression: structPayload, Alias: structColName})
+			}
+		}
+		body.SelectList = selList
 		return NewSubqueryFromItem(body, arrayAlias)
 	}
 
 	if includeOffset {
-		return duckDBCorrelatedUnnestWithOffset(arrayExpr, arrayAlias)
+		return duckDBCorrelatedUnnestWithOffset(arrayExpr, arrayAlias, el, d, structColName)
 	}
 
 	unnestInner := &FromItem{
@@ -122,15 +143,22 @@ func (t *ArrayScanTransformer) unnestExpansionFromItem(
 	}
 	wrap := NewSelectStatement()
 	wrap.FromClause = unnestInner
-	wrap.SelectList = []*SelectListItem{
+	wrapSelect := []*SelectListItem{
 		{Expression: sqlexpr.DuckDBUnwireGooglesqlStringOperand(NewColumnExpression("value", "_u")), Alias: "value"},
 	}
+	if structColName != "" && duckDBUnnestWantsStructPayloadColumn(d, el) {
+		structPayload := duckDBStructFieldAccessBaseExpr(NewColumnExpression("value", "_u"), []ExpressionData{*el})
+		if structPayload != nil {
+			wrapSelect = append(wrapSelect, &SelectListItem{Expression: structPayload, Alias: structColName})
+		}
+	}
+	wrap.SelectList = wrapSelect
 	return NewSubqueryFromItem(wrap, arrayAlias)
 }
 
 // duckDBJoinSplitListWithRange expands lst (JSON[]) with 0-based key matching SQLite json_each.
 // listFrom must expose column "lst" (table alias typically "_ls").
-func duckDBJoinSplitListWithRange(listFrom *FromItem, arrayAlias string) *FromItem {
+func duckDBJoinSplitListWithRange(listFrom *FromItem, arrayAlias string, el *ExpressionData, d Dialect, structColName string) *FromItem {
 	lstRef := NewColumnExpression("lst", "_ls")
 	lenLst := NewFunctionExpression("len", lstRef)
 	stopExclusive := NewBinaryExpression(lenLst, "+", NewLiteralExpression("1"))
@@ -162,21 +190,28 @@ func duckDBJoinSplitListWithRange(listFrom *FromItem, arrayAlias string) *FromIt
 
 	body := NewSelectStatement()
 	body.FromClause = join
-	body.SelectList = []*SelectListItem{
+	selList := []*SelectListItem{
 		{Expression: trimmedVal, Alias: "value"},
 		{Expression: keyExpr, Alias: "key"},
 	}
+	if structColName != "" && duckDBUnnestWantsStructPayloadColumn(d, el) {
+		structPayload := duckDBStructFieldAccessBaseExpr(extracted, []ExpressionData{*el})
+		if structPayload != nil {
+			selList = append(selList, &SelectListItem{Expression: structPayload, Alias: structColName})
+		}
+	}
+	body.SelectList = selList
 	return NewSubqueryFromItem(body, arrayAlias)
 }
 
 // duckDBCorrelatedUnnestWithOffset expands a correlated wire-backed array with list_extract + range
 // (json_each key/value semantics without TRY_CAST(... AS JSON)).
-func duckDBCorrelatedUnnestWithOffset(arrayExpr *SQLExpression, arrayAlias string) *FromItem {
+func duckDBCorrelatedUnnestWithOffset(arrayExpr *SQLExpression, arrayAlias string, el *ExpressionData, d Dialect, structColName string) *FromItem {
 	listSel := NewSelectStatement()
 	listSel.SelectList = []*SelectListItem{{Expression: sqlexpr.DuckDBGooglesqlWireArraySplitList(arrayExpr), Alias: "lst"}}
 	listSel.FromClause = &FromItem{Type: FromItemTypeSingleRow}
 	listFrom := NewSubqueryFromItem(listSel, "_ls")
-	return duckDBJoinSplitListWithRange(listFrom, arrayAlias)
+	return duckDBJoinSplitListWithRange(listFrom, arrayAlias, el, d, structColName)
 }
 
 // Transform converts ArrayScanData to a FromItem representing UNNEST operation
@@ -214,9 +249,14 @@ func (t *ArrayScanTransformer) Transform(data ScanData, ctx TransformContext) (*
 	arrayAlias := fmt.Sprintf("$array_%s", ctx.FragmentContext().GetID())
 	includeOffset := arrayData.ArrayOffsetColumn != nil
 
+	structColName := ""
+	if duckDBUnnestWantsStructPayloadColumn(ctx.Dialect(), arrayData.ElementColumnExpr) {
+		structColName = generateIDBasedAlias("gs", arrayData.ElementColumn.ID)
+	}
+
 	var expansion *FromItem
 	if ctx.Dialect().ArrayUnnestUseLateralCorrelation() {
-		expansion = t.unnestExpansionFromItem(arrayExpr, arrayAlias, includeOffset, correlated)
+		expansion = t.unnestExpansionFromItem(arrayExpr, arrayAlias, includeOffset, correlated, arrayData.ElementColumnExpr, ctx.Dialect(), structColName)
 	} else {
 		expansion = &FromItem{
 			Type: FromItemTypeTableFunction,
@@ -235,10 +275,16 @@ func (t *ArrayScanTransformer) Transform(data ScanData, ctx TransformContext) (*
 
 	// The element / key columns must be made available prior to the JoinExpr being transformed
 	// since they reference return values from the unnest expansion which do not exist in GoogleSQL
+	elementColName := "value"
+	elementColExpr := NewColumnExpression("value", expansion.Alias)
+	if structColName != "" {
+		elementColName = structColName
+		elementColExpr = NewColumnExpression(structColName, expansion.Alias)
+	}
 	ctx.FragmentContext().AddAvailableColumn(arrayData.ElementColumn.ID, &ColumnInfo{
-		ID:   arrayData.ElementColumn.ID,
-		Name: "value",
-		Expression: NewColumnExpression("value", expansion.Alias),
+		ID:         arrayData.ElementColumn.ID,
+		Name:       elementColName,
+		Expression: elementColExpr,
 	})
 	ctx.FragmentContext().RegisterColumnScope(arrayData.ElementColumn.ID, expansion.Alias)
 

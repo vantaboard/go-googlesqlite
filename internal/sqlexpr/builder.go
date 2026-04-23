@@ -18,6 +18,9 @@ type SQLWriter struct {
 	useNewlines bool
 	// dialect selects identifier quoting; nil means SQLite (backticks).
 	dialect SQLDialect
+	// quotedIdentCache maps raw identifier text to a dialect-quoted form (DuckDB double-quotes, etc.),
+	// avoiding repeated per-node allocations on hot query paths.
+	quotedIdentCache map[string]string
 }
 
 func NewSQLWriter() *SQLWriter {
@@ -53,7 +56,21 @@ func (w *SQLWriter) WriteQuotedIdent(name string) {
 	if d == nil {
 		d = NilSQLDialect{}
 	}
-	w.Write(d.QuoteIdent(name))
+	if w.quotedIdentCache != nil {
+		if q, ok := w.quotedIdentCache[name]; ok {
+			w.Write(q)
+			return
+		}
+	} else {
+		// Per-writer table; only allocate after first use.
+		w.quotedIdentCache = make(map[string]string, 16)
+	}
+	q := d.QuoteIdent(name)
+	// Cap size to keep memory bounded for unusual queries with many unique identifiers.
+	if len(w.quotedIdentCache) < 8192 {
+		w.quotedIdentCache[name] = q
+	}
+	w.Write(q)
 }
 
 // writeDialectLiteral emits a literal fragment. SQLite accepts double-quoted googlesqlengine wire
@@ -210,7 +227,9 @@ func (e *BinaryExpression) WriteSql(writer *SQLWriter) {
 	if e.Left != nil {
 		e.Left.WriteSql(writer)
 	}
-	writer.Write(fmt.Sprintf(" %s ", e.Operator))
+	writer.Write(" ")
+	writer.Write(e.Operator)
+	writer.Write(" ")
 	if e.Right != nil {
 		e.Right.WriteSql(writer)
 	}
