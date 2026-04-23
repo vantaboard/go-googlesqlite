@@ -354,3 +354,141 @@ func TestTransformDuckDB_generateArrayThreeArgToRange(t *testing.T) {
 		t.Fatalf("expected range(...), got %q", got)
 	}
 }
+
+func TestTransformDuckDB_replaceUnwrapsWireBeforeReplace(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	col := ExpressionData{
+		Type:   ExpressionTypeColumn,
+		Column: &ColumnRefData{ColumnID: 20, ColumnName: "GradeLevel__36", Type: types.StringType()},
+	}
+	fn := NewFunctionCallExpressionData("googlesqlite_replace",
+		col,
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("KN")}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("0")}},
+	)
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	fcx := tctx.FragmentContext()
+	fcx.RegisterColumnScope(20, "t")
+	fcx.AddAvailableColumn(20, &ColumnInfo{Name: "GradeLevel__36"})
+	expr, err := coord.TransformExpression(fn, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if !strings.Contains(got, "replace(") || strings.Contains(got, "googlesqlite_replace") {
+		t.Fatalf("expected native replace(, got %q", got)
+	}
+	if !strings.Contains(got, "from_base64(") {
+		t.Fatalf("expected wire unwrap on replace subject, got %q", got)
+	}
+}
+
+func TestTransformDuckDB_nestedReplaceAndCastToInt64(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	col := ExpressionData{
+		Type:   ExpressionTypeColumn,
+		Column: &ColumnRefData{ColumnID: 21, ColumnName: "g", Type: types.StringType()},
+	}
+	inner := NewFunctionCallExpressionData("googlesqlite_replace",
+		col,
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("KN")}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("0")}},
+	)
+	outer := NewFunctionCallExpressionData("googlesqlite_replace",
+		inner,
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("TK")}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("-1")}},
+	)
+	castED := ExpressionData{
+		Type: ExpressionTypeCast,
+		Cast: &CastData{
+			Expression:      outer,
+			FromType:        types.StringType(),
+			ToType:          types.Int64Type(),
+			SafeCast:        false,
+			ReturnNullOnErr: false,
+		},
+	}
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	fcx := tctx.FragmentContext()
+	fcx.RegisterColumnScope(21, "t")
+	fcx.AddAvailableColumn(21, &ColumnInfo{Name: "g"})
+	expr, err := coord.TransformExpression(castED, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if !strings.Contains(got, "replace(") || !strings.Contains(strings.ToUpper(got), "BIGINT") {
+		t.Fatalf("expected replace( + BIGINT cast, got %q", got)
+	}
+	if !strings.Contains(got, "from_base64(") {
+		t.Fatalf("expected wire unwrap in pipeline, got %q", got)
+	}
+}
+
+func TestTransformDuckDB_stringColumnCastToInt64UnwrapsWire(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	col := ExpressionData{
+		Type:   ExpressionTypeColumn,
+		Column: &ColumnRefData{ColumnID: 22, ColumnName: "sid", Type: types.StringType()},
+	}
+	castED := ExpressionData{
+		Type: ExpressionTypeCast,
+		Cast: &CastData{
+			Expression:      col,
+			FromType:        types.StringType(),
+			ToType:          types.Int64Type(),
+			SafeCast:        false,
+			ReturnNullOnErr: false,
+		},
+	}
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	fcx := tctx.FragmentContext()
+	fcx.RegisterColumnScope(22, "t")
+	fcx.AddAvailableColumn(22, &ColumnInfo{Name: "sid"})
+	expr, err := coord.TransformExpression(castED, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if !strings.Contains(strings.ToUpper(got), "BIGINT") {
+		t.Fatalf("expected CAST ... BIGINT, got %q", got)
+	}
+	if !strings.Contains(got, "from_base64(") {
+		t.Fatalf("expected wire unwrap before numeric cast, got %q", got)
+	}
+}
+
+func TestTransformDuckDB_replaceOnLiteralStillEmitsReplace(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	fn := NewFunctionCallExpressionData("googlesqlite_replace",
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("01")}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("0")}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("")}},
+	)
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	expr, err := coord.TransformExpression(fn, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if !strings.Contains(got, "replace(") || strings.Contains(got, "googlesqlite_replace") {
+		t.Fatalf("expected native replace(, got %q", got)
+	}
+	// String literals may be emitted as VARCHAR wire payloads in SQL text; unwrap still composes safely.
+	if !strings.Contains(got, "coalesce(") {
+		t.Fatalf("expected unwrap coalesce around replace subject, got %q", got)
+	}
+}

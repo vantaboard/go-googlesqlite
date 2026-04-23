@@ -796,6 +796,16 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 			unwrapped[i] = duckDBUnwireGooglesqlStringOperand(a)
 		}
 		return NewFunctionExpression("concat", unwrapped...), true
+	case "googlesqlite_replace":
+		if len(args) != 3 {
+			return nil, false
+		}
+		out := []*SQLExpression{
+			duckDBUnwireGooglesqlStringOperand(args[0]),
+			args[1],
+			args[2],
+		}
+		return NewFunctionExpression("replace", out...), true
 	case "googlesqlite_equal":
 		if len(args) == 2 {
 			if len(argData) == 2 {

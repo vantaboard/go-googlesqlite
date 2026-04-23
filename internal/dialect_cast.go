@@ -16,6 +16,9 @@ func (DuckDBDialect) MaybeEmitNativeCast(inner *SQLExpression, cast *CastData) (
 		return nil, fmt.Errorf("duckdb: native CAST not implemented for target type %s", cast.ToType.DebugString(false))
 	}
 	try := cast.ReturnNullOnErr || cast.SafeCast
+	if cast.FromType != nil && cast.FromType.Kind() == types.STRING && target != "VARCHAR" {
+		inner = duckDBUnwireGooglesqlStringOperand(inner)
+	}
 	return NewSQLCastExpression(inner, target, try), nil
 }
 
