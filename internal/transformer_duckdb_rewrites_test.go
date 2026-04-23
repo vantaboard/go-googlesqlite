@@ -320,8 +320,8 @@ func TestTransformDuckDB_concatUnwrapsWireBeforeNativeConcat(t *testing.T) {
 	if !strings.Contains(got, "concat(") {
 		t.Fatalf("expected concat(, got %q", got)
 	}
-	if !strings.Contains(got, "from_base64(") || !strings.Contains(got, "json_extract_string(") {
-		t.Fatalf("expected wire unwrap (from_base64 + json_extract_string), got %q", got)
+	if !strings.Contains(got, "from_base64(") || !strings.Contains(got, "regexp_extract(") {
+		t.Fatalf("expected wire unwrap (from_base64 + regexp_extract payload decode), got %q", got)
 	}
 	if strings.Contains(got, "googlesqlengine_concat") {
 		t.Fatalf("expected rewrite off googlesqlengine_concat, got %q", got)
