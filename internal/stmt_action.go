@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"log/slog"
+	"os"
 	"regexp"
 	"strings"
 
@@ -17,6 +19,48 @@ type StmtAction interface {
 	QueryContext(context.Context, *Conn) (*Rows, error)
 	Cleanup(context.Context, *Conn) error
 	Args() []interface{}
+}
+
+// envLogPhysicalSQL enables Info-level logging of the final SQL sent to the
+// physical backend without turning on full debug logs. Debug logs always
+// include the same event when a context logger is configured.
+const envLogPhysicalSQL = "GOOGLESQLITE_LOG_PHYSICAL_SQL"
+
+const (
+	physicalSQLLogMax  = 4096
+	sourceSQLLogMax    = 2048
+	physicalSQLMaxArgs = 32
+)
+
+func truncateSQLForLog(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
+// logPhysicalSQL logs the SQL string executed on SQLite/DuckDB after GoogleSQL
+// codegen and catalog expansion. Callers pass the original GoogleSQL in sourceSQL
+// when available for correlation.
+func logPhysicalSQL(ctx context.Context, sourceSQL, physicalSQL string, args []interface{}) {
+	if physicalSQL == "" {
+		return
+	}
+	level := slog.LevelDebug
+	if os.Getenv(envLogPhysicalSQL) != "" {
+		level = slog.LevelInfo
+	}
+	attrs := []slog.Attr{
+		slog.String("physical_sql", truncateSQLForLog(physicalSQL, physicalSQLLogMax)),
+		slog.Int("arg_count", len(args)),
+	}
+	if sourceSQL != "" {
+		attrs = append(attrs, slog.String("source_sql", truncateSQLForLog(sourceSQL, sourceSQLLogMax)))
+	}
+	if len(args) > 0 && len(args) <= physicalSQLMaxArgs {
+		attrs = append(attrs, slog.Any("args", args))
+	}
+	Logger(ctx).LogAttrs(ctx, level, "googlesqlite physical sql", attrs...)
 }
 
 type NullStmtAction struct{}
@@ -527,9 +571,11 @@ func (a *QueryStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.Stmt,
 
 func (a *QueryStmtAction) ExecContext(ctx context.Context, conn *Conn) (driver.Result, error) {
 	formattedQuery := expandCatalogFunctions(a.formattedQuery, a.catalog)
+	logPhysicalSQL(ctx, a.query, formattedQuery, a.args)
 	if _, err := conn.ExecContext(ctx, formattedQuery, a.args...); err != nil {
 		retriedQuery, retryErr := rewriteMissingTableQuery(a.catalog, formattedQuery, err)
 		if retryErr == nil && retriedQuery != formattedQuery {
+			logPhysicalSQL(ctx, a.query, retriedQuery, a.args)
 			if _, err := conn.ExecContext(ctx, retriedQuery, a.args...); err == nil {
 				return &Result{conn: conn}, nil
 			}
@@ -568,10 +614,12 @@ func (a *QueryStmtAction) QueryContext(ctx context.Context, conn *Conn) (*Rows, 
 		return &Rows{}, nil
 	}
 	formattedQuery := expandCatalogFunctions(a.formattedQuery, a.catalog)
+	logPhysicalSQL(ctx, a.query, formattedQuery, a.args)
 	rows, err := conn.QueryContext(ctx, formattedQuery, a.args...)
 	if err != nil {
 		retriedQuery, retryErr := rewriteMissingTableQuery(a.catalog, formattedQuery, err)
 		if retryErr == nil && retriedQuery != formattedQuery {
+			logPhysicalSQL(ctx, a.query, retriedQuery, a.args)
 			rows, err = conn.QueryContext(ctx, retriedQuery, a.args...)
 		}
 	}
