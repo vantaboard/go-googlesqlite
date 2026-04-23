@@ -340,16 +340,20 @@ type LimitScanData struct {
 
 // ArrayScanData represents array scan (UNNEST) operation data
 type ArrayScanData struct {
-	InputScan         *ScanData       `json:"input_scan,omitempty"`          // Optional input scan for correlated arrays
-	ArrayExpr         ExpressionData  `json:"array_expr,omitempty"`          // Array expression to UNNEST
-	ElementColumn     *ColumnData     `json:"element_column,omitempty"`      // Column for array elements
+	InputScan     *ScanData      `json:"input_scan,omitempty"`     // Optional input scan for correlated arrays
+	ArrayExpr     ExpressionData `json:"array_expr,omitempty"`     // Array expression to UNNEST
+	ElementColumn *ColumnData    `json:"element_column,omitempty"` // Column for array elements
 	// ElementColumnExpr is the full column ref + resolved types.Type for the UNNEST element (when present).
 	// Used by DuckDB to project one native STRUCT column per element and avoid inlining repeated
 	// unwire+TRY_CAST chains for every struct field access in generated SQL.
 	ElementColumnExpr *ExpressionData `json:"element_column_expr,omitempty"`
-	ArrayOffsetColumn *ColumnData     `json:"array_offset_column,omitempty"` // Optional column for array indices
-	IsOuter           bool            `json:"is_outer,omitempty"`            // Whether to use LEFT JOIN (true) or INNER JOIN (false)
-	JoinExpr          *ExpressionData `json:"join_expr,omitempty"`           // Optional join condition
+	// ArrayExprElementType is the array element type from the resolved ArrayExpr (when the analyzer
+	// provides ARRAY<...>). Used as a fallback when ElementColumnExpr is not struct-typed (e.g. wire
+	// VARCHAR) so ARRAY<STRUCT<...>> UNNEST still projects gs__* struct columns.
+	ArrayExprElementType types.Type      `json:"-"`
+	ArrayOffsetColumn    *ColumnData     `json:"array_offset_column,omitempty"` // Optional column for array indices
+	IsOuter              bool            `json:"is_outer,omitempty"`            // Whether to use LEFT JOIN (true) or INNER JOIN (false)
+	JoinExpr             *ExpressionData `json:"join_expr,omitempty"`           // Optional join condition
 }
 
 // AnalyticScanData represents analytic (window function) scan operation data

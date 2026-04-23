@@ -5,6 +5,7 @@ import (
 
 	core "github.com/vantaboard/go-googlesql-engine/internal/dialect/core"
 	sqlexpr "github.com/vantaboard/go-googlesql-engine/internal/sqlexpr"
+	"github.com/vantaboard/go-googlesql/types"
 )
 
 // fromItemPrimaryAlias returns the alias whose columns are visible as the unnest join's outer row.
@@ -29,6 +30,30 @@ func duckDBUnnestWantsStructPayloadColumn(d Dialect, el *ExpressionData) bool {
 	}
 	st := duckDBStructTypeFromExpressionData(*el)
 	return st != nil && st.IsStruct()
+}
+
+// duckDBUnnestElementExprForStructPayload returns ExpressionData for DuckDB struct UNNEST lowering.
+// When the element column is not struct-typed (e.g. wire STRING) but the resolved array expression
+// is ARRAY<STRUCT<...>>, the analyzer still provides the struct element type on ArrayExpr; we merge
+// that onto a copy of the element column so TRY_CAST/gs__ projection and get_struct_field match.
+func duckDBUnnestElementExprForStructPayload(el *ExpressionData, arrayElType types.Type) *ExpressionData {
+	if el == nil {
+		return nil
+	}
+	if st := duckDBStructTypeFromExpressionData(*el); st != nil && st.IsStruct() {
+		return el
+	}
+	if arrayElType == nil || !arrayElType.IsStruct() {
+		return el
+	}
+	if el.Type != ExpressionTypeColumn || el.Column == nil {
+		return el
+	}
+	out := *el
+	col := *el.Column
+	col.Type = arrayElType
+	out.Column = &col
+	return &out
 }
 
 // qualifyPlainColumnWithTable fills in TableAlias on an unqualified column reference (copy-on-write).
@@ -249,14 +274,15 @@ func (t *ArrayScanTransformer) Transform(data ScanData, ctx TransformContext) (*
 	arrayAlias := fmt.Sprintf("$array_%s", ctx.FragmentContext().GetID())
 	includeOffset := arrayData.ArrayOffsetColumn != nil
 
+	elForStruct := duckDBUnnestElementExprForStructPayload(arrayData.ElementColumnExpr, arrayData.ArrayExprElementType)
 	structColName := ""
-	if duckDBUnnestWantsStructPayloadColumn(ctx.Dialect(), arrayData.ElementColumnExpr) {
+	if elForStruct != nil && duckDBUnnestWantsStructPayloadColumn(ctx.Dialect(), elForStruct) {
 		structColName = generateIDBasedAlias("gs", arrayData.ElementColumn.ID)
 	}
 
 	var expansion *FromItem
 	if ctx.Dialect().ArrayUnnestUseLateralCorrelation() {
-		expansion = t.unnestExpansionFromItem(arrayExpr, arrayAlias, includeOffset, correlated, arrayData.ElementColumnExpr, ctx.Dialect(), structColName)
+		expansion = t.unnestExpansionFromItem(arrayExpr, arrayAlias, includeOffset, correlated, elForStruct, ctx.Dialect(), structColName)
 	} else {
 		expansion = &FromItem{
 			Type: FromItemTypeTableFunction,
@@ -290,8 +316,8 @@ func (t *ArrayScanTransformer) Transform(data ScanData, ctx TransformContext) (*
 
 	if offsetColumn := arrayData.ArrayOffsetColumn; offsetColumn != nil {
 		ctx.FragmentContext().AddAvailableColumn(offsetColumn.ID, &ColumnInfo{
-			ID:   offsetColumn.ID,
-			Name: "key",
+			ID:         offsetColumn.ID,
+			Name:       "key",
 			Expression: NewColumnExpression("key", expansion.Alias),
 		})
 		ctx.FragmentContext().RegisterColumnScope(offsetColumn.ID, expansion.Alias)

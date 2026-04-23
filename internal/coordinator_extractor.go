@@ -3,9 +3,11 @@ package internal
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	parsed_ast "github.com/vantaboard/go-googlesql/ast"
 	ast "github.com/vantaboard/go-googlesql/resolved_ast"
-	"strings"
+	"github.com/vantaboard/go-googlesql/types"
 )
 
 // extractColumnData converts an ast.Column to ColumnData for JSON serialization
@@ -1743,17 +1745,27 @@ func (e *NodeExtractor) extractArrayScanData(node *ast.ArrayScanNode, ctx Transf
 		joinExprData = &joinData
 	}
 
+	var arrayExprElementType types.Type
+	if node.ArrayExpr() != nil {
+		if t := node.ArrayExpr().Type(); t != nil && t.IsArray() {
+			if at := t.AsArray(); at != nil {
+				arrayExprElementType = at.ElementType()
+			}
+		}
+	}
+
 	return ScanData{
 		Type:       ScanTypeArray,
 		ColumnList: extractColumnDataList(node.ColumnList()),
 		ArrayScan: &ArrayScanData{
-			InputScan:         inputScanData,
-			ArrayExpr:         arrayExprData,
-			ElementColumn:     elementColumnData,
-			ElementColumnExpr: elementColumnExpr,
-			ArrayOffsetColumn: arrayOffsetColumnData,
-			IsOuter:           node.IsOuter(),
-			JoinExpr:          joinExprData,
+			InputScan:            inputScanData,
+			ArrayExpr:            arrayExprData,
+			ElementColumn:        elementColumnData,
+			ElementColumnExpr:    elementColumnExpr,
+			ArrayExprElementType: arrayExprElementType,
+			ArrayOffsetColumn:    arrayOffsetColumnData,
+			IsOuter:              node.IsOuter(),
+			JoinExpr:             joinExprData,
 		},
 	}, nil
 }
