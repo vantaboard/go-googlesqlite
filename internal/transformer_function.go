@@ -755,8 +755,14 @@ func duckDBUnwireGooglesqlStringOperand(arg *SQLExpression) *SQLExpression {
 	j := NewSQLCastExpression(utf8, "JSON", true)
 	header := NewFunctionExpression("try", NewFunctionExpression("lower", NewFunctionExpression("json_extract_string", j, NewLiteralExpression(`'$.header'`))))
 	body := NewFunctionExpression("try", NewFunctionExpression("json_extract_string", j, NewLiteralExpression(`'$.body'`)))
-	isStringWire := NewBinaryExpression(header, "=", NewLiteralExpression(`'string'`))
-	decoded := NewCaseExpression([]*WhenClause{{Condition: isStringWire, Result: body}}, NewLiteralExpression("NULL"))
+	// DATE/DATETIME/TIME use distinct headers (see codec.go ValueLayout); only "string" was handled
+	// here, so TRY_CAST on DATE columns saw raw base64 and returned NULL for join predicates.
+	decoded := NewCaseExpression([]*WhenClause{
+		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'string'`)), Result: body},
+		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'date'`)), Result: body},
+		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'datetime'`)), Result: body},
+		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'time'`)), Result: body},
+	}, NewLiteralExpression("NULL"))
 	pick := NewFunctionExpression("try", decoded)
 	return NewFunctionExpression("coalesce", pick, raw)
 }
