@@ -28,6 +28,37 @@ func TestDuckDBSQLFromValue_arrayAndStruct(t *testing.T) {
 	}
 }
 
+func TestDuckDBNativeLiteralSQL_dateAndTimestampWireLiteral(t *testing.T) {
+	d := DateValue(time.Date(2026, 1, 7, 0, 0, 0, 0, time.UTC))
+	wireDate, err := LiteralFromValue(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDate, ok := duckDBNativeLiteralSQL(wireDate)
+	if !ok {
+		t.Fatalf("expected duckDBNativeLiteralSQL ok for date wire, wire=%q", wireDate)
+	}
+	if strings.Contains(sqlDate, `"`) {
+		t.Fatalf("expected no double quotes (DuckDB identifiers), got %q", sqlDate)
+	}
+	if !strings.Contains(sqlDate, "2026-01-07") {
+		t.Fatalf("expected ISO date in literal, got %q", sqlDate)
+	}
+
+	ts := TimestampValue(time.Date(2026, 1, 7, 12, 0, 0, 0, time.UTC))
+	wireTS, err := LiteralFromValue(ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlTS, ok := duckDBNativeLiteralSQL(wireTS)
+	if !ok {
+		t.Fatalf("expected duckDBNativeLiteralSQL ok for timestamp wire, wire=%q", wireTS)
+	}
+	if strings.Contains(sqlTS, `"`) {
+		t.Fatalf("expected no double quotes, got %q", sqlTS)
+	}
+}
+
 func TestDuckDBNativeLiteralSQL_arrayWireLiteral(t *testing.T) {
 	st := &StructValue{
 		keys:   []string{"k"},

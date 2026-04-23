@@ -164,6 +164,16 @@ func duckDBNativeLiteralSQL(val string) (string, bool) {
 			return "", false
 		}
 		return sql, true
+	case DateValueType, DatetimeValueType, TimeValueType, TimestampValueType, IntervalValueType, NumericValueType, BigNumericValueType, BytesValueType:
+		decoded, err := decodeFromValueLayout(&ValueLayout{Header: layout.Header, Body: layout.Body})
+		if err != nil {
+			return "", false
+		}
+		sql, err := duckDBSQLFromValue(decoded)
+		if err != nil {
+			return "", false
+		}
+		return sql, true
 	default:
 		return "", false
 	}
