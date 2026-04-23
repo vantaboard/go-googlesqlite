@@ -461,6 +461,22 @@ func duckDBApplyIntegralStringEqualityCoercion(left, right *SQLExpression, ld, r
 	return NewSQLCastExpression(unw, tgt, true), right, true
 }
 
+// duckDBApplyStringStringWireComparisonUnwrap applies googlesql VARCHAR wire decode to both operands
+// when both sides are STRING family. INT vs STRING joins are handled by duckDBApplyIntegralStringEqualityCoercion;
+// STRING vs STRING must still decode both cells — otherwise a column that was already unwrapped in a
+// subquery (e.g. UNNEST output) never matches a table column that still holds base64+JSON wire.
+func duckDBApplyStringStringWireComparisonUnwrap(left, right *SQLExpression, ld, rd ExpressionData, op string) (*SQLExpression, *SQLExpression, bool) {
+	if !isDuckDBComparisonOperator(op) {
+		return left, right, false
+	}
+	if !expressionDataIsStringFamily(ld) || !expressionDataIsStringFamily(rd) {
+		return left, right, false
+	}
+	return sqlexpr.DuckDBUnwireGooglesqlStringOperand(left),
+		sqlexpr.DuckDBUnwireGooglesqlStringOperand(right),
+		true
+}
+
 func duckDBMergeTemporalTargets(picks []string) string {
 	hasTS := false
 	hasDate := false
@@ -556,6 +572,9 @@ func duckDBApplyTemporalComparisonCoercionWithExprData(left, right *SQLExpressio
 		return left, right
 	}
 	if l2, r2, ok := duckDBApplyIntegralStringEqualityCoercion(left, right, ld, rd); ok {
+		return l2, r2
+	}
+	if l2, r2, ok := duckDBApplyStringStringWireComparisonUnwrap(left, right, ld, rd, op); ok {
 		return l2, r2
 	}
 	target := duckDBPickTemporalComparisonTarget(left, right, ld, rd)

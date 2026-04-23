@@ -163,6 +163,24 @@ func TestDuckDBIntegralStringEqualityCoercion(t *testing.T) {
 	}
 }
 
+func TestDuckDBStringStringWireComparisonUnwrap(t *testing.T) {
+	left := NewColumnExpression("StaffIdentifier__32")
+	right := NewColumnExpression("StaffID__29")
+	ld := ExpressionData{
+		Type:   ExpressionTypeColumn,
+		Column: &ColumnRefData{ColumnName: "StaffIdentifier__32", Type: types.StringType()},
+	}
+	rd := ExpressionData{
+		Type:   ExpressionTypeColumn,
+		Column: &ColumnRefData{ColumnName: "StaffID__29", Type: types.StringType()},
+	}
+	l, r := duckDBApplyTemporalComparisonCoercionWithExprData(left, right, ld, rd, "=")
+	got := NewBinaryExpression(l, "=", r).String()
+	if strings.Count(got, "from_base64(") < 2 {
+		t.Fatalf("expected googlesql wire unwrap on both STRING join keys (table vs already-decoded CTE), got %q", got)
+	}
+}
+
 func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	// Emulate CAST(col AS DATE) vs a STRING-typed column ref (primitive for optimizer).
