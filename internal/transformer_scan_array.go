@@ -2,6 +2,8 @@ package internal
 
 import (
 	"fmt"
+
+	sqlexpr "github.com/vantaboard/go-googlesql-engine/internal/sqlexpr"
 )
 
 // fromItemPrimaryAlias returns the alias whose columns are visible as the unnest join's outer row.
@@ -21,8 +23,7 @@ func fromItemPrimaryAlias(f *FromItem) string {
 }
 
 // qualifyPlainColumnWithTable fills in TableAlias on an unqualified column reference (copy-on-write).
-// DuckDB FROM UNNEST(expr) requires expr to denote a list correlated to the outer FROM row;
-// bare "col" fails binding with "UNNEST requires a single list as input".
+// Laterally joined json_each(...) must read the wire column from the outer row alias.
 func qualifyPlainColumnWithTable(e *SQLExpression, tableAlias string) *SQLExpression {
 	if e == nil || tableAlias == "" {
 		return e
@@ -44,7 +45,7 @@ func qualifyPlainColumnWithTable(e *SQLExpression, tableAlias string) *SQLExpres
 // The transformer converts GoogleSQL ArrayScan nodes by:
 // - Transforming array expressions through the coordinator
 // - Using SQLite's json_each() table function with googlesqlengine_decode_array() for UNNEST
-// - Using DuckDB unnest() + generate_subscripts() (0-based offset) with JOIN LATERAL when correlated
+// - Using DuckDB json_each() over wire-decoded ARRAY JSON (VARCHAR storage) with JOIN LATERAL when correlated
 // - Handling correlated arrays with proper JOIN semantics (INNER vs LEFT)
 // - Managing element and offset column availability in the fragment context
 // - Supporting both standalone UNNEST and UNNEST with input scans
@@ -71,74 +72,80 @@ func (t *ArrayScanTransformer) unnestExpansionFromItem(
 	correlated bool,
 ) *FromItem {
 	if !correlated {
-		// Single-row source: (SELECT expr AS _arr) then unnest in outer SELECT.
+		// (SELECT expr AS _arr) CROSS JOIN LATERAL json_each(decoded array JSON).
 		src := NewSelectStatement()
 		src.SelectList = []*SelectListItem{{Expression: arrayExpr, Alias: "_arr"}}
 		srcFrom := NewSubqueryFromItem(src, "_unnest_src")
 
+		arrCol := NewColumnExpression("_arr", "_unnest_src")
+		jeFrom := &FromItem{
+			Type: FromItemTypeTableFunction,
+			TableFunction: &TableFunction{
+				Name:      "json_each",
+				Arguments: []*SQLExpression{sqlexpr.DuckDBGooglesqlWireArrayJSONForJsonEach(arrCol)},
+			},
+			Alias: "_je",
+		}
+
 		body := NewSelectStatement()
-		body.FromClause = srcFrom
-		body.SelectList = duckDBUnnestSelectList(arrayExpr, includeOffset, true)
+		body.FromClause = &FromItem{
+			Type: FromItemTypeJoin,
+			Join: &JoinClause{
+				Type:           JoinTypeCross,
+				Left:           srcFrom,
+				Right:          jeFrom,
+				RightIsLateral: true,
+			},
+		}
+		items := []*SelectListItem{
+			{Expression: NewColumnExpression("value", "_je"), Alias: "value"},
+		}
+		if includeOffset {
+			keyRaw := NewColumnExpression("key", "_je")
+			items = append(items, &SelectListItem{
+				Expression: NewSQLCastExpression(NewFunctionExpression("try", keyRaw), "BIGINT", true),
+				Alias:      "key",
+			})
+		}
+		body.SelectList = items
 		return NewSubqueryFromItem(body, arrayAlias)
 	}
 
-	// Correlated UNNEST for DuckDB: scalar unnest() in a LATERAL subquery SELECT list is rejected
-	// ("UNNEST not supported here"). Use table-style UNNEST in FROM, or list_extract + index scan.
 	if includeOffset {
 		return duckDBCorrelatedUnnestWithOffset(arrayExpr, arrayAlias)
 	}
 	return &FromItem{
-		Type:              FromItemTypeUnnest,
-		UnnestExpr:        arrayExpr,
-		Alias:             arrayAlias,
-		UnnestColumnAlias: "value",
+		Type: FromItemTypeTableFunction,
+		TableFunction: &TableFunction{
+			Name:      "json_each",
+			Arguments: []*SQLExpression{sqlexpr.DuckDBGooglesqlWireArrayJSONForJsonEach(arrayExpr)},
+		},
+		Alias: arrayAlias,
 	}
 }
 
-// duckDBCorrelatedUnnestWithOffset expands a correlated array with a 0-based offset column without
-// using scalar unnest() in a LATERAL SELECT list (DuckDB rejects that). Indices come from
-// UNNEST(generate_subscripts(expr, 1)); elements use list_extract(expr, idx).
+// duckDBCorrelatedUnnestWithOffset expands a correlated wire-backed array with json_each key/value
+// (same semantics as SQLite json_each).
 func duckDBCorrelatedUnnestWithOffset(arrayExpr *SQLExpression, arrayAlias string) *FromItem {
-	subscripts := NewFunctionExpression("generate_subscripts", arrayExpr, NewLiteralExpression("1"))
 	body := NewSelectStatement()
 	body.FromClause = &FromItem{
-		Type:              FromItemTypeUnnest,
-		UnnestExpr:        subscripts,
-		Alias:             "_unnest_idx",
-		UnnestColumnAlias: "idx",
-	}
-	idxCol := NewColumnExpression("idx", "_unnest_idx")
-	body.SelectList = []*SelectListItem{
-		{
-			Expression: NewFunctionExpression("list_extract", arrayExpr, idxCol),
-			Alias:      "value",
+		Type: FromItemTypeTableFunction,
+		TableFunction: &TableFunction{
+			Name:      "json_each",
+			Arguments: []*SQLExpression{sqlexpr.DuckDBGooglesqlWireArrayJSONForJsonEach(arrayExpr)},
 		},
+		Alias: "_unnest_json",
+	}
+	keyRaw := NewColumnExpression("key", "_unnest_json")
+	items := []*SelectListItem{
+		{Expression: NewColumnExpression("value", "_unnest_json"), Alias: "value"},
 		{
-			Expression: NewBinaryExpression(idxCol, "-", NewLiteralExpression("1")),
+			Expression: NewSQLCastExpression(NewFunctionExpression("try", keyRaw), "BIGINT", true),
 			Alias:      "key",
 		},
 	}
+	body.SelectList = items
 	return NewSubqueryFromItem(body, arrayAlias)
-}
-
-// duckDBUnnestSelectList builds SELECT list for DuckDB unnest; when useArrColumn is true,
-// unnest(generate_subscripts) read from _arr in _unnest_src.
-func duckDBUnnestSelectList(arrayExpr *SQLExpression, includeOffset bool, useArrColumn bool) []*SelectListItem {
-	var unnestArg *SQLExpression
-	if useArrColumn {
-		unnestArg = NewColumnExpression("_arr", "_unnest_src")
-	} else {
-		unnestArg = arrayExpr
-	}
-
-	unnestCol := NewFunctionExpression("unnest", unnestArg)
-	items := []*SelectListItem{{Expression: unnestCol, Alias: "value"}}
-	if includeOffset {
-		gs := NewFunctionExpression("generate_subscripts", unnestArg, NewLiteralExpression("1"))
-		keyExpr := NewBinaryExpression(gs, "-", NewLiteralExpression("1"))
-		items = append(items, &SelectListItem{Expression: keyExpr, Alias: "key"})
-	}
-	return items
 }
 
 // Transform converts ArrayScanData to a FromItem representing UNNEST operation
