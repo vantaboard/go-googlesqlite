@@ -153,7 +153,7 @@ func (a *CreateTableStmtAction) Prepare(ctx context.Context, conn *Conn) (driver
 	}
 	stmt, err := conn.PrepareContext(ctx, a.spec.PhysicalDDL(a.dialect))
 	if err != nil {
-		return nil, fmt.Errorf("failed to prepare %s: %w", a.query, err)
+		return nil, fmt.Errorf("failed to prepare create table `%s`: %w", a.spec.TableName(), err)
 	}
 	return newCreateTableStmt(stmt, conn, a.catalog, a.spec), nil
 }
@@ -187,7 +187,7 @@ func (a *CreateTableStmtAction) exec(ctx context.Context, conn *Conn) error {
 		}
 	}
 	if _, err := conn.ExecContext(ctx, a.spec.PhysicalDDL(a.dialect), a.args...); err != nil {
-		return fmt.Errorf("failed to exec %s: %w", a.query, err)
+		return fmt.Errorf("failed to exec create table DDL for `%s`: %w", a.spec.TableName(), err)
 	}
 	if a.isAutoIndexMode {
 		if err := a.createIndexAutomatically(ctx, conn); err != nil {
@@ -256,7 +256,7 @@ func (a *CreateViewStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.
 	}
 	stmt, err := conn.PrepareContext(ctx, SQLFragmentString(a.query, a.dialect))
 	if err != nil {
-		return nil, fmt.Errorf("failed to prepare %s: %w", a.query, err)
+		return nil, fmt.Errorf("failed to prepare create view `%s`: %w", a.spec.TableName(), err)
 	}
 	return newCreateViewStmt(stmt, conn, a.catalog, a.spec), nil
 }
@@ -271,7 +271,7 @@ func (a *CreateViewStmtAction) exec(ctx context.Context, conn *Conn) error {
 		}
 	}
 	if _, err := conn.ExecContext(ctx, SQLFragmentString(a.query, a.dialect)); err != nil {
-		return fmt.Errorf("failed to exec %s: %w", a.query, err)
+		return fmt.Errorf("failed to exec create view `%s`: %w", a.spec.TableName(), err)
 	}
 
 	if err := a.catalog.AddNewTableSpec(ctx, conn, a.spec); err != nil {
