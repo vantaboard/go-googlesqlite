@@ -706,8 +706,10 @@ func isPrimitiveSQLiteType(expr ExpressionData) bool {
 // expression: VARCHAR columns often store googlesqlite base64+JSON wire; native concat() would
 // concatenate those blobs. Decode to plain text when the payload is a string wire layout.
 func duckDBUnwireGooglesqlStringScalarForConcatArg(arg *SQLExpression) *SQLExpression {
-	s := NewFunctionExpression("trim", NewSQLCastExpression(arg, "VARCHAR", false))
-	tryB64 := NewFunctionExpression("try", NewFunctionExpression("from_base64", s))
+	raw := NewSQLCastExpression(arg, "VARCHAR", false)
+	// Trim only for base64 decode: coalesce fallback must use raw (e.g. CONCAT(a, ' ', b) — TRIM(' ') is '').
+	trimmed := NewFunctionExpression("trim", raw)
+	tryB64 := NewFunctionExpression("try", NewFunctionExpression("from_base64", trimmed))
 	// DuckDB: from_base64 -> BLOB; decode(blob) -> UTF-8 VARCHAR (convert_from is not always available).
 	utf8raw := NewFunctionExpression("decode", tryB64)
 	utf8 := NewFunctionExpression("try", utf8raw)
@@ -717,7 +719,7 @@ func duckDBUnwireGooglesqlStringScalarForConcatArg(arg *SQLExpression) *SQLExpre
 	isStringWire := NewBinaryExpression(header, "=", NewLiteralExpression(`'string'`))
 	decoded := NewCaseExpression([]*WhenClause{{Condition: isStringWire, Result: body}}, NewLiteralExpression("NULL"))
 	pick := NewFunctionExpression("try", decoded)
-	return NewFunctionExpression("coalesce", pick, s)
+	return NewFunctionExpression("coalesce", pick, raw)
 }
 
 // duckDBRewriteFunctionCall returns a DuckDB-native expression for special cases that are not
