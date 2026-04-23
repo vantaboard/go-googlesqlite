@@ -17,14 +17,14 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
 	"github.com/vantaboard/go-googlesql/types"
-	"github.com/vantaboard/go-googlesqlite"
-	"github.com/vantaboard/go-googlesqlite/internal"
+	googlesqlengine "github.com/vantaboard/go-googlesql-engine"
+	"github.com/vantaboard/go-googlesql-engine/internal"
 	"golang.org/x/term"
 )
 
 type option struct {
 	RawMode       bool   `description:"specify the raw query mode. write sqlite3 query directly. this is a debug mode for developers" long:"raw"`
-	HistoryFile   string `description:"specify the history file for used queries" long:"history" default:".googlesqlite_history"`
+	HistoryFile   string `description:"specify the history file for used queries" long:"history" default:".googlesqlengine_history"`
 	AutoIndexMode bool   `description:"specify the auto index mode. automatically create an index when creating a table" long:"autoindex"`
 	ExplainMode   bool   `description:"specify the explain mode. show results using sqlite3's explain query plan instead of executing the query" long:"explain"`
 	NoColorMode   bool   `description:"specify the not color mode" long:"no-color"`
@@ -38,8 +38,8 @@ const (
 )
 
 const (
-	googlesqliteRawDriver = "googlesqlite_sqlite3"
-	googlesqliteDriver    = "googlesqlite"
+	rawSQLite3DriverName  = "googlesqlengine_sqlite3"
+	googleSQLEngineDriver = "googlesqlengine"
 )
 
 var (
@@ -62,7 +62,7 @@ func run(ctx context.Context) exitCode {
 	if err != nil {
 		flagsErr, ok := err.(*flags.Error)
 		if !ok {
-			fmt.Fprintf(os.Stderr, "[googlesqlite] unknown parsed option error: %[1]T %[1]v\n", err)
+			fmt.Fprintf(os.Stderr, "[googlesqlengine] unknown parsed option error: %[1]T %[1]v\n", err)
 			return exitError
 		}
 		if flagsErr.Type == flags.ErrHelp {
@@ -110,7 +110,7 @@ func (cli *CLI) run(ctx context.Context) error {
 		}
 	}
 	rl, err := readline.NewEx(&readline.Config{
-		Prompt:      "googlesqlite> ",
+		Prompt:      "googlesqlengine> ",
 		HistoryFile: cli.historyFile,
 	})
 	if err != nil {
@@ -141,9 +141,9 @@ func (cli *CLI) getDSN() string {
 
 func (cli *CLI) getDriverName() string {
 	if cli.isRawMode {
-		return googlesqliteRawDriver
+		return rawSQLite3DriverName
 	}
-	return googlesqliteDriver
+	return googleSQLEngineDriver
 }
 
 func (cli *CLI) runCommand(ctx context.Context, query string) error {
@@ -173,13 +173,13 @@ func (cli *CLI) runCommand(ctx context.Context, query string) error {
 }
 
 func (cli *CLI) showTablesCommand(ctx context.Context) error {
-	db, err := sql.Open(googlesqliteRawDriver, cli.getDSN())
+	db, err := sql.Open(rawSQLite3DriverName, cli.getDSN())
 	if err != nil {
-		return fmt.Errorf("failed to open googlesqlite driver: %w", err)
+		return fmt.Errorf("failed to open raw sqlite3 driver: %w", err)
 	}
 	defer func() { _ = db.Close() }()
 
-	rows, err := db.QueryContext(ctx, `SELECT name, spec FROM googlesqlite_catalog WHERE kind = "table"`)
+	rows, err := db.QueryContext(ctx, `SELECT name, spec FROM googlesqlengine_catalog WHERE kind = "table"`)
 	if err != nil {
 		return nil
 	}
@@ -201,13 +201,13 @@ func (cli *CLI) showTablesCommand(ctx context.Context) error {
 }
 
 func (cli *CLI) showFunctionsCommand(ctx context.Context) error {
-	db, err := sql.Open(googlesqliteRawDriver, cli.getDSN())
+	db, err := sql.Open(rawSQLite3DriverName, cli.getDSN())
 	if err != nil {
-		return fmt.Errorf("failed to open googlesqlite driver: %w", err)
+		return fmt.Errorf("failed to open raw sqlite3 driver: %w", err)
 	}
 	defer func() { _ = db.Close() }()
 
-	rows, err := db.QueryContext(ctx, `SELECT name, spec FROM googlesqlite_catalog WHERE kind = "function"`)
+	rows, err := db.QueryContext(ctx, `SELECT name, spec FROM googlesqlengine_catalog WHERE kind = "function"`)
 	if err != nil {
 		return nil
 	}
@@ -259,7 +259,7 @@ func (cli *CLI) autoIndexModeCommand(ctx context.Context, subCommands []string) 
 func (cli *CLI) defaultCommand(ctx context.Context, query string) error {
 	db, err := sql.Open(cli.getDriverName(), cli.getDSN())
 	if err != nil {
-		return fmt.Errorf("failed to open googlesqlite driver: %w", err)
+		return fmt.Errorf("failed to open googlesqlengine driver: %w", err)
 	}
 	defer func() { _ = db.Close() }()
 
@@ -269,12 +269,12 @@ func (cli *CLI) defaultCommand(ctx context.Context, query string) error {
 	}
 	if !cli.isRawMode {
 		if err := conn.Raw(func(c interface{}) error {
-			googlesqliteConn, ok := c.(*googlesqlite.GoogleSQLiteConn)
+			engineConn, ok := c.(*googlesqlengine.GoogleSQLEngineConn)
 			if !ok {
-				return fmt.Errorf("failed to get GoogleSQLiteConn from %T", c)
+				return fmt.Errorf("failed to get GoogleSQLEngineConn from %T", c)
 			}
-			googlesqliteConn.SetExplainMode(cli.isExplainMode)
-			googlesqliteConn.SetAutoIndexMode(cli.isAutoIndexMode)
+			engineConn.SetExplainMode(cli.isExplainMode)
+			engineConn.SetAutoIndexMode(cli.isAutoIndexMode)
 			return nil
 		}); err != nil {
 			return fmt.Errorf("failed to setup connection: %w", err)
@@ -339,7 +339,7 @@ func (cli *CLI) printRowsWithTable(ctx context.Context, rows *sql.Rows) error {
 	for i := 0; i < columnNum; i++ {
 		var v interface{}
 		queryArgs[i] = &v
-		typ, err := googlesqlite.UnmarshalDatabaseTypeName(columnTypes[i].DatabaseTypeName())
+		typ, err := googlesqlengine.UnmarshalDatabaseTypeName(columnTypes[i].DatabaseTypeName())
 		if err != nil {
 			return err
 		}
@@ -388,7 +388,7 @@ func (cli *CLI) printRowsWithGroup(ctx context.Context, rows *sql.Rows) error {
 		if length > max {
 			max = length
 		}
-		typ, err := googlesqlite.UnmarshalDatabaseTypeName(columnTypes[i].DatabaseTypeName())
+		typ, err := googlesqlengine.UnmarshalDatabaseTypeName(columnTypes[i].DatabaseTypeName())
 		if err != nil {
 			return err
 		}
