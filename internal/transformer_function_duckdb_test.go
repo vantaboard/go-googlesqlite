@@ -40,6 +40,37 @@ func TestDuckDBRewrite_getStructField_namedKey(t *testing.T) {
 	}
 }
 
+func TestDuckDBRewrite_getStructField_tryCastWireBackedStruct(t *testing.T) {
+	s := NewColumnExpression("y__1", "t")
+	wire, err := LiteralFromValue(StringValue("enrollmentDate"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyLit := NewLiteralExpression(wire)
+	st, err := types.NewStructType([]*types.StructField{
+		types.NewStructField("enrollmentDate", types.StringType()),
+		types.NewStructField("SchoolYear", types.StringType()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	argData := []ExpressionData{{
+		Type:   ExpressionTypeColumn,
+		Column: &ColumnRefData{ColumnName: "y__1", Type: st},
+	}}
+	out, ok := duckDBRewriteFunctionCall("googlesqlengine_get_struct_field", []*SQLExpression{s, keyLit}, argData, DuckDBDialect{})
+	if !ok {
+		t.Fatal("expected rewrite")
+	}
+	got := out.String()
+	if !strings.Contains(got, "TRY_CAST(") || !strings.Contains(got, `"enrollmentDate" VARCHAR`) {
+		t.Fatalf("expected TRY_CAST to STRUCT(... VARCHAR ...), got %q", got)
+	}
+	if !strings.Contains(got, "struct_extract(") || !strings.Contains(got, "'enrollmentDate'") {
+		t.Fatalf("expected struct_extract on TRY_CAST base, got %q", got)
+	}
+}
+
 func TestDuckDBRewrite_dateCastAndMakeDate(t *testing.T) {
 	x := NewColumnExpression("x")
 	out1, ok := duckDBRewriteFunctionCall("googlesqlengine_date", []*SQLExpression{x}, nil, DuckDBDialect{})

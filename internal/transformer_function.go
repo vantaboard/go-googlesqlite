@@ -860,6 +860,126 @@ func duckDBMakeStructFieldKeyFromExpr(e *SQLExpression) (string, bool) {
 	return duckDBPlainStringFromWireOrQuotedLiteral(e.Value)
 }
 
+// duckDBStructTypeFromExpressionData returns a GoogleSQL STRUCT type carried on a column or CAST,
+// for lowering struct field access on wire-backed DuckDB VARCHAR cells (e.g. UNNEST array elements).
+func duckDBStructTypeFromExpressionData(ed ExpressionData) types.Type {
+	switch ed.Type {
+	case ExpressionTypeColumn:
+		if ed.Column != nil && ed.Column.Type != nil && ed.Column.Type.IsStruct() {
+			return ed.Column.Type
+		}
+	case ExpressionTypeCast:
+		if ed.Cast != nil && ed.Cast.ToType != nil && ed.Cast.ToType.IsStruct() {
+			return ed.Cast.ToType
+		}
+	}
+	return nil
+}
+
+func duckDBQuotedStructFieldName(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+// duckDBGooglesqlTypeToSQLCastType renders a DuckDB type name usable in TRY_CAST(... AS type) for
+// JSON/VARCHAR payloads (UNNEST of ARRAY<STRUCT<...>> in the emulator).
+func duckDBGooglesqlTypeToSQLCastType(t types.Type) (string, bool) {
+	if t == nil {
+		return "", false
+	}
+	if t.IsStruct() {
+		st := t.AsStruct()
+		if st == nil || st.NumFields() == 0 {
+			return "", false
+		}
+		var b strings.Builder
+		b.WriteString("STRUCT(")
+		for i := 0; i < st.NumFields(); i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			f := st.Field(i)
+			if f == nil {
+				return "", false
+			}
+			fn := f.Name()
+			if fn == "" {
+				return "", false
+			}
+			ft := f.Type()
+			inner, ok := duckDBGooglesqlTypeToSQLCastType(ft)
+			if !ok {
+				return "", false
+			}
+			b.WriteString(duckDBQuotedStructFieldName(fn))
+			b.WriteString(" ")
+			b.WriteString(inner)
+		}
+		b.WriteString(")")
+		return b.String(), true
+	}
+	if t.IsArray() {
+		at := t.AsArray()
+		if at == nil {
+			return "", false
+		}
+		inner, ok := duckDBGooglesqlTypeToSQLCastType(at.ElementType())
+		if !ok {
+			return "VARCHAR", true
+		}
+		return "LIST(" + inner + ")", true
+	}
+	switch {
+	case t.IsString():
+		return "VARCHAR", true
+	case t.IsBytes():
+		return "BLOB", true
+	case t.IsBool():
+		return "BOOLEAN", true
+	case t.IsInteger32():
+		return "INTEGER", true
+	case t.IsInteger64(), t.IsUint32(), t.IsUint64():
+		return "BIGINT", true
+	case t.IsFloat():
+		return "FLOAT", true
+	case t.IsDouble():
+		return "DOUBLE", true
+	case t.IsDate():
+		return "DATE", true
+	case t.IsTime():
+		return "TIME", true
+	case t.IsDatetime(), t.IsTimestamp():
+		return "TIMESTAMP", true
+	case t.IsInterval():
+		return "INTERVAL", true
+	case t.IsJson(), t.IsJsonType():
+		return "JSON", true
+	case t.IsNumericType(), t.IsBigNumericType():
+		// JSON numeric fields are unparsed strings in many layouts; VARCHAR keeps TRY_CAST permissive.
+		return "VARCHAR", true
+	default:
+		return "", false
+	}
+}
+
+// duckDBStructFieldAccessBaseExpr returns the DuckDB expression whose fields struct_extract reads.
+// Wire-backed STRUCT values (VARCHAR JSON / googlesql layout) are TRY_CAST to a native STRUCT type
+// when analyzer metadata provides a STRUCT type for the base expression.
+func duckDBStructFieldAccessBaseExpr(base *SQLExpression, argData []ExpressionData) *SQLExpression {
+	if base == nil || len(argData) < 1 {
+		return base
+	}
+	st := duckDBStructTypeFromExpressionData(argData[0])
+	if st == nil {
+		return base
+	}
+	castSQL, ok := duckDBGooglesqlTypeToSQLCastType(st)
+	if !ok {
+		return base
+	}
+	unwired := sqlexpr.DuckDBUnwireGooglesqlStringOperand(base)
+	return NewSQLCastExpression(unwired, castSQL, true)
+}
+
 func duckDBSimpleCaseExprToSearchedCaseForWireStrings(valueExpr *SQLExpression, whenClauses []*WhenClause, elseExpr *SQLExpression) *SQLExpression {
 	left := sqlexpr.DuckDBUnwireGooglesqlStringOperand(valueExpr)
 	searched := make([]*WhenClause, len(whenClauses))
@@ -1012,10 +1132,11 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 		}
 	case "googlesqlengine_get_struct_field":
 		if len(args) == 2 {
+			base := duckDBStructFieldAccessBaseExpr(args[0], argData)
 			// Named STRUCT: second arg is a string field key (see extractGetStructFieldData for DuckDB).
 			if key, ok := googlesqlengineWireStringArg(args[1]); ok {
 				esc := strings.ReplaceAll(key, "'", "''")
-				return NewFunctionExpression("struct_extract", args[0], NewLiteralExpression("'"+esc+"'")), true
+				return NewFunctionExpression("struct_extract", base, NewLiteralExpression("'"+esc+"'")), true
 			}
 			idx, ok := googlesqlengineWireIntArg(args[1])
 			if !ok || idx < 0 {
@@ -1023,7 +1144,7 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 			}
 			// Anonymous tuple: GoogleSQL field index is 0-based; DuckDB struct_extract index form is 1-based.
 			duck1 := idx + 1
-			return NewFunctionExpression("struct_extract", args[0], NewLiteralExpression(strconv.FormatInt(duck1, 10))), true
+			return NewFunctionExpression("struct_extract", base, NewLiteralExpression(strconv.FormatInt(duck1, 10))), true
 		}
 	case "googlesqlengine_date":
 		switch len(args) {
