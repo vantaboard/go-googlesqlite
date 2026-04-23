@@ -13,18 +13,21 @@ func duckDBRegexpExtractFirstGroup(str *SQLExpression, pattern string) *SQLExpre
 func duckDBWireGooglesqlUtf8Payload(arg *SQLExpression) *SQLExpression {
 	raw := NewSQLCastExpression(arg, "VARCHAR", false)
 	trimmed := NewFunctionExpression("trim", raw)
-	b64Payload := NewFunctionExpression("try", NewFunctionExpression("from_base64", trimmed))
+	// CAST(JSON AS VARCHAR) for a JSON string cell includes wrapping double quotes; those must be
+	// stripped before from_base64 / first-byte checks (e.g. UNNEST of ARRAY<STRING> wire tokens).
+	dequoted := NewFunctionExpression("trim", trimmed, NewLiteralExpression(`'"'`))
+	b64Payload := NewFunctionExpression("try", NewFunctionExpression("from_base64", dequoted))
 	decodedUtf8 := NewFunctionExpression("try", NewFunctionExpression("decode", b64Payload))
 	isB64 := NewBinaryExpression(b64Payload, "IS NOT", NewLiteralExpression("NULL"))
 
-	firstChar := NewFunctionExpression("substring", trimmed, NewLiteralExpression("1"), NewLiteralExpression("1"))
+	firstChar := NewFunctionExpression("substring", dequoted, NewLiteralExpression("1"), NewLiteralExpression("1"))
 	looksLikeJSONText := NewBinaryExpression(
 		NewBinaryExpression(firstChar, "=", NewLiteralExpression(`'{'`)),
 		"OR",
 		NewBinaryExpression(firstChar, "=", NewLiteralExpression(`'['`)),
 	)
 	plainOrNull := NewCaseExpression([]*WhenClause{
-		{Condition: looksLikeJSONText, Result: trimmed},
+		{Condition: looksLikeJSONText, Result: dequoted},
 	}, NewLiteralExpression("NULL"))
 
 	return NewCaseExpression([]*WhenClause{
