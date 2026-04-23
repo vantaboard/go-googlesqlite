@@ -137,6 +137,9 @@ func TestDuckDBTemporalComparisonCoercionExprDataTwoDateColumns(t *testing.T) {
 	if !strings.Contains(got, "TRY_CAST(") || strings.Count(got, "TRY_CAST(") < 2 {
 		t.Fatalf("expected TRY_CAST on both DATE-typed column refs, got %q", got)
 	}
+	if !strings.Contains(got, "from_base64(") {
+		t.Fatalf("expected wire unwrap before TRY_CAST for VARCHAR-backed DATE columns, got %q", got)
+	}
 }
 
 func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
@@ -177,6 +180,9 @@ func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
 	got := expr.String()
 	if !strings.Contains(got, "TRY_CAST(") || !strings.Contains(got, " AS DATE)") {
 		t.Fatalf("expected TRY_CAST for mixed DATE cast vs VARCHAR column, got %q", got)
+	}
+	if !strings.Contains(got, "from_base64(") {
+		t.Fatalf("expected wire unwrap on STRING column before TRY_CAST, got %q", got)
 	}
 }
 
@@ -272,6 +278,9 @@ func TestTransformDuckDB_extractYearCastsDateColumnForDatePart(t *testing.T) {
 	}
 	if !strings.Contains(got, "TRY_CAST(") || !strings.Contains(got, " AS DATE)") {
 		t.Fatalf("expected TRY_CAST ... AS DATE for VARCHAR-backed DATE column, got %q", got)
+	}
+	if !strings.Contains(got, "from_base64(") {
+		t.Fatalf("expected wire unwrap inside date_part temporal cast, got %q", got)
 	}
 }
 

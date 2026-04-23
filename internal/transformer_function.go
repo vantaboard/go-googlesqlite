@@ -291,6 +291,38 @@ func duckDBExprIsList(e *SQLExpression) bool {
 	return e != nil && e.Type == ExpressionTypeList && e.ListExpression != nil
 }
 
+// duckDBExprShouldUnwireBeforeTemporalCast reports whether TRY_CAST(... AS DATE/TIMESTAMP/...)
+// should run on the decoded googlesqlite payload: DuckDB stores DATE/TIMESTAMP and many STRING
+// values as VARCHAR wire (base64+JSON); TRY_CAST on the raw cell is always NULL.
+func duckDBExprShouldUnwireBeforeTemporalCast(d ExpressionData) bool {
+	if _, ok := duckDBExpressionDataTemporalTarget(d); ok {
+		return true
+	}
+	if d.Type == ExpressionTypeColumn && d.Column != nil && d.Column.Type != nil && d.Column.Type.IsString() {
+		return true
+	}
+	if d.Type == ExpressionTypeCast && d.Cast != nil && d.Cast.FromType != nil && d.Cast.FromType.IsString() {
+		return true
+	}
+	return false
+}
+
+// duckDBTryCastTemporalMaybeWire applies TRY_CAST after optional wire unwrap for DuckDB VARCHAR storage.
+func duckDBTryCastTemporalMaybeWire(expr *SQLExpression, meta ExpressionData, target string) *SQLExpression {
+	inner := expr
+	if duckDBExprShouldUnwireBeforeTemporalCast(meta) {
+		inner = duckDBUnwireGooglesqlStringOperand(expr)
+	}
+	return NewSQLCastExpression(inner, target, true)
+}
+
+func duckDBTryCastTemporalMaybeWirePtr(expr *SQLExpression, meta *ExpressionData, target string) *SQLExpression {
+	if meta == nil {
+		return NewSQLCastExpression(expr, target, true)
+	}
+	return duckDBTryCastTemporalMaybeWire(expr, *meta, target)
+}
+
 // duckDBExpressionDataTemporalTarget maps GoogleSQL column/cast types to DuckDB temporal cast targets.
 func duckDBExpressionDataTemporalTarget(d ExpressionData) (string, bool) {
 	switch d.Type {
@@ -354,16 +386,16 @@ func duckDBWrapExprForDuckDBDatePart(src *SQLExpression, srcMeta ExpressionData,
 		return src
 	}
 	if castTo, ok := duckDBExpressionDataTemporalTarget(srcMeta); ok {
-		return NewSQLCastExpression(src, castTo, true)
+		return duckDBTryCastTemporalMaybeWire(src, srcMeta, castTo)
 	}
 	// Unknown static type (still often VARCHAR in DuckDB storage): pick a TRY_CAST target from part.
 	switch strings.ToLower(strings.TrimSpace(duckPart)) {
 	case "year", "month", "day", "quarter", "dow", "doy", "week", "isoweek", "isoyear":
-		return NewSQLCastExpression(src, "DATE", true)
+		return NewSQLCastExpression(duckDBUnwireGooglesqlStringOperand(src), "DATE", true)
 	case "hour", "minute", "second", "milliseconds", "microseconds":
-		return NewSQLCastExpression(src, "TIMESTAMP", true)
+		return NewSQLCastExpression(duckDBUnwireGooglesqlStringOperand(src), "TIMESTAMP", true)
 	default:
-		return NewSQLCastExpression(src, "TIMESTAMP", true)
+		return NewSQLCastExpression(duckDBUnwireGooglesqlStringOperand(src), "TIMESTAMP", true)
 	}
 }
 
@@ -442,7 +474,8 @@ func duckDBExprTemporalCastTarget(e *SQLExpression) (target string, ok bool) {
 
 // duckDBApplyTemporalComparisonCoercion wraps the non-cast side with TRY_CAST when exactly one
 // operand is already a temporal CAST/TRY_CAST. Skips when the other side is an IN-list.
-func duckDBApplyTemporalComparisonCoercion(left, right *SQLExpression, op string) (*SQLExpression, *SQLExpression) {
+// ld/rd are optional ExpressionData for the left/right operand (unwrap VARCHAR wire before TRY_CAST).
+func duckDBApplyTemporalComparisonCoercion(left, right *SQLExpression, op string, ld, rd *ExpressionData) (*SQLExpression, *SQLExpression) {
 	if !isDuckDBComparisonOperator(op) {
 		return left, right
 	}
@@ -452,9 +485,9 @@ func duckDBApplyTemporalComparisonCoercion(left, right *SQLExpression, op string
 	lt, lok := duckDBExprTemporalCastTarget(left)
 	rt, rok := duckDBExprTemporalCastTarget(right)
 	if lok && !rok && !duckDBExprIsList(right) {
-		right = NewSQLCastExpression(right, lt, true)
+		right = duckDBTryCastTemporalMaybeWirePtr(right, rd, lt)
 	} else if rok && !lok && !duckDBExprIsList(left) {
-		left = NewSQLCastExpression(left, rt, true)
+		left = duckDBTryCastTemporalMaybeWirePtr(left, ld, rt)
 	}
 	return left, right
 }
@@ -471,11 +504,11 @@ func duckDBApplyTemporalComparisonCoercionWithExprData(left, right *SQLExpressio
 	target := duckDBPickTemporalComparisonTarget(left, right, ld, rd)
 	if target != "" {
 		if expressionDataIsIntegralFamily(ld) || expressionDataIsIntegralFamily(rd) {
-			return duckDBApplyTemporalComparisonCoercion(left, right, op)
+			return duckDBApplyTemporalComparisonCoercion(left, right, op, &ld, &rd)
 		}
-		return NewSQLCastExpression(left, target, true), NewSQLCastExpression(right, target, true)
+		return duckDBTryCastTemporalMaybeWire(left, ld, target), duckDBTryCastTemporalMaybeWire(right, rd, target)
 	}
-	return duckDBApplyTemporalComparisonCoercion(left, right, op)
+	return duckDBApplyTemporalComparisonCoercion(left, right, op, &ld, &rd)
 }
 
 // duckDBCoerceOptimizedCallForDuckDB reapplies temporal comparison rules on the optimized primitive path.
@@ -512,7 +545,7 @@ func duckDBCoerceTemporalComparisons(e *SQLExpression) *SQLExpression {
 			if isDuckDBComparisonOperator(be.Operator) {
 				l := duckDBCoerceTemporalComparisons(be.Left)
 				r := duckDBCoerceTemporalComparisons(be.Right)
-				l, r = duckDBApplyTemporalComparisonCoercion(l, r, be.Operator)
+				l, r = duckDBApplyTemporalComparisonCoercion(l, r, be.Operator, nil, nil)
 				return NewBinaryExpression(l, be.Operator, r)
 			}
 			return NewBinaryExpression(
