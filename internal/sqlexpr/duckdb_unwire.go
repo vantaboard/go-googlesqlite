@@ -1,21 +1,33 @@
 package sqlexpr
 
 // duckDBGooglesqlWireAsJSON decodes a VARCHAR googlesqlengine wire column to a JSON value expression.
-// Cells may be base64(JSON layout) or plain JSON text. Do not use coalesce(b64, plain): DuckDB may still
-// evaluate both branches when optimizing joins, and TRY_CAST(trimmed AS JSON) on base64 text ('eyJ...')
-// throws Conversion Error even inside try() in some builds. Branch explicitly: only run the plain-text JSON
-// path when from_base64 did not yield a payload.
+// Cells may be base64(JSON layout) or plain JSON text.
+//
+// When try(from_base64(trim)) is NULL (invalid padding, wrong alphabet, etc.), we must not run
+// TRY_CAST(trim AS JSON): base64 wire such as 'eyJ...' is not JSON and DuckDB may still surface
+// Conversion Error from TRY_CAST(... AS JSON) even when wrapped in try(). Only attempt plain JSON
+// parse when trim clearly looks like JSON (starts with '{' or '[' after trim).
 func duckDBGooglesqlWireAsJSON(arg *SQLExpression) *SQLExpression {
 	raw := NewSQLCastExpression(arg, "VARCHAR", false)
 	trimmed := NewFunctionExpression("trim", raw)
 	b64Payload := NewFunctionExpression("try", NewFunctionExpression("from_base64", trimmed))
 	decodedStr := NewFunctionExpression("try", NewFunctionExpression("decode", b64Payload))
 	jsonFromDecoded := NewFunctionExpression("try", NewSQLCastExpression(decodedStr, "JSON", true))
-	jsonFromTrim := NewFunctionExpression("try", NewSQLCastExpression(trimmed, "JSON", true))
 	isB64 := NewBinaryExpression(b64Payload, "IS NOT", NewLiteralExpression("NULL"))
+
+	firstChar := NewFunctionExpression("substring", trimmed, NewLiteralExpression("1"), NewLiteralExpression("1"))
+	looksLikeJSONText := NewBinaryExpression(
+		NewBinaryExpression(firstChar, "=", NewLiteralExpression(`'{'`)),
+		"OR",
+		NewBinaryExpression(firstChar, "=", NewLiteralExpression(`'['`)),
+	)
+	jsonFromPlainSafe := NewCaseExpression([]*WhenClause{
+		{Condition: looksLikeJSONText, Result: NewFunctionExpression("try", NewSQLCastExpression(trimmed, "JSON", true))},
+	}, NewSQLCastExpression(NewLiteralExpression("NULL"), "JSON", false))
+
 	return NewCaseExpression([]*WhenClause{
 		{Condition: isB64, Result: jsonFromDecoded},
-	}, jsonFromTrim)
+	}, jsonFromPlainSafe)
 }
 
 // DuckDBUnwireGooglesqlStringOperand mirrors decodeStringOrLayout for a single SQL expression.
