@@ -395,7 +395,7 @@ type FunctionCall struct {
 }
 
 func (f *FunctionCall) WriteSql(writer *SQLWriter) {
-	name, args, distinct, countStar, aggFilter := DuckDBNormalizeAggregateCall(f, writer.dialect)
+	name, args, distinct, countStar, aggFilter, aggOrderBy, aggLimit := DuckDBNormalizeAggregateCall(f, writer.dialect)
 	writer.Write(name)
 	writer.Write("(")
 	if countStar {
@@ -412,6 +412,19 @@ func (f *FunctionCall) WriteSql(writer *SQLWriter) {
 		}
 	}
 	writer.Write(")")
+	if len(aggOrderBy) > 0 {
+		writer.Write(" ORDER BY ")
+		for i, item := range aggOrderBy {
+			if i > 0 {
+				writer.Write(", ")
+			}
+			item.WriteSql(writer)
+		}
+	}
+	if aggLimit != nil {
+		writer.Write(" LIMIT ")
+		aggLimit.WriteSql(writer)
+	}
 	if aggFilter != nil {
 		writer.Write(" FILTER (WHERE ")
 		aggFilter.WriteSql(writer)
@@ -426,21 +439,40 @@ func (f *FunctionCall) WriteSql(writer *SQLWriter) {
 
 // DuckDBNormalizeAggregateCall strips SQLite-only synthetic args (e.g. googlesqlengine_distinct) and
 // maps COUNT() with no arguments to COUNT(*) for DuckDB.
-func DuckDBNormalizeAggregateCall(f *FunctionCall, d SQLDialect) (name string, args []*SQLExpression, distinct bool, countStar bool, aggFilter *SQLExpression) {
+func DuckDBNormalizeAggregateCall(f *FunctionCall, d SQLDialect) (name string, args []*SQLExpression, distinct bool, countStar bool, aggFilter *SQLExpression, aggOrderBy []*OrderByItem, aggLimit *SQLExpression) {
 	name = f.Name
 	args = f.Arguments
 	distinct = f.IsDistinct
 	if d == nil || d.ID() != "duckdb" {
-		return name, args, distinct, false, nil
+		return name, args, distinct, false, nil, nil, nil
 	}
 	ignoreNulls := false
 	for len(args) > 0 && isBareFunctionCall(args[len(args)-1], "googlesqlengine_ignore_nulls") {
 		ignoreNulls = true
 		args = args[:len(args)-1]
 	}
+	// Suffix layout (inner → outer): ... ORDER BY exprs, DISTINCT marker, LIMIT expr, HAVING modifier, IGNORE NULLS.
+	// Peel from the right: LIMIT, DISTINCT, then ORDER BY markers (see coordinator_extractor aggregate options).
+	var limit *SQLExpression
+	if lim, ok := duckDBTryPeelAggregateLimit(&args); ok {
+		limit = lim
+	}
 	for len(args) > 0 && isBareFunctionCall(args[len(args)-1], "googlesqlengine_distinct") {
 		distinct = true
 		args = args[:len(args)-1]
+	}
+	var orderBy []*OrderByItem
+	for {
+		expr, asc, ok := duckDBTryPeelAggregateOrderBy(args)
+		if !ok {
+			break
+		}
+		args = args[:len(args)-1]
+		dir := "DESC"
+		if asc {
+			dir = "ASC"
+		}
+		orderBy = append([]*OrderByItem{{Expression: expr, Direction: dir}}, orderBy...)
 	}
 	for len(args) > 0 && isBareFunctionCall(args[0], "googlesqlengine_distinct") {
 		distinct = true
@@ -453,7 +485,59 @@ func DuckDBNormalizeAggregateCall(f *FunctionCall, d SQLDialect) (name string, a
 	if name == "count" && len(args) == 0 {
 		countStar = true
 	}
-	return name, args, distinct, countStar, aggFilter
+	return name, args, distinct, countStar, aggFilter, orderBy, limit
+}
+
+func duckDBTryPeelAggregateLimit(args *[]*SQLExpression) (*SQLExpression, bool) {
+	a := *args
+	if len(a) == 0 {
+		return nil, false
+	}
+	last := a[len(a)-1]
+	if last == nil || last.Type != ExpressionTypeFunction || last.FunctionCall == nil {
+		return nil, false
+	}
+	fc := last.FunctionCall
+	if fc.Name != "googlesqlengine_limit" || len(fc.Arguments) != 1 {
+		return nil, false
+	}
+	*args = a[:len(a)-1]
+	return fc.Arguments[0], true
+}
+
+// duckDBTryPeelAggregateOrderBy reports whether the last argument is googlesqlengine_order_by(expr, ascBool).
+func duckDBTryPeelAggregateOrderBy(args []*SQLExpression) (expr *SQLExpression, asc bool, ok bool) {
+	if len(args) == 0 {
+		return nil, false, false
+	}
+	last := args[len(args)-1]
+	if last == nil || last.Type != ExpressionTypeFunction || last.FunctionCall == nil {
+		return nil, false, false
+	}
+	fc := last.FunctionCall
+	if fc.Name != "googlesqlengine_order_by" || len(fc.Arguments) != 2 {
+		return nil, false, false
+	}
+	asc = true
+	if lit, litOK := literalBoolAscending(fc.Arguments[1]); litOK {
+		asc = lit
+	}
+	return fc.Arguments[0], asc, true
+}
+
+func literalBoolAscending(e *SQLExpression) (asc bool, ok bool) {
+	if e == nil || e.Type != ExpressionTypeLiteral {
+		return false, false
+	}
+	s := strings.TrimSpace(strings.ToLower(e.Value))
+	switch s {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func isBareFunctionCall(e *SQLExpression, want string) bool {

@@ -161,7 +161,7 @@ func (b sqlDialectBridge) EmitWireLiteral(w *sqlexpr.SQLWriter, val string) {
 	w.Write(val)
 }
 
-func (b sqlDialectBridge) NormalizeAggregate(f *sqlexpr.FunctionCall) (string, []*sqlexpr.SQLExpression, bool, bool, *sqlexpr.SQLExpression) {
+func (b sqlDialectBridge) NormalizeAggregate(f *sqlexpr.FunctionCall) (string, []*sqlexpr.SQLExpression, bool, bool, *sqlexpr.SQLExpression, []*sqlexpr.OrderByItem, *sqlexpr.SQLExpression) {
 	return sqlexpr.DuckDBNormalizeAggregateCall(f, b)
 }
 

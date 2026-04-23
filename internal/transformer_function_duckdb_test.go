@@ -107,3 +107,28 @@ func TestDuckDBAggregateWriteSql_countTrailingDistinct(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestDuckDBAggregateWriteSql_stringAggDistinctOrderBy(t *testing.T) {
+	col := NewColumnExpression("ProgramName__12")
+	delim := NewLiteralExpression(`'|'`)
+	asc := NewLiteralExpression("true")
+	orderArg := &SQLExpression{Type: ExpressionTypeFunction, FunctionCall: &FunctionCall{
+		Name:      "googlesqlengine_order_by",
+		Arguments: []*SQLExpression{col, asc},
+	}}
+	distArg := &SQLExpression{Type: ExpressionTypeFunction, FunctionCall: &FunctionCall{Name: "googlesqlengine_distinct", Arguments: []*SQLExpression{}}}
+	fc := &FunctionCall{Name: "string_agg", Arguments: []*SQLExpression{col, delim, orderArg, distArg}}
+	expr := &SQLExpression{Type: ExpressionTypeFunction, FunctionCall: fc}
+	w := NewSQLWriterForDialect(DuckDBDialect{})
+	expr.WriteSql(w)
+	got := w.String()
+	if strings.Contains(strings.ReplaceAll(got, " ", ""), "googlesqlengine") {
+		t.Fatalf("got %q", got)
+	}
+	if !strings.Contains(got, "ORDER BY") || !strings.Contains(got, "ASC") {
+		t.Fatalf("expected ORDER BY ... ASC after aggregate args, got %q", got)
+	}
+	if !strings.Contains(strings.ReplaceAll(got, " ", ""), "string_agg(DISTINCT") {
+		t.Fatalf("expected DISTINCT inside aggregate call, got %q", got)
+	}
+}
