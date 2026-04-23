@@ -522,6 +522,27 @@ func duckDBCoerceOptimizedCallForDuckDB(name string, args []*SQLExpression, argD
 	return duckDBCoerceTemporalComparisons(optimized)
 }
 
+// duckDBCoerceInPredicateForWire unwraps the probe expression for IN (...) when it may hold
+// googlesqlite VARCHAR wire. Temporal comparison coercion skips list RHS, so without this
+// `SchoolYear IN ('a','b')` compares raw wire to plain literals and matches nothing.
+func duckDBCoerceInPredicateForWire(e *SQLExpression, argData []ExpressionData) *SQLExpression {
+	if e == nil || e.Type != ExpressionTypeBinary || e.BinaryExpression == nil {
+		return e
+	}
+	be := e.BinaryExpression
+	if be.Operator != "IN" || be.Left == nil || !duckDBExprIsList(be.Right) {
+		return e
+	}
+	if len(argData) < 1 {
+		return e
+	}
+	if !duckDBExprShouldUnwireBeforeTemporalCast(argData[0]) {
+		return e
+	}
+	left := duckDBUnwireGooglesqlStringOperand(be.Left)
+	return NewBinaryExpression(left, "IN", be.Right)
+}
+
 // duckDBCoerceTemporalComparisons walks AND/OR/NOT and comparison nodes so DuckDB sees
 // TRY_CAST on VARCHAR operands paired with CAST(... AS DATE/TIMESTAMP/...).
 func duckDBCoerceTemporalComparisons(e *SQLExpression) *SQLExpression {
@@ -596,6 +617,7 @@ func duckDBOptimizeComparatorOrLogical(name string, args []*SQLExpression, argDa
 		if err != nil {
 			return nil, false
 		}
+		e = duckDBCoerceInPredicateForWire(e, argData)
 		return duckDBCoerceTemporalComparisons(e), true
 	default:
 		if _, found := functionToOperator[name]; !found {

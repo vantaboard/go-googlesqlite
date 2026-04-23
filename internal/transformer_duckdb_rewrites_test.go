@@ -232,6 +232,31 @@ func TestTransformDuckDB_castDateColumnToDateUnwrapsWire(t *testing.T) {
 	}
 }
 
+func TestTransformDuckDB_inUnwrapsWireForStringColumn(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	fn := NewFunctionCallExpressionData("googlesqlite_in",
+		ExpressionData{Type: ExpressionTypeColumn, Column: &ColumnRefData{ColumnID: 1, ColumnName: "SchoolYear__11", Type: types.StringType()}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("2025-2026")}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("2024-2025")}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("2018-2019")}},
+	)
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	fcx := tctx.FragmentContext()
+	fcx.RegisterColumnScope(1, "sy")
+	fcx.AddAvailableColumn(1, &ColumnInfo{Name: "SchoolYear__11"})
+	expr, err := coord.TransformExpression(fn, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if !strings.Contains(got, " IN ") || !strings.Contains(got, "from_base64(") {
+		t.Fatalf("expected IN with wire unwrap on probe, got %q", got)
+	}
+}
+
 func TestTransformDuckDB_concatUnwrapsWireBeforeNativeConcat(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	fn := NewFunctionCallExpressionData("googlesqlite_concat",
