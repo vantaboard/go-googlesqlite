@@ -12,7 +12,7 @@ import (
 //
 // The transformer converts GoogleSQL ArrayScan nodes by:
 // - Transforming array expressions through the coordinator
-// - Using SQLite's json_each() table function with googlesqlite_decode_array() for UNNEST
+// - Using SQLite's json_each() table function with googlesqlengine_decode_array() for UNNEST
 // - Using DuckDB unnest() + generate_subscripts() (0-based offset) with JOIN LATERAL when correlated
 // - Handling correlated arrays with proper JOIN semantics (INNER vs LEFT)
 // - Managing element and offset column availability in the fragment context
@@ -51,8 +51,42 @@ func (t *ArrayScanTransformer) unnestExpansionFromItem(
 		return NewSubqueryFromItem(body, arrayAlias)
 	}
 
+	// Correlated UNNEST for DuckDB: scalar unnest() in a LATERAL subquery SELECT list is rejected
+	// ("UNNEST not supported here"). Use table-style UNNEST in FROM, or list_extract + index scan.
+	if includeOffset {
+		return duckDBCorrelatedUnnestWithOffset(arrayExpr, arrayAlias)
+	}
+	return &FromItem{
+		Type:              FromItemTypeUnnest,
+		UnnestExpr:        arrayExpr,
+		Alias:             arrayAlias,
+		UnnestColumnAlias: "value",
+	}
+}
+
+// duckDBCorrelatedUnnestWithOffset expands a correlated array with a 0-based offset column without
+// using scalar unnest() in a LATERAL SELECT list (DuckDB rejects that). Indices come from
+// UNNEST(generate_subscripts(expr, 1)); elements use list_extract(expr, idx).
+func duckDBCorrelatedUnnestWithOffset(arrayExpr *SQLExpression, arrayAlias string) *FromItem {
+	subscripts := NewFunctionExpression("generate_subscripts", arrayExpr, NewLiteralExpression("1"))
 	body := NewSelectStatement()
-	body.SelectList = duckDBUnnestSelectList(arrayExpr, includeOffset, false)
+	body.FromClause = &FromItem{
+		Type:              FromItemTypeUnnest,
+		UnnestExpr:        subscripts,
+		Alias:             "_unnest_idx",
+		UnnestColumnAlias: "idx",
+	}
+	idxCol := NewColumnExpression("idx", "_unnest_idx")
+	body.SelectList = []*SelectListItem{
+		{
+			Expression: NewFunctionExpression("list_extract", arrayExpr, idxCol),
+			Alias:      "value",
+		},
+		{
+			Expression: NewBinaryExpression(idxCol, "-", NewLiteralExpression("1")),
+			Alias:      "key",
+		},
+	}
 	return NewSubqueryFromItem(body, arrayAlias)
 }
 
@@ -115,7 +149,7 @@ func (t *ArrayScanTransformer) Transform(data ScanData, ctx TransformContext) (*
 				Name: "json_each",
 				Arguments: []*SQLExpression{
 					NewFunctionExpression(
-						"googlesqlite_decode_array",
+						"googlesqlengine_decode_array",
 						arrayExpr,
 					),
 				},

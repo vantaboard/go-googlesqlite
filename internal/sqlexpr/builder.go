@@ -634,7 +634,10 @@ type FromItem struct {
 	WithRef       string
 	TableFunction *TableFunction
 	UnnestExpr    *SQLExpression
-	Hints         []string
+	// UnnestColumnAlias, when set with Alias, emits UNNEST(expr) AS alias(col)
+	// (DuckDB requires table-style UNNEST in FROM; scalar unnest() in SELECT is rejected in LATERAL subqueries).
+	UnnestColumnAlias string
+	Hints             []string
 }
 
 func (f *FromItem) WriteSql(writer *SQLWriter) {
@@ -684,6 +687,11 @@ func (f *FromItem) WriteSql(writer *SQLWriter) {
 		if f.Alias != "" {
 			writer.Write(" AS ")
 			writer.WriteQuotedIdent(f.Alias)
+			if f.UnnestColumnAlias != "" {
+				writer.Write("(")
+				writer.WriteQuotedIdent(f.UnnestColumnAlias)
+				writer.Write(")")
+			}
 		}
 	}
 }
