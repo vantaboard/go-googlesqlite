@@ -3,6 +3,8 @@ package internal
 import (
 	"strings"
 	"testing"
+
+	"github.com/vantaboard/go-googlesql/types"
 )
 
 func TestDuckDBRewrite_getStructField_oneBased(t *testing.T) {
@@ -54,6 +56,22 @@ func TestDuckDBRewrite_dateCastAndMakeDate(t *testing.T) {
 	}
 	if got := out3.String(); !strings.Contains(got, "make_date(") {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestDuckDBRewrite_dateUnwrapsWireForDateTypedColumn(t *testing.T) {
+	x := NewColumnExpression("StartDate__10")
+	argData := []ExpressionData{{
+		Type:   ExpressionTypeColumn,
+		Column: &ColumnRefData{ColumnName: "StartDate__10", Type: types.DateType()},
+	}}
+	out, ok := duckDBRewriteFunctionCall("googlesqlite_date", []*SQLExpression{x}, argData, DuckDBDialect{})
+	if !ok {
+		t.Fatal("expected rewrite")
+	}
+	got := out.String()
+	if !strings.Contains(got, " AS DATE)") || !strings.Contains(got, "from_base64(") {
+		t.Fatalf("expected CAST after wire unwrap for DATE(col), got %q", got)
 	}
 }
 

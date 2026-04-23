@@ -942,10 +942,18 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 	case "googlesqlite_date":
 		switch len(args) {
 		case 1:
-			return NewSQLCastExpression(args[0], "DATE", false), true
+			inner := args[0]
+			if len(argData) >= 1 && duckDBExprShouldUnwireBeforeTemporalCast(argData[0]) {
+				inner = duckDBUnwireGooglesqlStringOperand(inner)
+			}
+			return NewSQLCastExpression(inner, "DATE", false), true
 		case 2:
 			// DATE(ts, zone) -> CAST(timezone(zone, ts) AS DATE)
-			tz := NewFunctionExpression("timezone", args[1], args[0])
+			src := args[0]
+			if len(argData) >= 1 && duckDBExprShouldUnwireBeforeTemporalCast(argData[0]) {
+				src = duckDBUnwireGooglesqlStringOperand(src)
+			}
+			tz := NewFunctionExpression("timezone", args[1], src)
 			return NewSQLCastExpression(tz, "DATE", false), true
 		case 3:
 			return NewFunctionExpression("make_date", args[0], args[1], args[2]), true
