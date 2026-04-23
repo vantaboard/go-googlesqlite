@@ -314,6 +314,9 @@ func (c *Catalog) DeleteTableSpec(ctx context.Context, conn *Conn, name string) 
 	if err != nil {
 		return err
 	}
+	if storageKey == "" {
+		return nil
+	}
 	if err := c.repo.Delete(catalogDriverCtx(ctx), conn, storageKey); err != nil {
 		return err
 	}
@@ -345,10 +348,12 @@ func (c *Catalog) DeleteFunctionSpec(ctx context.Context, conn *Conn, name strin
 
 // deleteTableSpecByName removes the table spec and returns the persistence key used in the catalog repo
 // (canonical spec.TableName()), which may differ from the DROP-analyzer name only by '-' vs '_' in segments.
+// If nothing is registered (storageKey ""), callers treat this as success: physical DROP may still apply to
+// tables created outside catalog tracking or after catalog/catalog-repo drift.
 func (c *Catalog) deleteTableSpecByName(name string) (storageKey string, err error) {
 	spec, storageKey := c.resolveTableSpecByFlatName(name)
 	if spec == nil {
-		return "", fmt.Errorf("failed to find table spec from map by %s", name)
+		return "", nil
 	}
 	tables := make([]*TableSpec, 0, len(c.tables))
 	specName := c.formatNamePath(spec.NamePath)
