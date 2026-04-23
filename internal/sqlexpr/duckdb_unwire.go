@@ -56,23 +56,24 @@ func DuckDBUnwireGooglesqlStringOperand(arg *SQLExpression) *SQLExpression {
 	return NewFunctionExpression("coalesce", pick, raw)
 }
 
-// DuckDBGooglesqlWireArraySplitList builds a DuckDB VARCHAR[] list from a wire-format ARRAY column
-// without JSON casts. The body must be a flat JSON array [...]; inner elements are split on commas
-// and should be trimmed (see DuckDBTrimWireArrayElement) after UNNEST or list_extract.
+// DuckDBGooglesqlWireArraySplitList builds a DuckDB VARCHAR[] list from a VARCHAR ARRAY column
+// without JSON casts. Accepts:
+//   - googlesql wire object: {"header":"array","body":[...]}
+//   - a plain flat JSON array cell: [...] (when storage omits the wire wrapper)
+// Inner elements are split on commas; trim with DuckDBTrimWireArrayElement after UNNEST/list_extract.
 func DuckDBGooglesqlWireArraySplitList(arg *SQLExpression) *SQLExpression {
 	payload := duckDBWireGooglesqlUtf8Payload(arg)
-	header := NewFunctionExpression("try", NewFunctionExpression("lower", duckDBRegexpExtractFirstGroup(payload, `"header"\s*:\s*"([^"]*)"`)))
-	bracketArray := duckDBRegexpExtractFirstGroup(payload, `"body"\s*:\s*(\[[^\]]*\])`)
+	trimmed := NewFunctionExpression("trim", payload)
+	fromWireBody := duckDBRegexpExtractFirstGroup(trimmed, `"body"\s*:\s*(\[[^\]]*\])`)
+	fromPlainCell := duckDBRegexpExtractFirstGroup(trimmed, `^(\[[^\]]*\])\s*$`)
+	bracketArray := NewFunctionExpression("coalesce", fromWireBody, fromPlainCell)
 	innerTrim := NewFunctionExpression("trim", NewFunctionExpression("coalesce", bracketArray, NewLiteralExpression(`''`)), NewLiteralExpression(`'[]'`))
 	split := NewFunctionExpression("string_split", innerTrim, NewLiteralExpression(`','`))
 	emptyList := NewLiteralExpression(`CAST([] AS VARCHAR[])`)
 	isEmpty := NewBinaryExpression(innerTrim, "=", NewLiteralExpression(`''`))
-	splitOrEmpty := NewCaseExpression([]*WhenClause{
+	return NewCaseExpression([]*WhenClause{
 		{Condition: isEmpty, Result: emptyList},
 	}, split)
-	return NewCaseExpression([]*WhenClause{
-		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'array'`)), Result: splitOrEmpty},
-	}, emptyList)
 }
 
 // DuckDBTrimWireArrayElement strips outer whitespace and JSON-style double quotes from one split element.
