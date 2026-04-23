@@ -1,17 +1,21 @@
 package sqlexpr
 
 // duckDBGooglesqlWireAsJSON decodes a VARCHAR googlesqlengine wire column to a JSON value expression.
-// Cells may be base64(JSON layout), plain JSON text, or non-JSON plain scalars — use try() + coalesce so
-// TRY_CAST(... AS JSON) errors never abort the expression (see DuckDBUnwireGooglesqlStringOperand).
+// Cells may be base64(JSON layout) or plain JSON text. Do not use coalesce(b64, plain): DuckDB may still
+// evaluate both branches when optimizing joins, and TRY_CAST(trimmed AS JSON) on base64 text ('eyJ...')
+// throws Conversion Error even inside try() in some builds. Branch explicitly: only run the plain-text JSON
+// path when from_base64 did not yield a payload.
 func duckDBGooglesqlWireAsJSON(arg *SQLExpression) *SQLExpression {
 	raw := NewSQLCastExpression(arg, "VARCHAR", false)
 	trimmed := NewFunctionExpression("trim", raw)
-	tryB64 := NewFunctionExpression("try", NewFunctionExpression("from_base64", trimmed))
-	utf8raw := NewFunctionExpression("decode", tryB64)
-	utf8 := NewFunctionExpression("try", utf8raw)
-	jsonFromB64 := NewFunctionExpression("try", NewSQLCastExpression(utf8, "JSON", true))
-	jsonFromPlain := NewFunctionExpression("try", NewSQLCastExpression(trimmed, "JSON", true))
-	return NewFunctionExpression("coalesce", jsonFromB64, jsonFromPlain)
+	b64Payload := NewFunctionExpression("try", NewFunctionExpression("from_base64", trimmed))
+	decodedStr := NewFunctionExpression("try", NewFunctionExpression("decode", b64Payload))
+	jsonFromDecoded := NewFunctionExpression("try", NewSQLCastExpression(decodedStr, "JSON", true))
+	jsonFromTrim := NewFunctionExpression("try", NewSQLCastExpression(trimmed, "JSON", true))
+	isB64 := NewBinaryExpression(b64Payload, "IS NOT", NewLiteralExpression("NULL"))
+	return NewCaseExpression([]*WhenClause{
+		{Condition: isB64, Result: jsonFromDecoded},
+	}, jsonFromTrim)
 }
 
 // DuckDBUnwireGooglesqlStringOperand mirrors decodeStringOrLayout for a single SQL expression.

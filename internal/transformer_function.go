@@ -416,11 +416,36 @@ func expressionDataIsStringFamily(d ExpressionData) bool {
 	return d.Column.Type.IsString()
 }
 
-// duckDBApplyIntegralStringEqualityCoercion compares INT64 (and UINT*) to STRING VARCHAR wire by
-// unwrapping the string side and TRY_CAST to BIGINT so DuckDB does not compare BIGINT to raw wire.
+// expressionDataIsNumericNonString reports column refs that are numeric (INT64, NUMERIC, FLOAT, …)
+// but not STRING — used so STRING = NUMERIC joins unwrap VARCHAR wire to the right scalar type.
+func expressionDataIsNumericNonString(d ExpressionData) bool {
+	if d.Type != ExpressionTypeColumn || d.Column == nil || d.Column.Type == nil {
+		return false
+	}
+	t := d.Column.Type
+	if t.IsString() {
+		return false
+	}
+	return t.IsNumerical()
+}
+
+func duckDBNumericTryCastTargetForWireEquality(numMeta ExpressionData) string {
+	if numMeta.Type != ExpressionTypeColumn || numMeta.Column == nil || numMeta.Column.Type == nil {
+		return "BIGINT"
+	}
+	t := numMeta.Column.Type
+	if t.IsFloatingPoint() {
+		return "DOUBLE"
+	}
+	return "BIGINT"
+}
+
+// duckDBApplyIntegralStringEqualityCoercion compares numeric columns to STRING VARCHAR wire by
+// unwrapping the string side (googlesqlengine layout) and TRY_CAST so DuckDB does not compare
+// BIGINT/DOUBLE to raw wire text.
 func duckDBApplyIntegralStringEqualityCoercion(left, right *SQLExpression, ld, rd ExpressionData) (*SQLExpression, *SQLExpression, bool) {
-	il := expressionDataIsIntegralFamily(ld)
-	ir := expressionDataIsIntegralFamily(rd)
+	il := expressionDataIsNumericNonString(ld)
+	ir := expressionDataIsNumericNonString(rd)
 	sl := expressionDataIsStringFamily(ld)
 	sr := expressionDataIsStringFamily(rd)
 	if !((il && sr) || (sl && ir)) {
@@ -428,10 +453,12 @@ func duckDBApplyIntegralStringEqualityCoercion(left, right *SQLExpression, ld, r
 	}
 	if il && sr {
 		unw := sqlexpr.DuckDBUnwireGooglesqlStringOperand(right)
-		return left, NewSQLCastExpression(unw, "BIGINT", true), true
+		tgt := duckDBNumericTryCastTargetForWireEquality(ld)
+		return left, NewSQLCastExpression(unw, tgt, true), true
 	}
 	unw := sqlexpr.DuckDBUnwireGooglesqlStringOperand(left)
-	return NewSQLCastExpression(unw, "BIGINT", true), right, true
+	tgt := duckDBNumericTryCastTargetForWireEquality(rd)
+	return NewSQLCastExpression(unw, tgt, true), right, true
 }
 
 func duckDBMergeTemporalTargets(picks []string) string {
