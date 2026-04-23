@@ -1,4 +1,4 @@
-package googlesqlite
+package googlesqlengine
 
 import (
 	"context"
@@ -9,14 +9,14 @@ import (
 	"sync"
 
 	"google.golang.org/api/bigquery/v2"
-	internal "github.com/vantaboard/go-googlesqlite/internal"
+	internal "github.com/vantaboard/go-googlesql-engine/internal"
 	_ "modernc.org/sqlite"
 )
 
 var (
-	_ driver.Driver = &GoogleSQLiteDriver{}
-	_ driver.Conn   = &GoogleSQLiteConn{}
-	_ driver.Tx     = &GoogleSQLiteTx{}
+	_ driver.Driver = &GoogleSQLEngineDriver{}
+	_ driver.Conn   = &GoogleSQLEngineConn{}
+	_ driver.Tx     = &GoogleSQLEngineTx{}
 )
 
 var (
@@ -31,10 +31,10 @@ func dbPoolKey(driverName, dsn string) string {
 
 func init() {
 	if err := internal.RegisterFunctions(); err != nil {
-		slog.Error("googlesqlite: failed to register functions", "err", err)
+		slog.Error("googlesqlengine: failed to register functions", "err", err)
 	}
 
-	sql.Register("googlesqlite", &GoogleSQLiteDriver{})
+	sql.Register("googlesqlengine", &GoogleSQLEngineDriver{})
 }
 
 func newDBAndCatalog(name string) (*sql.DB, *internal.Catalog, error) {
@@ -63,16 +63,16 @@ func newDBAndCatalogWithBackend(dsn string, backend internal.SQLBackend) (*sql.D
 	return db, catalog, nil
 }
 
-type GoogleSQLiteDriver struct {
-	ConnectHook func(*GoogleSQLiteConn) error
+type GoogleSQLEngineDriver struct {
+	ConnectHook func(*GoogleSQLEngineConn) error
 }
 
-func (d *GoogleSQLiteDriver) Open(name string) (driver.Conn, error) {
+func (d *GoogleSQLEngineDriver) Open(name string) (driver.Conn, error) {
 	db, catalog, err := newDBAndCatalog(name)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := newGoogleSQLiteConn(db, catalog, internal.SQLiteDialect{})
+	conn, err := newGoogleSQLEngineConn(db, catalog, internal.SQLiteDialect{})
 	if err != nil {
 		return nil, err
 	}
@@ -84,13 +84,13 @@ func (d *GoogleSQLiteDriver) Open(name string) (driver.Conn, error) {
 	return conn, nil
 }
 
-type GoogleSQLiteConn struct {
+type GoogleSQLEngineConn struct {
 	conn     *sql.Conn
 	tx       *sql.Tx
 	analyzer *internal.Analyzer
 }
 
-func newGoogleSQLiteConn(db *sql.DB, catalog *internal.Catalog, dialect internal.Dialect) (*GoogleSQLiteConn, error) {
+func newGoogleSQLEngineConn(db *sql.DB, catalog *internal.Catalog, dialect internal.Dialect) (*GoogleSQLEngineConn, error) {
 	conn, err := db.Conn(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database connection: %w", err)
@@ -99,63 +99,63 @@ func newGoogleSQLiteConn(db *sql.DB, catalog *internal.Catalog, dialect internal
 	if err != nil {
 		return nil, fmt.Errorf("failed to create analyzer: %w", err)
 	}
-	return &GoogleSQLiteConn{
+	return &GoogleSQLEngineConn{
 		conn:     conn,
 		analyzer: analyzer,
 	}, nil
 }
 
-func (c *GoogleSQLiteConn) SetAutoIndexMode(enabled bool) {
+func (c *GoogleSQLEngineConn) SetAutoIndexMode(enabled bool) {
 	c.analyzer.SetAutoIndexMode(enabled)
 }
 
-func (c *GoogleSQLiteConn) SetExplainMode(enabled bool) {
+func (c *GoogleSQLEngineConn) SetExplainMode(enabled bool) {
 	c.analyzer.SetExplainMode(enabled)
 }
 
 // SetMaxNamePath specifies the maximum value of name path.
 // If the name path in the query is the maximum value, the name path set as prefix is not used.
 // Effective only when a value greater than zero is specified ( default zero ).
-func (c *GoogleSQLiteConn) SetMaxNamePath(num int) {
+func (c *GoogleSQLEngineConn) SetMaxNamePath(num int) {
 	c.analyzer.SetMaxNamePath(num)
 }
 
 // MaxNamePath returns maximum value of name path.
-func (c *GoogleSQLiteConn) MaxNamePath() int {
+func (c *GoogleSQLEngineConn) MaxNamePath() int {
 	return c.analyzer.MaxNamePath()
 }
 
 // SetNamePath set path to name path to be set as prefix.
 // If max name path is specified, an error is returned if the number is exceeded.
-func (c *GoogleSQLiteConn) SetNamePath(path []string) error {
+func (c *GoogleSQLEngineConn) SetNamePath(path []string) error {
 	return c.analyzer.SetNamePath(path)
 }
 
 // NamePath returns path to name path to be set as prefix.
-func (c *GoogleSQLiteConn) NamePath() []string {
+func (c *GoogleSQLEngineConn) NamePath() []string {
 	return c.analyzer.NamePath()
 }
 
 // AddNamePath add path to name path to be set as prefix.
 // If max name path is specified, an error is returned if the number is exceeded.
-func (c *GoogleSQLiteConn) AddNamePath(path string) error {
+func (c *GoogleSQLEngineConn) AddNamePath(path string) error {
 	return c.analyzer.AddNamePath(path)
 }
 
-func (c *GoogleSQLiteConn) SetQueryParameters(parameters []*bigquery.QueryParameter) {
+func (c *GoogleSQLEngineConn) SetQueryParameters(parameters []*bigquery.QueryParameter) {
 	c.analyzer.SetQueryParameters(parameters)
 }
 
-func (s *GoogleSQLiteConn) CheckNamedValue(value *driver.NamedValue) error {
+func (s *GoogleSQLEngineConn) CheckNamedValue(value *driver.NamedValue) error {
 	return nil
 }
 
-func (c *GoogleSQLiteConn) Prepare(query string) (driver.Stmt, error) {
+func (c *GoogleSQLEngineConn) Prepare(query string) (driver.Stmt, error) {
 	stmt, err := c.PrepareContext(context.Background(), query)
 	return stmt, err
 }
 
-func (c *GoogleSQLiteConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+func (c *GoogleSQLEngineConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
 	conn := internal.NewConn(c.conn, c.tx)
 	actionFuncs, err := c.analyzer.Analyze(ctx, conn, query, nil)
 	if err != nil {
@@ -176,7 +176,7 @@ func (c *GoogleSQLiteConn) PrepareContext(ctx context.Context, query string) (dr
 	return stmt, nil
 }
 
-func (c *GoogleSQLiteConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (r driver.Result, e error) {
+func (c *GoogleSQLEngineConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (r driver.Result, e error) {
 	conn := internal.NewConn(c.conn, c.tx)
 	actionFuncs, err := c.analyzer.Analyze(ctx, conn, query, args)
 	if err != nil {
@@ -210,7 +210,7 @@ func (c *GoogleSQLiteConn) ExecContext(ctx context.Context, query string, args [
 	return result, nil
 }
 
-func (c *GoogleSQLiteConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (r driver.Rows, e error) {
+func (c *GoogleSQLEngineConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (r driver.Rows, e error) {
 	conn := internal.NewConn(c.conn, c.tx)
 	actionFuncs, err := c.analyzer.Analyze(ctx, conn, query, args)
 	if err != nil {
@@ -244,11 +244,11 @@ func (c *GoogleSQLiteConn) QueryContext(ctx context.Context, query string, args 
 	return rows, nil
 }
 
-func (c *GoogleSQLiteConn) Close() error {
+func (c *GoogleSQLEngineConn) Close() error {
 	return c.conn.Close()
 }
 
-func (c *GoogleSQLiteConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+func (c *GoogleSQLEngineConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	tx, err := c.conn.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.IsolationLevel(opts.Isolation),
 		ReadOnly:  opts.ReadOnly,
@@ -257,37 +257,37 @@ func (c *GoogleSQLiteConn) BeginTx(ctx context.Context, opts driver.TxOptions) (
 		return nil, err
 	}
 	c.tx = tx
-	return &GoogleSQLiteTx{
+	return &GoogleSQLEngineTx{
 		tx:   tx,
 		conn: c,
 	}, nil
 }
 
-func (c *GoogleSQLiteConn) Begin() (driver.Tx, error) {
+func (c *GoogleSQLEngineConn) Begin() (driver.Tx, error) {
 	tx, err := c.conn.BeginTx(context.Background(), nil)
 	if err != nil {
 		return nil, err
 	}
 	c.tx = tx
-	return &GoogleSQLiteTx{
+	return &GoogleSQLEngineTx{
 		tx:   tx,
 		conn: c,
 	}, nil
 }
 
-type GoogleSQLiteTx struct {
+type GoogleSQLEngineTx struct {
 	tx   *sql.Tx
-	conn *GoogleSQLiteConn
+	conn *GoogleSQLEngineConn
 }
 
-func (tx *GoogleSQLiteTx) Commit() error {
+func (tx *GoogleSQLEngineTx) Commit() error {
 	defer func() {
 		tx.conn.tx = nil
 	}()
 	return tx.tx.Commit()
 }
 
-func (tx *GoogleSQLiteTx) Rollback() error {
+func (tx *GoogleSQLEngineTx) Rollback() error {
 	defer func() {
 		tx.conn.tx = nil
 	}()

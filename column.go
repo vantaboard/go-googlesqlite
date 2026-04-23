@@ -1,9 +1,9 @@
-package googlesqlite
+package googlesqlengine
 
 import (
 	"github.com/goccy/go-json"
 
-	internal "github.com/vantaboard/go-googlesqlite/internal"
+	internal "github.com/vantaboard/go-googlesql-engine/internal"
 )
 
 type ColumnType = internal.Type

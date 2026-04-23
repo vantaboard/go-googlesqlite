@@ -1,4 +1,4 @@
-package googlesqlite_test
+package googlesqlengine_test
 
 import (
 	"context"
@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	googlesqlite "github.com/vantaboard/go-googlesqlite"
+	googlesqlengine "github.com/vantaboard/go-googlesql-engine"
 	"github.com/google/go-cmp/cmp"
 )
 
 func TestExec(t *testing.T) {
 	now := time.Now()
 	ctx := context.Background()
-	ctx = googlesqlite.WithCurrentTime(ctx, now)
-	db, err := sql.Open("googlesqlite", ":memory:")
+	ctx = googlesqlengine.WithCurrentTime(ctx, now)
+	db, err := sql.Open("googlesqlengine", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,8 +151,8 @@ COMMIT TRANSACTION;
 func TestNestedStructFieldAccess(t *testing.T) {
 	now := time.Now()
 	ctx := context.Background()
-	ctx = googlesqlite.WithCurrentTime(ctx, now)
-	db, err := sql.Open("googlesqlite", ":memory:")
+	ctx = googlesqlengine.WithCurrentTime(ctx, now)
+	db, err := sql.Open("googlesqlengine", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,8 +216,8 @@ CREATE TABLE table (
 func TestCreateTempTable(t *testing.T) {
 	now := time.Now()
 	ctx := context.Background()
-	ctx = googlesqlite.WithCurrentTime(ctx, now)
-	db, err := sql.Open("googlesqlite", ":memory:")
+	ctx = googlesqlengine.WithCurrentTime(ctx, now)
+	db, err := sql.Open("googlesqlengine", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestCreateTempTable(t *testing.T) {
 
 func TestWildcardTable(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("googlesqlite", ":memory:")
+	db, err := sql.Open("googlesqlengine", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +345,7 @@ func TestWildcardTable(t *testing.T) {
 
 func TestTemplatedArgFunc(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("googlesqlite", ":memory:")
+	db, err := sql.Open("googlesqlengine", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +442,7 @@ func TestTemplatedArgFunc(t *testing.T) {
 
 func TestJavaScriptUDF(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("googlesqlite", ":memory:")
+	db, err := sql.Open("googlesqlengine", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

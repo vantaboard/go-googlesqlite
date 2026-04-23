@@ -17,7 +17,7 @@ func catalogBindTime(t time.Time) time.Time {
 	return time.Unix(0, t.UnixNano()).In(t.Location())
 }
 
-// CatalogRepository persists googlesqlite metadata table specs in a dialect-specific way.
+// CatalogRepository persists googlesqlengine metadata table specs in a dialect-specific way.
 type CatalogRepository interface {
 	EnsureSchema(ctx context.Context, conn *Conn) error
 	QueryUpdatedSince(ctx context.Context, conn *Conn, lastSyncedAt time.Time) (*sql.Rows, error)
@@ -37,7 +37,7 @@ type sqliteCatalogRepository struct {
 func NewSQLiteCatalogRepository() CatalogRepository {
 	return &sqliteCatalogRepository{
 		createTable: `
-CREATE TABLE IF NOT EXISTS googlesqlite_catalog(
+CREATE TABLE IF NOT EXISTS googlesqlengine_catalog(
   name STRING NOT NULL PRIMARY KEY,
   kind STRING NOT NULL,
   spec STRING NOT NULL,
@@ -45,9 +45,9 @@ CREATE TABLE IF NOT EXISTS googlesqlite_catalog(
   createdAt TIMESTAMP NOT NULL
 )`,
 		createIndex: `
-CREATE INDEX IF NOT EXISTS catalog_last_updated_index ON googlesqlite_catalog(updatedAt DESC)`,
+CREATE INDEX IF NOT EXISTS catalog_last_updated_index ON googlesqlengine_catalog(updatedAt DESC)`,
 		upsert: `
-INSERT INTO googlesqlite_catalog (
+INSERT INTO googlesqlengine_catalog (
   name,
   kind,
   spec,
@@ -63,9 +63,9 @@ INSERT INTO googlesqlite_catalog (
   spec = @spec,
   updatedAt = @updatedAt
 `,
-		deleteRow: `DELETE FROM googlesqlite_catalog WHERE name = @name`,
+		deleteRow: `DELETE FROM googlesqlengine_catalog WHERE name = @name`,
 		selectSince: `
-SELECT name, kind, spec FROM googlesqlite_catalog WHERE updatedAt >= @lastUpdatedAt`,
+SELECT name, kind, spec FROM googlesqlengine_catalog WHERE updatedAt >= @lastUpdatedAt`,
 	}
 }
 
@@ -113,7 +113,7 @@ type duckdbCatalogRepository struct {
 func NewDuckDBCatalogRepository() CatalogRepository {
 	return &duckdbCatalogRepository{
 		createTable: `
-CREATE TABLE IF NOT EXISTS googlesqlite_catalog(
+CREATE TABLE IF NOT EXISTS googlesqlengine_catalog(
   name VARCHAR NOT NULL PRIMARY KEY,
   kind VARCHAR NOT NULL,
   spec VARCHAR NOT NULL,
@@ -121,9 +121,9 @@ CREATE TABLE IF NOT EXISTS googlesqlite_catalog(
   createdAt TIMESTAMP NOT NULL
 )`,
 		createIndex: `
-CREATE INDEX IF NOT EXISTS catalog_last_updated_index ON googlesqlite_catalog(updatedAt DESC)`,
+CREATE INDEX IF NOT EXISTS catalog_last_updated_index ON googlesqlengine_catalog(updatedAt DESC)`,
 		upsert: `
-INSERT INTO googlesqlite_catalog (
+INSERT INTO googlesqlengine_catalog (
   name,
   kind,
   spec,
@@ -139,8 +139,8 @@ INSERT INTO googlesqlite_catalog (
   spec = excluded.spec,
   updatedAt = excluded.updatedAt
 `,
-		deleteRow:   `DELETE FROM googlesqlite_catalog WHERE name = ?`,
-		selectSince: `SELECT name, kind, spec FROM googlesqlite_catalog WHERE updatedAt >= ?`,
+		deleteRow:   `DELETE FROM googlesqlengine_catalog WHERE name = ?`,
+		selectSince: `SELECT name, kind, spec FROM googlesqlengine_catalog WHERE updatedAt >= ?`,
 	}
 }
 

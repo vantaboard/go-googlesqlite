@@ -43,7 +43,7 @@ func (e *ExpressionData) Value() interface{} {
 
 // LiteralData represents literal value data
 type LiteralData struct {
-	Value    Value          `json:"value,omitempty"`     // Use googlesqlite Value which handles both Go literals and GoogleSQL values
+	Value    Value          `json:"value,omitempty"`     // Use googlesqlengine Value which handles both Go literals and GoogleSQL values
 	TypeName string         `json:"type_name,omitempty"` // String representation of type for reference
 	Location *ParseLocation `json:"location,omitempty"`
 }

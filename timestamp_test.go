@@ -1,10 +1,10 @@
-package googlesqlite_test
+package googlesqlengine_test
 
 import (
 	"testing"
 	"time"
 
-	"github.com/vantaboard/go-googlesqlite"
+	"github.com/vantaboard/go-googlesql-engine"
 )
 
 func TestTimestamp(t *testing.T) {
@@ -19,7 +19,7 @@ func TestTimestamp(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("TZ", "UTC")
-			ti, err := googlesqlite.TimeFromTimestampValue(test.timestamp)
+			ti, err := googlesqlengine.TimeFromTimestampValue(test.timestamp)
 			if err != nil {
 				t.Fatalf("%s", err)
 			}

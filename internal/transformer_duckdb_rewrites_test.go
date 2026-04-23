@@ -14,7 +14,7 @@ func TestTransformDuckDB_frozenClockCurrentTimestamp(t *testing.T) {
 	at := time.Unix(1700000000, 123456789).UTC()
 	ctx := WithCurrentTime(context.Background(), at)
 
-	fn := NewFunctionCallExpressionData("googlesqlite_current_timestamp")
+	fn := NewFunctionCallExpressionData("googlesqlengine_current_timestamp")
 
 	cfg := DefaultTransformConfig()
 	cfg.Dialect = DuckDBDialect{}
@@ -32,7 +32,7 @@ func TestTransformDuckDB_frozenClockCurrentTimestamp(t *testing.T) {
 
 func TestTransformDuckDB_instrTwoArgStrpos(t *testing.T) {
 	coord := GetGlobalCoordinator()
-	fn := NewFunctionCallExpressionData("googlesqlite_instr",
+	fn := NewFunctionCallExpressionData("googlesqlengine_instr",
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("abc")}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("b")}},
 	)
@@ -51,7 +51,7 @@ func TestTransformDuckDB_instrTwoArgStrpos(t *testing.T) {
 
 func TestTransformDuckDB_errorBuiltinRename(t *testing.T) {
 	coord := GetGlobalCoordinator()
-	fn := NewFunctionCallExpressionData("googlesqlite_error",
+	fn := NewFunctionCallExpressionData("googlesqlengine_error",
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("boom")}},
 	)
 	ctx := context.Background()
@@ -62,14 +62,14 @@ func TestTransformDuckDB_errorBuiltinRename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := expr.String(); !strings.Contains(got, "error(") || strings.Contains(got, "googlesqlite_error") {
+	if got := expr.String(); !strings.Contains(got, "error(") || strings.Contains(got, "googlesqlengine_error") {
 		t.Fatalf("got %q", got)
 	}
 }
 
 func TestTransformDuckDB_betweenRangeAnd(t *testing.T) {
 	coord := GetGlobalCoordinator()
-	fn := NewFunctionCallExpressionData("googlesqlite_between",
+	fn := NewFunctionCallExpressionData("googlesqlengine_between",
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(5)}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(1)}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(10)}},
@@ -83,8 +83,8 @@ func TestTransformDuckDB_betweenRangeAnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := expr.String()
-	if strings.Contains(got, "googlesqlite_between") {
-		t.Fatalf("expected rewrite off googlesqlite_between, got %q", got)
+	if strings.Contains(got, "googlesqlengine_between") {
+		t.Fatalf("expected rewrite off googlesqlengine_between, got %q", got)
 	}
 	if !strings.Contains(got, ">=") || !strings.Contains(got, "<=") || !strings.Contains(got, " AND ") {
 		t.Fatalf("expected >= .. AND .. <=, got %q", got)
@@ -93,7 +93,7 @@ func TestTransformDuckDB_betweenRangeAnd(t *testing.T) {
 
 func TestTransformDuckDB_parseJsonFirstArgOnly(t *testing.T) {
 	coord := GetGlobalCoordinator()
-	fn := NewFunctionCallExpressionData("googlesqlite_parse_json",
+	fn := NewFunctionCallExpressionData("googlesqlengine_parse_json",
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("{}")}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("wide_padding_mode")}},
 	)
@@ -170,7 +170,7 @@ func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
 			Type:       types.StringType(),
 		},
 	}
-	fn := NewFunctionCallExpressionData("googlesqlite_greater_or_equal", castArg, colArg)
+	fn := NewFunctionCallExpressionData("googlesqlengine_greater_or_equal", castArg, colArg)
 	ctx := context.Background()
 	cfg := DefaultTransformConfig()
 	cfg.Dialect = DuckDBDialect{}
@@ -234,7 +234,7 @@ func TestTransformDuckDB_castDateColumnToDateUnwrapsWire(t *testing.T) {
 
 func TestTransformDuckDB_inUnwrapsWireForStringColumn(t *testing.T) {
 	coord := GetGlobalCoordinator()
-	fn := NewFunctionCallExpressionData("googlesqlite_in",
+	fn := NewFunctionCallExpressionData("googlesqlengine_in",
 		ExpressionData{Type: ExpressionTypeColumn, Column: &ColumnRefData{ColumnID: 1, ColumnName: "SchoolYear__11", Type: types.StringType()}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("2025-2026")}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("2024-2025")}},
@@ -259,7 +259,7 @@ func TestTransformDuckDB_inUnwrapsWireForStringColumn(t *testing.T) {
 
 func TestTransformDuckDB_concatUnwrapsWireBeforeNativeConcat(t *testing.T) {
 	coord := GetGlobalCoordinator()
-	fn := NewFunctionCallExpressionData("googlesqlite_concat",
+	fn := NewFunctionCallExpressionData("googlesqlengine_concat",
 		ExpressionData{Type: ExpressionTypeColumn, Column: &ColumnRefData{ColumnID: 10, ColumnName: "fn", Type: types.StringType()}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue(" ")}},
 		ExpressionData{Type: ExpressionTypeColumn, Column: &ColumnRefData{ColumnID: 11, ColumnName: "ln", Type: types.StringType()}},
@@ -284,8 +284,8 @@ func TestTransformDuckDB_concatUnwrapsWireBeforeNativeConcat(t *testing.T) {
 	if !strings.Contains(got, "from_base64(") || !strings.Contains(got, "json_extract_string(") {
 		t.Fatalf("expected wire unwrap (from_base64 + json_extract_string), got %q", got)
 	}
-	if strings.Contains(got, "googlesqlite_concat") {
-		t.Fatalf("expected rewrite off googlesqlite_concat, got %q", got)
+	if strings.Contains(got, "googlesqlengine_concat") {
+		t.Fatalf("expected rewrite off googlesqlengine_concat, got %q", got)
 	}
 }
 
@@ -295,7 +295,7 @@ func TestTransformDuckDB_simpleCaseUsesSearchedCaseWithUnwiredEquality(t *testin
 		Type:   ExpressionTypeColumn,
 		Column: &ColumnRefData{ColumnID: 4, ColumnName: "GradeLevel__4", Type: types.StringType()},
 	}
-	fn := NewFunctionCallExpressionData("googlesqlite_case_with_value",
+	fn := NewFunctionCallExpressionData("googlesqlengine_case_with_value",
 		gl,
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("01")}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("1st")}},
@@ -345,7 +345,7 @@ func TestTransformDuckDB_extractYearCastsDateColumnForDatePart(t *testing.T) {
 		Type:    ExpressionTypeLiteral,
 		Literal: &LiteralData{Value: StringValue("YEAR")},
 	}
-	fn := NewFunctionCallExpressionData("googlesqlite_extract", colED, yearED)
+	fn := NewFunctionCallExpressionData("googlesqlengine_extract", colED, yearED)
 	ctx := context.Background()
 	cfg := DefaultTransformConfig()
 	cfg.Dialect = DuckDBDialect{}
@@ -371,7 +371,7 @@ func TestTransformDuckDB_extractYearCastsDateColumnForDatePart(t *testing.T) {
 
 func TestTransformDuckDB_generateArrayToRange(t *testing.T) {
 	coord := GetGlobalCoordinator()
-	fn := NewFunctionCallExpressionData("googlesqlite_generate_array",
+	fn := NewFunctionCallExpressionData("googlesqlengine_generate_array",
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(2003)}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(2027)}},
 	)
@@ -384,8 +384,8 @@ func TestTransformDuckDB_generateArrayToRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := expr.String()
-	if strings.Contains(got, "googlesqlite_generate_array") {
-		t.Fatalf("expected rewrite off googlesqlite_generate_array, got %q", got)
+	if strings.Contains(got, "googlesqlengine_generate_array") {
+		t.Fatalf("expected rewrite off googlesqlengine_generate_array, got %q", got)
 	}
 	if !strings.Contains(got, "range(") || !strings.Contains(strings.ToUpper(got), "CASE") {
 		t.Fatalf("expected CASE + range(...), got %q", got)
@@ -397,7 +397,7 @@ func TestTransformDuckDB_generateArrayToRange(t *testing.T) {
 
 func TestTransformDuckDB_generateArrayThreeArgToRange(t *testing.T) {
 	coord := GetGlobalCoordinator()
-	fn := NewFunctionCallExpressionData("googlesqlite_generate_array",
+	fn := NewFunctionCallExpressionData("googlesqlengine_generate_array",
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(0)}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(10)}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(3)}},
@@ -411,7 +411,7 @@ func TestTransformDuckDB_generateArrayThreeArgToRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := expr.String()
-	if strings.Contains(got, "googlesqlite_generate_array") {
+	if strings.Contains(got, "googlesqlengine_generate_array") {
 		t.Fatalf("expected rewrite, got %q", got)
 	}
 	if !strings.Contains(got, "range(") {
@@ -421,7 +421,7 @@ func TestTransformDuckDB_generateArrayThreeArgToRange(t *testing.T) {
 
 func TestTransformDuckDB_makeArrayToListValue(t *testing.T) {
 	coord := GetGlobalCoordinator()
-	fn := NewFunctionCallExpressionData("googlesqlite_make_array",
+	fn := NewFunctionCallExpressionData("googlesqlengine_make_array",
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(1)}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(2)}},
 	)
@@ -434,14 +434,14 @@ func TestTransformDuckDB_makeArrayToListValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := expr.String()
-	if !strings.Contains(got, "list_value(") || strings.Contains(got, "googlesqlite_make_array") {
+	if !strings.Contains(got, "list_value(") || strings.Contains(got, "googlesqlengine_make_array") {
 		t.Fatalf("expected list_value rewrite, got %q", got)
 	}
 }
 
 func TestTransformDuckDB_makeStructToStructLiteral(t *testing.T) {
 	coord := GetGlobalCoordinator()
-	fn := NewFunctionCallExpressionData("googlesqlite_make_struct",
+	fn := NewFunctionCallExpressionData("googlesqlengine_make_struct",
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("eDate")}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(42)}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("sy")}},
@@ -459,8 +459,8 @@ func TestTransformDuckDB_makeStructToStructLiteral(t *testing.T) {
 	if !strings.Contains(got, "{") || !strings.Contains(got, "'eDate':") || !strings.Contains(got, "'sy':") {
 		t.Fatalf("expected DuckDB struct literal with eDate and sy, got %q", got)
 	}
-	if strings.Contains(got, "googlesqlite_make_struct") {
-		t.Fatalf("expected rewrite off googlesqlite_make_struct, got %q", got)
+	if strings.Contains(got, "googlesqlengine_make_struct") {
+		t.Fatalf("expected rewrite off googlesqlengine_make_struct, got %q", got)
 	}
 }
 
@@ -470,7 +470,7 @@ func TestTransformDuckDB_replaceUnwrapsWireBeforeReplace(t *testing.T) {
 		Type:   ExpressionTypeColumn,
 		Column: &ColumnRefData{ColumnID: 20, ColumnName: "GradeLevel__36", Type: types.StringType()},
 	}
-	fn := NewFunctionCallExpressionData("googlesqlite_replace",
+	fn := NewFunctionCallExpressionData("googlesqlengine_replace",
 		col,
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("KN")}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("0")}},
@@ -487,7 +487,7 @@ func TestTransformDuckDB_replaceUnwrapsWireBeforeReplace(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := expr.String()
-	if !strings.Contains(got, "replace(") || strings.Contains(got, "googlesqlite_replace") {
+	if !strings.Contains(got, "replace(") || strings.Contains(got, "googlesqlengine_replace") {
 		t.Fatalf("expected native replace(, got %q", got)
 	}
 	if !strings.Contains(got, "from_base64(") {
@@ -501,12 +501,12 @@ func TestTransformDuckDB_nestedReplaceAndCastToInt64(t *testing.T) {
 		Type:   ExpressionTypeColumn,
 		Column: &ColumnRefData{ColumnID: 21, ColumnName: "g", Type: types.StringType()},
 	}
-	inner := NewFunctionCallExpressionData("googlesqlite_replace",
+	inner := NewFunctionCallExpressionData("googlesqlengine_replace",
 		col,
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("KN")}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("0")}},
 	)
-	outer := NewFunctionCallExpressionData("googlesqlite_replace",
+	outer := NewFunctionCallExpressionData("googlesqlengine_replace",
 		inner,
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("TK")}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("-1")}},
@@ -579,7 +579,7 @@ func TestTransformDuckDB_stringColumnCastToInt64UnwrapsWire(t *testing.T) {
 
 func TestTransformDuckDB_replaceOnLiteralStillEmitsReplace(t *testing.T) {
 	coord := GetGlobalCoordinator()
-	fn := NewFunctionCallExpressionData("googlesqlite_replace",
+	fn := NewFunctionCallExpressionData("googlesqlengine_replace",
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("01")}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("0")}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("")}},
@@ -593,7 +593,7 @@ func TestTransformDuckDB_replaceOnLiteralStillEmitsReplace(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := expr.String()
-	if !strings.Contains(got, "replace(") || strings.Contains(got, "googlesqlite_replace") {
+	if !strings.Contains(got, "replace(") || strings.Contains(got, "googlesqlengine_replace") {
 		t.Fatalf("expected native replace(, got %q", got)
 	}
 	// String literals may be emitted as VARCHAR wire payloads in SQL text; unwrap still composes safely.

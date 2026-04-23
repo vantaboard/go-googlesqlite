@@ -1,4 +1,4 @@
-package googlesqlite_test
+package googlesqlengine_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	googlesqlite "github.com/vantaboard/go-googlesqlite"
+	googlesqlengine "github.com/vantaboard/go-googlesql-engine"
 )
 
 var mergeTestMemCounter uint64
@@ -20,7 +20,7 @@ var mergeTestMemCounter uint64
 // See https://docs.cloud.google.com/bigquery/docs/reference/standard-sql/dml-syntax#merge_statement
 func TestMerge(t *testing.T) {
 	t.Setenv("TZ", "UTC")
-	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Now().UTC())
+	ctx := googlesqlengine.WithCurrentTime(context.Background(), time.Now().UTC())
 
 	for _, tc := range []struct {
 		name          string
@@ -172,7 +172,7 @@ SELECT product, quantity FROM inv ORDER BY product;
 			// Isolate each subtest: plain ":memory:" can share state across connections in some SQLite setups.
 			dsn := fmt.Sprintf("file:merge_test_%d_%d?mode=memory&cache=private",
 				time.Now().UnixNano(), atomic.AddUint64(&mergeTestMemCounter, 1))
-			db, err := sql.Open("googlesqlite", dsn)
+			db, err := sql.Open("googlesqlengine", dsn)
 			if err != nil {
 				t.Fatal(err)
 			}

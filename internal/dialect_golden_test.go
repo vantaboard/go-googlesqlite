@@ -14,18 +14,18 @@ func TestDialectGolden_emitStringBuiltinRenames(t *testing.T) {
 		sqliteNeed string
 		duckNeed   string
 	}{
-		{"googlesqlite_trim", "googlesqlite_trim(", "trim("},
-		{"googlesqlite_coalesce", "googlesqlite_coalesce(", "coalesce("},
-		{"googlesqlite_concat", "googlesqlite_concat(", "concat("},
-		{"googlesqlite_strpos", "googlesqlite_strpos(", "strpos("},
-		{"googlesqlite_replace", "googlesqlite_replace(", "replace("},
+		{"googlesqlengine_trim", "googlesqlengine_trim(", "trim("},
+		{"googlesqlengine_coalesce", "googlesqlengine_coalesce(", "coalesce("},
+		{"googlesqlengine_concat", "googlesqlengine_concat(", "concat("},
+		{"googlesqlengine_strpos", "googlesqlengine_strpos(", "strpos("},
+		{"googlesqlengine_replace", "googlesqlengine_replace(", "replace("},
 	} {
 		t.Run(tc.fnName, func(t *testing.T) {
 			args := []ExpressionData{
 				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("a")}},
 				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("b")}},
 			}
-			if tc.fnName == "googlesqlite_replace" {
+			if tc.fnName == "googlesqlengine_replace" {
 				args = append(args, ExpressionData{
 					Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("c")},
 				})
@@ -49,7 +49,7 @@ func TestDialectGolden_emitStringBuiltinRenames(t *testing.T) {
 						t.Fatal(err)
 					}
 					got := expr.String()
-					if tc.fnName == "googlesqlite_concat" && pair.name == "duckdb" {
+					if tc.fnName == "googlesqlengine_concat" && pair.name == "duckdb" {
 						if !strings.Contains(got, "concat(") || !strings.Contains(got, "from_base64(") {
 							t.Fatalf("duckdb concat should unwrap wire then concat; got %q", got)
 						}
@@ -74,37 +74,37 @@ func TestDialectGolden_emitPhase2StringAndHashRenames(t *testing.T) {
 		duckNeed   string
 	}{
 		{
-			fnName: "googlesqlite_starts_with",
+			fnName: "googlesqlengine_starts_with",
 			args: []ExpressionData{
 				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("abc")}},
 				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("a")}},
 			},
-			sqliteNeed: "googlesqlite_starts_with(",
+			sqliteNeed: "googlesqlengine_starts_with(",
 			duckNeed:   "starts_with(",
 		},
 		{
-			fnName: "googlesqlite_left",
+			fnName: "googlesqlengine_left",
 			args: []ExpressionData{
 				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("abcd")}},
 				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(2)}},
 			},
-			sqliteNeed: "googlesqlite_left(",
+			sqliteNeed: "googlesqlengine_left(",
 			duckNeed:   "left(",
 		},
 		{
-			fnName: "googlesqlite_byte_length",
+			fnName: "googlesqlengine_byte_length",
 			args: []ExpressionData{
 				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("x")}},
 			},
-			sqliteNeed: "googlesqlite_byte_length(",
+			sqliteNeed: "googlesqlengine_byte_length(",
 			duckNeed:   "octet_length(",
 		},
 		{
-			fnName: "googlesqlite_md5",
+			fnName: "googlesqlengine_md5",
 			args: []ExpressionData{
 				{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("x")}},
 			},
-			sqliteNeed: "googlesqlite_md5(",
+			sqliteNeed: "googlesqlengine_md5(",
 			duckNeed:   "md5(",
 		},
 	} {
@@ -146,7 +146,7 @@ func TestDialectGolden_emitFunctionNameLength(t *testing.T) {
 			Value: StringValue("abc"),
 		},
 	}
-	fn := NewFunctionCallExpressionData("googlesqlite_length", lit)
+	fn := NewFunctionCallExpressionData("googlesqlengine_length", lit)
 
 	ctx := context.Background()
 	for _, tc := range []struct {
@@ -154,7 +154,7 @@ func TestDialectGolden_emitFunctionNameLength(t *testing.T) {
 		dialect    Dialect
 		wantSubstr string
 	}{
-		{"sqlite", SQLiteDialect{}, "googlesqlite_length("},
+		{"sqlite", SQLiteDialect{}, "googlesqlengine_length("},
 		{"duckdb", DuckDBDialect{}, "length("},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -201,7 +201,7 @@ func TestDialectGolden_windowPartitionCollation(t *testing.T) {
 		wantCollate  bool
 		collateToken string
 	}{
-		{"sqlite", SQLiteDialect{}, true, "COLLATE googlesqlite_collate"},
+		{"sqlite", SQLiteDialect{}, true, "COLLATE googlesqlengine_collate"},
 		{"duckdb", DuckDBDialect{}, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -222,7 +222,7 @@ func TestDialectGolden_windowPartitionCollation(t *testing.T) {
 			if tc.wantCollate && !has {
 				t.Fatalf("got %q, want substring %q", got, tc.collateToken)
 			}
-			if !tc.wantCollate && strings.Contains(got, "googlesqlite_collate") {
+			if !tc.wantCollate && strings.Contains(got, "googlesqlengine_collate") {
 				t.Fatalf("unexpected collation in duckdb SQL: %q", got)
 			}
 		})
@@ -261,7 +261,7 @@ func TestDialectGolden_orderByCollation(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("len=%d", len(items))
 	}
-	if !strings.Contains(items[0].Expression.String(), "COLLATE googlesqlite_collate") {
+	if !strings.Contains(items[0].Expression.String(), "COLLATE googlesqlengine_collate") {
 		t.Fatalf("sqlite: %q", items[0].Expression.String())
 	}
 
@@ -279,7 +279,7 @@ func TestDialectGolden_orderByCollation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(items2[0].Expression.String(), "googlesqlite_collate") {
+	if strings.Contains(items2[0].Expression.String(), "googlesqlengine_collate") {
 		t.Fatalf("duckdb should omit collation: %q", items2[0].Expression.String())
 	}
 }

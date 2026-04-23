@@ -23,7 +23,7 @@ func TestTableSpecPhysicalDDL_sqliteVsDuckDB(t *testing.T) {
 	if !strings.Contains(sqlite, "WITHOUT ROWID") {
 		t.Fatalf("sqlite DDL should use WITHOUT ROWID for PK table: %s", sqlite)
 	}
-	if !strings.Contains(sqlite, "COLLATE googlesqlite_collate") {
+	if !strings.Contains(sqlite, "COLLATE googlesqlengine_collate") {
 		t.Fatalf("sqlite DDL should use PK collation: %s", sqlite)
 	}
 	if !strings.Contains(sqlite, "`name` TEXT") {
@@ -37,8 +37,8 @@ func TestTableSpecPhysicalDDL_sqliteVsDuckDB(t *testing.T) {
 	if strings.Contains(duck, "WITHOUT ROWID") {
 		t.Fatalf("duckdb DDL should not use WITHOUT ROWID: %s", duck)
 	}
-	if strings.Contains(duck, "googlesqlite_collate") {
-		t.Fatalf("duckdb DDL should not use googlesqlite_collate: %s", duck)
+	if strings.Contains(duck, "googlesqlengine_collate") {
+		t.Fatalf("duckdb DDL should not use googlesqlengine_collate: %s", duck)
 	}
 	if !strings.Contains(duck, `"name" VARCHAR`) {
 		t.Fatalf("duckdb string column: %s", duck)

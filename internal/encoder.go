@@ -606,7 +606,7 @@ func valueFromGoReflectValue(v reflect.Value) (Value, error) {
 		}
 		return valueFromGoReflectValue(reflect.ValueOf(vv))
 	}
-	return nil, fmt.Errorf("cannot convert %s type to googlesqlite value type", kind)
+	return nil, fmt.Errorf("cannot convert %s type to googlesqlengine value type", kind)
 }
 
 func encodeNamedValue(v driver.NamedValue, param *ast.ParameterNode) (sql.NamedArg, error) {

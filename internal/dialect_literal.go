@@ -15,7 +15,7 @@ func duckDBQuoteString(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
-// duckDBSQLFromValue renders a googlesqlite Value as DuckDB SQL literal text (for use inside generated SQL).
+// duckDBSQLFromValue renders a googlesqlengine Value as DuckDB SQL literal text (for use inside generated SQL).
 func duckDBSQLFromValue(v Value) (string, error) {
 	if v == nil {
 		return "NULL", nil
@@ -120,7 +120,7 @@ func duckDBSQLFromValue(v Value) (string, error) {
 	}
 }
 
-// duckDBNativeLiteralSQL converts a googlesqlite wire literal (from LiteralFromValue: "base64...")
+// duckDBNativeLiteralSQL converts a googlesqlengine wire literal (from LiteralFromValue: "base64...")
 // into DuckDB SQL that evaluates to the same logical value. Empty string means pass through val.
 func duckDBNativeLiteralSQL(val string) (string, bool) {
 	s := strings.TrimSpace(val)
@@ -180,7 +180,7 @@ func duckDBNativeLiteralSQL(val string) (string, bool) {
 }
 
 // duckDBPlainStringFromWireOrQuotedLiteral extracts a STRING payload from a Literal expression's
-// Value field: googlesqlite wire (`"base64"`) or a single-quoted SQL string (`'eDate'`).
+// Value field: googlesqlengine wire (`"base64"`) or a single-quoted SQL string (`'eDate'`).
 func duckDBPlainStringFromWireOrQuotedLiteral(val string) (string, bool) {
 	s := strings.TrimSpace(val)
 	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {

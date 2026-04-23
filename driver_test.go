@@ -1,4 +1,4 @@
-package googlesqlite_test
+package googlesqlengine_test
 
 import (
 	"context"
@@ -9,12 +9,12 @@ import (
 
 	"google.golang.org/api/bigquery/v2"
 
-	googlesqlite "github.com/vantaboard/go-googlesqlite"
+	googlesqlengine "github.com/vantaboard/go-googlesql-engine"
 	"github.com/google/go-cmp/cmp"
 )
 
 func TestDriver(t *testing.T) {
-	db, err := sql.Open("googlesqlite", ":memory:")
+	db, err := sql.Open("googlesqlengine", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,11 +87,11 @@ CREATE VIEW IF NOT EXISTS SingerNames AS SELECT FirstName || ' ' || LastName AS 
 
 func configureParameters(conn *sql.Conn, parameters []*bigquery.QueryParameter) error {
 	if err := conn.Raw(func(c interface{}) error {
-		googlesqliteConn, ok := c.(*googlesqlite.GoogleSQLiteConn)
+		engineConn, ok := c.(*googlesqlengine.GoogleSQLEngineConn)
 		if !ok {
-			return fmt.Errorf("failed to get GoogleSQLiteConn from %T", c)
+			return fmt.Errorf("failed to get GoogleSQLEngineConn from %T", c)
 		}
-		googlesqliteConn.SetQueryParameters(parameters)
+		engineConn.SetQueryParameters(parameters)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("failed to setup query parameters: %s", err)
@@ -101,7 +101,7 @@ func configureParameters(conn *sql.Conn, parameters []*bigquery.QueryParameter) 
 
 func TestNamedParameters(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("googlesqlite", ":memory:")
+	db, err := sql.Open("googlesqlengine", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,12 +304,12 @@ CREATE TABLE IF NOT EXISTS Singers (
 }
 
 func TestRegisterCustomDriver(t *testing.T) {
-	sql.Register("googlesqlite-custom", &googlesqlite.GoogleSQLiteDriver{
-		ConnectHook: func(conn *googlesqlite.GoogleSQLiteConn) error {
+	sql.Register("googlesqlengine-custom", &googlesqlengine.GoogleSQLEngineDriver{
+		ConnectHook: func(conn *googlesqlengine.GoogleSQLEngineConn) error {
 			return conn.SetNamePath([]string{"project-id", "datasetID"})
 		},
 	})
-	db, err := sql.Open("googlesqlite-custom", ":memory:")
+	db, err := sql.Open("googlesqlengine-custom", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,12 +333,12 @@ func TestRegisterCustomDriver(t *testing.T) {
 }
 
 func TestCreateSchemaExplicitProjectIgnoresConnectionDefault(t *testing.T) {
-	sql.Register("googlesqlite-create-schema-cross", &googlesqlite.GoogleSQLiteDriver{
-		ConnectHook: func(conn *googlesqlite.GoogleSQLiteConn) error {
+	sql.Register("googlesqlengine-create-schema-cross", &googlesqlengine.GoogleSQLEngineDriver{
+		ConnectHook: func(conn *googlesqlengine.GoogleSQLEngineConn) error {
 			return conn.SetNamePath([]string{"default-project"})
 		},
 	})
-	db, err := sql.Open("googlesqlite-create-schema-cross", ":memory:")
+	db, err := sql.Open("googlesqlengine-create-schema-cross", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestCreateSchemaExplicitProjectIgnoresConnectionDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat, err := googlesqlite.ChangedCatalogFromResult(res)
+	cat, err := googlesqlengine.ChangedCatalogFromResult(res)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +362,7 @@ func TestCreateSchemaExplicitProjectIgnoresConnectionDefault(t *testing.T) {
 
 func TestChangedCatalog(t *testing.T) {
 	t.Run("table", func(t *testing.T) {
-		db, err := sql.Open("googlesqlite", ":memory:")
+		db, err := sql.Open("googlesqlengine", ":memory:")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -380,7 +380,7 @@ CREATE TABLE IF NOT EXISTS Singers (
 		if err != nil {
 			t.Fatal(err)
 		}
-		resultCatalog, err := googlesqlite.ChangedCatalogFromResult(result)
+		resultCatalog, err := googlesqlengine.ChangedCatalogFromResult(result)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -393,7 +393,7 @@ CREATE TABLE IF NOT EXISTS Singers (
 		if diff := cmp.Diff(resultCatalog.Table.Added[0].NamePath, []string{"Singers"}); diff != "" {
 			t.Errorf("(-want +got):\n%s", diff)
 		}
-		rowsCatalog, err := googlesqlite.ChangedCatalogFromRows(rows)
+		rowsCatalog, err := googlesqlengine.ChangedCatalogFromRows(rows)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -408,7 +408,7 @@ CREATE TABLE IF NOT EXISTS Singers (
 		}
 	})
 	t.Run("function", func(t *testing.T) {
-		db, err := sql.Open("googlesqlite", ":memory:")
+		db, err := sql.Open("googlesqlengine", ":memory:")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -420,7 +420,7 @@ CREATE TABLE IF NOT EXISTS Singers (
 		if err != nil {
 			t.Fatal(err)
 		}
-		resultCatalog, err := googlesqlite.ChangedCatalogFromResult(result)
+		resultCatalog, err := googlesqlengine.ChangedCatalogFromResult(result)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -433,7 +433,7 @@ CREATE TABLE IF NOT EXISTS Singers (
 		if diff := cmp.Diff(resultCatalog.Function.Added[0].NamePath, []string{"ANY_ADD"}); diff != "" {
 			t.Errorf("(-want +got):\n%s", diff)
 		}
-		rowsCatalog, err := googlesqlite.ChangedCatalogFromRows(rows)
+		rowsCatalog, err := googlesqlengine.ChangedCatalogFromRows(rows)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -451,7 +451,7 @@ CREATE TABLE IF NOT EXISTS Singers (
 
 func TestCreateTable(t *testing.T) {
 	t.Run("primary keys", func(t *testing.T) {
-		db, err := sql.Open("googlesqlite", ":memory:")
+		db, err := sql.Open("googlesqlengine", ":memory:")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -479,7 +479,7 @@ CREATE TABLE IF NOT EXISTS Singers (
 	})
 
 	t.Run("create table/view in dataset (with hyphens)", func(t *testing.T) {
-		db, err := sql.Open("googlesqlite", ":memory:")
+		db, err := sql.Open("googlesqlengine", ":memory:")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -489,15 +489,15 @@ CREATE TABLE IF NOT EXISTS Singers (
 			t.Fatal(err)
 		}
 		if err := conn.Raw(func(c interface{}) error {
-			googlesqliteConn, ok := c.(*googlesqlite.GoogleSQLiteConn)
+			engineConn, ok := c.(*googlesqlengine.GoogleSQLEngineConn)
 			if !ok {
-				return fmt.Errorf("failed to get GoogleSQLiteConn from %T", c)
+				return fmt.Errorf("failed to get GoogleSQLEngineConn from %T", c)
 			}
-			if err := googlesqliteConn.SetNamePath([]string{"project-hyphens", "dataset-with-hyphens"}); err != nil {
+			if err := engineConn.SetNamePath([]string{"project-hyphens", "dataset-with-hyphens"}); err != nil {
 				return err
 			}
 			const maxNamePath = 3 // projectID and datasetID and tableID
-			googlesqliteConn.SetMaxNamePath(maxNamePath)
+			engineConn.SetMaxNamePath(maxNamePath)
 			return nil
 		}); err != nil {
 			t.Fatal(err)
@@ -525,7 +525,7 @@ CREATE TABLE IF NOT EXISTS Singers (
 
 func TestPreparedStatements(t *testing.T) {
 	t.Run("prepared select", func(t *testing.T) {
-		db, err := sql.Open("googlesqlite", ":memory:")
+		db, err := sql.Open("googlesqlengine", ":memory:")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -551,7 +551,7 @@ CREATE TABLE IF NOT EXISTS Singers (
 		}
 	})
 	t.Run("prepared insert with named values", func(t *testing.T) {
-		db, err := sql.Open("googlesqlite", ":memory:")
+		db, err := sql.Open("googlesqlengine", ":memory:")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -594,8 +594,8 @@ CREATE TABLE IF NOT EXISTS Singers (
 	})
 
 	t.Run("prepared select with named values, formatting disabled, uppercased parameter", func(t *testing.T) {
-		db, err := sql.Open("googlesqlite", ":memory:")
-		ctx := googlesqlite.WithQueryFormattingDisabled(context.Background())
+		db, err := sql.Open("googlesqlengine", ":memory:")
+		ctx := googlesqlengine.WithQueryFormattingDisabled(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -619,7 +619,7 @@ CREATE TABLE IF NOT EXISTS Singers (
 	})
 
 	t.Run("update from", func(t *testing.T) {
-		db, err := sql.Open("googlesqlite", ":memory:")
+		db, err := sql.Open("googlesqlengine", ":memory:")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -664,7 +664,7 @@ func TestQueryParametersWithAllowUndeclaredReset(t *testing.T) {
 	// - When explicit parameters are provided, undeclared params must be disabled
 	// - When no parameters are provided, undeclared params should be allowed again
 	ctx := context.Background()
-	db, err := sql.Open("googlesqlite", ":memory:")
+	db, err := sql.Open("googlesqlengine", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

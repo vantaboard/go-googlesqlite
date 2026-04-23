@@ -12,7 +12,7 @@ import (
 //
 // The transformer converts GoogleSQL AggregateScan nodes by:
 // - Transforming the input scan that provides data for aggregation
-// - Converting aggregate expressions (SUM, COUNT, etc.) with googlesqlite function wrappers
+// - Converting aggregate expressions (SUM, COUNT, etc.) with googlesqlengine function wrappers
 // - Processing GROUP BY expressions with proper GoogleSQL semantics
 // - Handling ROLLUP and GROUPING SETS via UNION ALL of different grouping levels
 // - Managing NULL values for rollup totals and subtotals

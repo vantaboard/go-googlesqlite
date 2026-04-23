@@ -1,4 +1,4 @@
-package googlesqlite_test
+package googlesqlengine_test
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	_ "github.com/vantaboard/go-googlesqlite"
+	_ "github.com/vantaboard/go-googlesql-engine"
 )
 
 // benchRichCTASTableSeq avoids table name reuse when the benchmark driver re-runs the loop with increasing b.N
@@ -66,7 +66,7 @@ func BenchmarkCTAS_RichTortoiseExec(b *testing.B) {
 		}
 	}
 	ctx := context.Background()
-	db, err := sql.Open("googlesqlite", ":memory:")
+	db, err := sql.Open("googlesqlengine", ":memory:")
 	if err != nil {
 		b.Fatal(err)
 	}

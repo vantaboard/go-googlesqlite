@@ -1,9 +1,9 @@
 //go:build duckdb && duckdb_use_lib
 
-// DuckDB catalog repository tests live in package googlesqlite_test (not internal) so
+// DuckDB catalog repository tests live in package googlesqlengine_test (not internal) so
 // `go test ./internal` does not build a second test binary that must load libduckdb.so.
 
-package googlesqlite_test
+package googlesqlengine_test
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 
 	_ "github.com/duckdb/duckdb-go/v2"
 
-	internal "github.com/vantaboard/go-googlesqlite/internal"
+	internal "github.com/vantaboard/go-googlesql-engine/internal"
 )
 
 func TestDuckDBCatalogRepository_ensureUpsertQuery(t *testing.T) {

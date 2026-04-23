@@ -15,7 +15,7 @@ type ParseScriptRequest struct{}
 type ParseScriptResponse struct{}
 type AnalyzeStatementRequest struct{}
 
-// StatementAnalysis is the minimum analysis payload go-googlesqlite needs from
+// StatementAnalysis is the minimum analysis payload go-googlesql-engine needs from
 // the new go-googlesql client boundary.
 type StatementAnalysis struct {
 	Statement *StatementAnalysisPayload

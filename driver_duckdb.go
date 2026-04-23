@@ -1,6 +1,6 @@
 //go:build duckdb
 
-// Package googlesqlite registers driver name "googlesqlduck" when built with -tags duckdb.
+// Package googlesqlengine registers driver name "googlesqlengineduck" when built with -tags duckdb.
 //
 // Linking (see https://github.com/duckdb/duckdb-go#linking-duckdb ):
 //
@@ -21,25 +21,25 @@
 //
 // Upstream details: https://github.com/duckdb/duckdb-go#linking-a-dynamic-library
 
-package googlesqlite
+package googlesqlengine
 
 import (
 	"database/sql"
 	"database/sql/driver"
 
-	internal "github.com/vantaboard/go-googlesqlite/internal"
+	internal "github.com/vantaboard/go-googlesql-engine/internal"
 
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
 func init() {
-	sql.Register("googlesqlduck", &GoogleSQLDuckDriver{})
+	sql.Register("googlesqlengineduck", &GoogleSQLDuckDriver{})
 }
 
-// GoogleSQLDuckDriver runs GoogleSQL through the same pipeline as [GoogleSQLiteDriver] but uses
-// DuckDB via [github.com/duckdb/duckdb-go/v2] and [internal.DuckDBDialect]. Register name: "googlesqlduck".
+// GoogleSQLDuckDriver runs GoogleSQL through the same pipeline as [GoogleSQLEngineDriver] but uses
+// DuckDB via [github.com/duckdb/duckdb-go/v2] and [internal.DuckDBDialect]. Register name: "googlesqlengineduck".
 type GoogleSQLDuckDriver struct {
-	ConnectHook func(*GoogleSQLiteConn) error
+	ConnectHook func(*GoogleSQLEngineConn) error
 }
 
 func (d *GoogleSQLDuckDriver) Open(name string) (driver.Conn, error) {
@@ -47,7 +47,7 @@ func (d *GoogleSQLDuckDriver) Open(name string) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := newGoogleSQLiteConn(db, catalog, internal.DuckDBDialect{})
+	conn, err := newGoogleSQLEngineConn(db, catalog, internal.DuckDBDialect{})
 	if err != nil {
 		return nil, err
 	}

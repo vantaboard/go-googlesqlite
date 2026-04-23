@@ -1,4 +1,4 @@
-package googlesqlite_test
+package googlesqlengine_test
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"testing"
 
-	_ "github.com/vantaboard/go-googlesqlite"
+	_ "github.com/vantaboard/go-googlesql-engine"
 )
 
 // BenchmarkCTAS_ExecUnnestedRows measures a CTAS that writes many rows (not the emulator HTTP stack).
@@ -21,7 +21,7 @@ func BenchmarkCTAS_ExecUnnestedRows(b *testing.B) {
 		}
 	}
 	ctx := context.Background()
-	db, err := sql.Open("googlesqlite", ":memory:")
+	db, err := sql.Open("googlesqlengine", ":memory:")
 	if err != nil {
 		b.Fatal(err)
 	}

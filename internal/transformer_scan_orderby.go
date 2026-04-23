@@ -15,7 +15,7 @@ import (
 // - Recursively transforming the input scan to get the data source
 // - Transforming each ORDER BY expression through the coordinator
 // - Handling GoogleSQL's NULL ordering semantics (NULLS FIRST/LAST) via additional sort keys
-// - Applying googlesqlite_collate for consistent string ordering behavior
+// - Applying googlesqlengine_collate for consistent string ordering behavior
 // - Creating SELECT * FROM (...) ORDER BY structure for complex queries
 //
 // GoogleSQL's NULL ordering is more sophisticated than SQLite's default behavior,

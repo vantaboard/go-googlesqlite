@@ -15,7 +15,7 @@ import (
 // - Recursively transforming the subquery's scan structure
 // - Wrapping the result in appropriate SQL constructs based on subquery type:
 //   - Scalar: Returns single value, wrapped in parentheses
-//   - Array: Wrapped with dialect-specific list aggregate (googlesqlite_array / list)
+//   - Array: Wrapped with dialect-specific list aggregate (googlesqlengine_array / list)
 //   - EXISTS: Wrapped in EXISTS(...) boolean expression
 //   - IN: Combined with IN expression for membership testing
 //

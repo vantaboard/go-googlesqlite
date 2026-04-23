@@ -236,12 +236,12 @@ type mergeKeyPair struct {
 	mergedTargetName string
 }
 
-// flattenMergeAnd unwraps nested googlesqlite_and into a flat list of comparison leaves.
+// flattenMergeAnd unwraps nested googlesqlengine_and into a flat list of comparison leaves.
 func flattenMergeAnd(expr ExpressionData) []ExpressionData {
 	if expr.Type != ExpressionTypeFunction || expr.Function == nil {
 		return []ExpressionData{expr}
 	}
-	if expr.Function.Name != "googlesqlite_and" {
+	if expr.Function.Name != "googlesqlengine_and" {
 		return []ExpressionData{expr}
 	}
 	var out []ExpressionData
@@ -276,7 +276,7 @@ func validateMergeLeaf(leaf ExpressionData) error {
 	// Null-safe key comparisons should use IS NOT DISTINCT FROM; (x = y OR (x IS NULL AND y IS NULL))
 	// is not modeled as separate OR leaves—use IS NOT DISTINCT FROM instead.
 	switch leaf.Function.Name {
-	case "googlesqlite_equal", "googlesqlite_is_not_distinct_from":
+	case "googlesqlengine_equal", "googlesqlengine_is_not_distinct_from":
 	default:
 		return fmt.Errorf("unsupported comparison %q (use = or IS NOT DISTINCT FROM between columns)", leaf.Function.Name)
 	}
@@ -322,7 +322,7 @@ func (t *MergeStmtTransformer) extractMergePairFromLeaf(mergeData *MergeData, le
 		return nil, nil, fmt.Errorf("invalid merge ON leaf")
 	}
 	switch leaf.Function.Name {
-	case "googlesqlite_equal", "googlesqlite_is_not_distinct_from":
+	case "googlesqlengine_equal", "googlesqlengine_is_not_distinct_from":
 	default:
 		return nil, nil, fmt.Errorf("unsupported merge ON leaf %q", leaf.Function.Name)
 	}
@@ -404,7 +404,7 @@ func chainAndExprs(parts []*SQLExpression) *SQLExpression {
 	return out
 }
 
-// mergeWhenFilter builds the row filter on googlesqlite_merged_table for the given match type and key columns.
+// mergeWhenFilter builds the row filter on googlesqlengine_merged_table for the given match type and key columns.
 // Predicates correlate to the outer DML row by comparing merged_* aliases to bare target/source column names
 // (e.g. `id`) so EXISTS subqueries in DELETE/UPDATE behave correctly.
 func mergeWhenFilter(matchType ast.MatchType, keys []mergeKeyPair) (*SQLExpression, error) {

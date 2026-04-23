@@ -349,7 +349,7 @@ func newFunctionSpec(ctx context.Context, namePath *NamePath, stmt *ast.CreateFu
 		}
 		if len(argParams) == 0 {
 			body = NewFunctionExpression(
-				"googlesqlite_eval_javascript",
+				"googlesqlengine_eval_javascript",
 				code,
 				retType,
 			)
@@ -367,7 +367,7 @@ func newFunctionSpec(ctx context.Context, namePath *NamePath, stmt *ast.CreateFu
 			varArgs = append(varArgs, argParams...)
 
 			body = NewFunctionExpression(
-				"googlesqlite_eval_javascript",
+				"googlesqlengine_eval_javascript",
 				varArgs...,
 			)
 		}

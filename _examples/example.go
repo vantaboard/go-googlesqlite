@@ -4,11 +4,11 @@ import (
 	"database/sql"
 	"fmt"
 
-	_ "github.com/vantaboard/go-googlesqlite"
+	_ "github.com/vantaboard/go-googlesql-engine"
 )
 
 func main() {
-	db, err := sql.Open("googlesqlite", ":memory:")
+	db, err := sql.Open("googlesqlengine", ":memory:")
 	if err != nil {
 		panic(err)
 	}

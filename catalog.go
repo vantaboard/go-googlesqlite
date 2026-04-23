@@ -1,11 +1,11 @@
-package googlesqlite
+package googlesqlengine
 
 import (
 	"database/sql"
 	"fmt"
 	"reflect"
 
-	internal "github.com/vantaboard/go-googlesqlite/internal"
+	internal "github.com/vantaboard/go-googlesql-engine/internal"
 )
 
 type (
@@ -25,19 +25,19 @@ type (
 // NOTE: This API relies on the internal structure of sql.Rows, so not will work for all Go versions.
 func ChangedCatalogFromRows(rows *sql.Rows) (*ChangedCatalog, error) {
 	if rows == nil {
-		return nil, fmt.Errorf("googlesqlite: sql.Rows instance required not nil")
+		return nil, fmt.Errorf("googlesqlengine: sql.Rows instance required not nil")
 	}
 	rv := reflect.ValueOf(rows)
 	rowsi := rv.Elem().FieldByName("rowsi")
 	if !rowsi.IsValid() {
-		return nil, fmt.Errorf("googlesqlite: unexpected sql.Rows layout")
+		return nil, fmt.Errorf("googlesqlengine: unexpected sql.Rows layout")
 	}
 	driverValue := rowsi.Elem()
 	if driverValue.Type() != reflect.TypeOf(new(internal.Rows)) {
-		return nil, fmt.Errorf("googlesqlite: sql.Rows must be an instance created using the googlesqlite database driver")
+		return nil, fmt.Errorf("googlesqlengine: sql.Rows must be an instance created using the googlesqlengine database driver")
 	}
-	googlesqliteRows := (*internal.Rows)(driverValue.UnsafePointer())
-	return googlesqliteRows.ChangedCatalog(), nil
+	engineRows := (*internal.Rows)(driverValue.UnsafePointer())
+	return engineRows.ChangedCatalog(), nil
 }
 
 // ChangedCatalogFromResult retrieve modified catalog information from sql.Result.
@@ -45,16 +45,16 @@ func ChangedCatalogFromRows(rows *sql.Rows) (*ChangedCatalog, error) {
 func ChangedCatalogFromResult(result sql.Result) (*ChangedCatalog, error) {
 	rv := reflect.ValueOf(result)
 	if rv.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("googlesqlite: unexpected sql.Result layout. expected sql.Result type is struct but got %T", result)
+		return nil, fmt.Errorf("googlesqlengine: unexpected sql.Result layout. expected sql.Result type is struct but got %T", result)
 	}
 	resi := rv.FieldByName("resi")
 	if !resi.IsValid() {
-		return nil, fmt.Errorf("googlesqlite: unexpected sql.Result layout")
+		return nil, fmt.Errorf("googlesqlengine: unexpected sql.Result layout")
 	}
 	driverValue := resi.Elem()
 	if driverValue.Type() != reflect.TypeOf(new(internal.Result)) {
-		return nil, fmt.Errorf("googlesqlite: sql.Result must be an instance created using the googlesqlite database driver")
+		return nil, fmt.Errorf("googlesqlengine: sql.Result must be an instance created using the googlesqlengine database driver")
 	}
-	googlesqliteResult := (*internal.Result)(driverValue.UnsafePointer())
-	return googlesqliteResult.ChangedCatalog(), nil
+	engineResult := (*internal.Result)(driverValue.UnsafePointer())
+	return engineResult.ChangedCatalog(), nil
 }

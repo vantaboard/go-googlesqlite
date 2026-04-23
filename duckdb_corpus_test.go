@@ -1,6 +1,6 @@
 //go:build duckdb && duckdb_use_lib
 
-package googlesqlite_test
+package googlesqlengine_test
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	googlesqlite "github.com/vantaboard/go-googlesqlite"
+	googlesqlengine "github.com/vantaboard/go-googlesql-engine"
 )
 
 //go:embed testdata/duckdb_corpus/*.sql
@@ -22,7 +22,7 @@ var duckdbCorpusSQL embed.FS
 // TestDuckdbCorpusSQLFiles runs each file under testdata/duckdb_corpus through SQLite and DuckDB
 // (parity gates: ordered comparison via normalizeRows).
 func TestDuckdbCorpusSQLFiles(t *testing.T) {
-	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
+	ctx := googlesqlengine.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
 	entries, err := duckdbCorpusSQL.ReadDir("testdata/duckdb_corpus")
 	if err != nil {
 		t.Fatal(err)
@@ -43,14 +43,14 @@ func TestDuckdbCorpusSQLFiles(t *testing.T) {
 			}
 
 			sqliteDSN := fmt.Sprintf("file:corpus_%s?mode=memory&cache=private", name)
-			sqliteDB, err := sql.Open("googlesqlite", sqliteDSN)
+			sqliteDB, err := sql.Open("googlesqlengine", sqliteDSN)
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = sqliteDB.Close() })
 
 			duckPath := filepath.Join(t.TempDir(), strings.ReplaceAll(name, ".sql", ".duckdb"))
-			duckDB, err := sql.Open("googlesqlduck", duckPath)
+			duckDB, err := sql.Open("googlesqlengineduck", duckPath)
 			if err != nil {
 				t.Fatal(err)
 			}

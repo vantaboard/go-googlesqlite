@@ -1,9 +1,9 @@
 //go:build duckdb && duckdb_use_lib
 
-// Dual-backend tests run the same GoogleSQL through googlesqlite (SQLite) and googlesqlduck (DuckDB).
+// Dual-backend tests run the same GoogleSQL through googlesqlengine (SQLite) and googlesqlengineduck (DuckDB).
 // Use ORDER BY when row order is part of the contract; see docs/duckdb-parity-gates.md.
 
-package googlesqlite_test
+package googlesqlengine_test
 
 import (
 	"context"
@@ -17,14 +17,14 @@ import (
 	"testing"
 	"time"
 
-	googlesqlite "github.com/vantaboard/go-googlesqlite"
+	googlesqlengine "github.com/vantaboard/go-googlesql-engine"
 )
 
 var duckDualBackendMemCounter uint64
 
 func TestGooglesqlduckOpenAndSimpleQuery(t *testing.T) {
-	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
-	db, err := sql.Open("googlesqlduck", "")
+	ctx := googlesqlengine.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
+	db, err := sql.Open("googlesqlengineduck", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func queryAll(t *testing.T, db *sql.DB, ctx context.Context, q string) [][]inter
 }
 
 func TestDualBackend_phase1Corpus(t *testing.T) {
-	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
+	ctx := googlesqlengine.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
 
 	cases := []struct {
 		name string
@@ -124,14 +124,14 @@ SELECT id, name FROM ddl_corpus_t ORDER BY id;
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			sqliteDSN := fmt.Sprintf("file:phase1_%d?mode=memory&cache=private", atomic.AddUint64(&duckDualBackendMemCounter, 1))
-			sqliteDB, err := sql.Open("googlesqlite", sqliteDSN)
+			sqliteDB, err := sql.Open("googlesqlengine", sqliteDSN)
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = sqliteDB.Close() })
 
 			duckPath := filepath.Join(t.TempDir(), "corpus.duckdb")
-			duckDB, err := sql.Open("googlesqlduck", duckPath)
+			duckDB, err := sql.Open("googlesqlengineduck", duckPath)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,7 +147,7 @@ SELECT id, name FROM ddl_corpus_t ORDER BY id;
 }
 
 func TestDualBackend_phase2FunctionSurface(t *testing.T) {
-	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
+	ctx := googlesqlengine.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
 
 	cases := []struct {
 		name string
@@ -199,14 +199,14 @@ SELECT x, ROW_NUMBER() OVER (ORDER BY x) AS rn FROM win_g ORDER BY x, rn;
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			sqliteDSN := fmt.Sprintf("file:phase2_%d?mode=memory&cache=private", atomic.AddUint64(&duckDualBackendMemCounter, 1))
-			sqliteDB, err := sql.Open("googlesqlite", sqliteDSN)
+			sqliteDB, err := sql.Open("googlesqlengine", sqliteDSN)
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = sqliteDB.Close() })
 
 			duckPath := filepath.Join(t.TempDir(), "phase2.duckdb")
-			duckDB, err := sql.Open("googlesqlduck", duckPath)
+			duckDB, err := sql.Open("googlesqlengineduck", duckPath)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -246,7 +246,7 @@ func normalizeRows(rows [][]interface{}) [][]string {
 }
 
 func TestDualBackend_phase3DDLCTAS(t *testing.T) {
-	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
+	ctx := googlesqlengine.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
 	// CTAS + multi-column DDL (workload-style). Keep projections simple so emitted SQL stays dialect-quoted.
 	q := `
 CREATE TABLE ctas_src (id INT64, v INT64);
@@ -255,14 +255,14 @@ CREATE TABLE ctas_dst AS SELECT id, v FROM ctas_src WHERE v > 5;
 SELECT id, v FROM ctas_dst ORDER BY id;
 `
 	sqliteDSN := fmt.Sprintf("file:phase3_%d?mode=memory&cache=private", atomic.AddUint64(&duckDualBackendMemCounter, 1))
-	sqliteDB, err := sql.Open("googlesqlite", sqliteDSN)
+	sqliteDB, err := sql.Open("googlesqlengine", sqliteDSN)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqliteDB.Close() })
 
 	duckPath := filepath.Join(t.TempDir(), "phase3_ctas.duckdb")
-	duckDB, err := sql.Open("googlesqlduck", duckPath)
+	duckDB, err := sql.Open("googlesqlengineduck", duckPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,18 +276,18 @@ SELECT id, v FROM ctas_dst ORDER BY id;
 }
 
 func TestDualBackend_namedParameter(t *testing.T) {
-	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
+	ctx := googlesqlengine.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
 	q := `SELECT 40 + CAST(@p AS INT64) AS v`
 
 	sqliteDSN := fmt.Sprintf("file:named_%d?mode=memory&cache=private", atomic.AddUint64(&duckDualBackendMemCounter, 1))
-	sqliteDB, err := sql.Open("googlesqlite", sqliteDSN)
+	sqliteDB, err := sql.Open("googlesqlengine", sqliteDSN)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqliteDB.Close() })
 
 	duckPath := filepath.Join(t.TempDir(), "named.duckdb")
-	duckDB, err := sql.Open("googlesqlduck", duckPath)
+	duckDB, err := sql.Open("googlesqlengineduck", duckPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,11 +301,11 @@ func TestDualBackend_namedParameter(t *testing.T) {
 }
 
 func TestDualBackend_transactionCommitAndRollback(t *testing.T) {
-	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
+	ctx := googlesqlengine.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
 
 	t.Run("sqlite", func(t *testing.T) {
 		dsn := fmt.Sprintf("file:tx_%d?mode=memory&cache=private", atomic.AddUint64(&duckDualBackendMemCounter, 1))
-		db, err := sql.Open("googlesqlite", dsn)
+		db, err := sql.Open("googlesqlengine", dsn)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -314,7 +314,7 @@ func TestDualBackend_transactionCommitAndRollback(t *testing.T) {
 	})
 	t.Run("duckdb", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "tx.duckdb")
-		db, err := sql.Open("googlesqlduck", path)
+		db, err := sql.Open("googlesqlengineduck", path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -326,7 +326,7 @@ func TestDualBackend_transactionCommitAndRollback(t *testing.T) {
 // TestDualBackend_dateBetweenTableSeed loads DATE seed rows into a real table (VARCHAR wire on DuckDB),
 // then checks BETWEEN vs >= / <= and expected match count. See testdata/date_between_table_seed.sql.
 func TestDualBackend_dateBetweenTableSeed(t *testing.T) {
-	ctx := googlesqlite.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
+	ctx := googlesqlengine.WithCurrentTime(context.Background(), time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
 	b, err := os.ReadFile("testdata/date_between_table_seed.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -334,14 +334,14 @@ func TestDualBackend_dateBetweenTableSeed(t *testing.T) {
 	q := strings.TrimSpace(string(b))
 
 	sqliteDSN := fmt.Sprintf("file:date_between_%d?mode=memory&cache=private", atomic.AddUint64(&duckDualBackendMemCounter, 1))
-	sqliteDB, err := sql.Open("googlesqlite", sqliteDSN)
+	sqliteDB, err := sql.Open("googlesqlengine", sqliteDSN)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqliteDB.Close() })
 
 	duckPath := filepath.Join(t.TempDir(), "date_between.duckdb")
-	duckDB, err := sql.Open("googlesqlduck", duckPath)
+	duckDB, err := sql.Open("googlesqlengineduck", duckPath)
 	if err != nil {
 		t.Fatal(err)
 	}

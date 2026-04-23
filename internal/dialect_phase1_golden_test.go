@@ -6,7 +6,7 @@ import (
 )
 
 func TestDialectGolden_arraySubqueryAggregateName(t *testing.T) {
-	if g, w := (SQLiteDialect{}).ArraySubqueryListAggregate(), "googlesqlite_array"; g != w {
+	if g, w := (SQLiteDialect{}).ArraySubqueryListAggregate(), "googlesqlengine_array"; g != w {
 		t.Fatalf("sqlite: got %q want %q", g, w)
 	}
 	if g, w := (DuckDBDialect{}).ArraySubqueryListAggregate(), "list"; g != w {
@@ -29,7 +29,7 @@ func TestDialectGolden_mergeScratchUsesTempOnDuckDB(t *testing.T) {
 func TestDialectGolden_groupByWrap(t *testing.T) {
 	col := NewColumnExpression("x", "t")
 	sqlite := (SQLiteDialect{}).WrapGroupByKey(col)
-	if sqlite.Type != ExpressionTypeFunction || sqlite.FunctionCall == nil || sqlite.FunctionCall.Name != "googlesqlite_group_by" {
+	if sqlite.Type != ExpressionTypeFunction || sqlite.FunctionCall == nil || sqlite.FunctionCall.Name != "googlesqlengine_group_by" {
 		t.Fatalf("sqlite wrap: %#v", sqlite)
 	}
 	duck := (DuckDBDialect{}).WrapGroupByKey(col)

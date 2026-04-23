@@ -30,8 +30,8 @@ func EVAL_JAVASCRIPT(code string, retType *Type, argNames []string, args []Value
 		}
 	}
 	evalCode := fmt.Sprintf(`
-function googlesqlite_javascript_func() { %s }
-googlesqlite_javascript_func();
+function googlesqlengine_javascript_func() { %s }
+googlesqlengine_javascript_func();
 `, code)
 	ret, err := vm.RunString(evalCode)
 	if err != nil {
@@ -43,7 +43,7 @@ googlesqlite_javascript_func();
 	}
 	value, err := castJavaScriptValue(typ, ret)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert googlesqlite value from %v: %w", ret, err)
+		return nil, fmt.Errorf("failed to convert googlesqlengine value from %v: %w", ret, err)
 	}
 	return value, nil
 }
