@@ -244,10 +244,10 @@ func (s *QueryStmt) QueryContext(ctx context.Context, args []driver.NamedValue) 
 	rows, err := s.stmt.QueryContext(ctx, newArgs...)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"failed to query %s: args: %v: %w",
-			s.formattedQuery,
-			newArgs,
+			"%w: failed to query (formatted_sql_len=%d, args=%v)",
 			err,
+			len(s.formattedQuery),
+			newArgs,
 		)
 	}
 	return &Rows{rows: rows, columns: s.outputColumns}, nil

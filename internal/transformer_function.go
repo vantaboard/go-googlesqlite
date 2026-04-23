@@ -461,12 +461,25 @@ func duckDBApplyIntegralStringEqualityCoercion(left, right *SQLExpression, ld, r
 	return NewSQLCastExpression(unw, tgt, true), right, true
 }
 
+// duckDBEqualityLikeOperators are comparisons where decoding googlesql VARCHAR wire on both STRING
+// operands is safe and fixes join keys (e.g. UNNEST-decoded value vs raw table wire). Range ops
+// (<, <=, >, >=) are excluded so DATE/BETWEEN paths keep temporal TRY_CAST behavior when metadata
+// marks VARCHAR-backed fields as STRING.
+func duckDBEqualityLikeOperator(op string) bool {
+	switch op {
+	case "=", "!=", "IS NOT DISTINCT FROM", "IS DISTINCT FROM":
+		return true
+	default:
+		return false
+	}
+}
+
 // duckDBApplyStringStringWireComparisonUnwrap applies googlesql VARCHAR wire decode to both operands
 // when both sides are STRING family. INT vs STRING joins are handled by duckDBApplyIntegralStringEqualityCoercion;
 // STRING vs STRING must still decode both cells — otherwise a column that was already unwrapped in a
 // subquery (e.g. UNNEST output) never matches a table column that still holds base64+JSON wire.
 func duckDBApplyStringStringWireComparisonUnwrap(left, right *SQLExpression, ld, rd ExpressionData, op string) (*SQLExpression, *SQLExpression, bool) {
-	if !isDuckDBComparisonOperator(op) {
+	if !duckDBEqualityLikeOperator(op) {
 		return left, right, false
 	}
 	if !expressionDataIsStringFamily(ld) || !expressionDataIsStringFamily(rd) {

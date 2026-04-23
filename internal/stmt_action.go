@@ -566,7 +566,7 @@ func (a *QueryStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.Stmt,
 				return newQueryStmt(s, a.params, retriedQuery, a.outputColumns), nil
 			}
 		}
-		return nil, fmt.Errorf("failed to prepare %s: %w", a.query, err)
+		return nil, fmt.Errorf("%w: failed to prepare query (source_sql_len=%d)", err, len(a.query))
 	}
 	return newQueryStmt(s, a.params, formattedQuery, a.outputColumns), nil
 }
@@ -582,7 +582,7 @@ func (a *QueryStmtAction) ExecContext(ctx context.Context, conn *Conn) (driver.R
 				return &Result{conn: conn}, nil
 			}
 		}
-		return nil, fmt.Errorf("failed to query %s: %w", a.query, err)
+		return nil, fmt.Errorf("%w: failed to execute query (source_sql_len=%d; see debug log for physical SQL)", err, len(a.query))
 	}
 	return &Result{conn: conn}, nil
 }
@@ -626,7 +626,7 @@ func (a *QueryStmtAction) QueryContext(ctx context.Context, conn *Conn) (*Rows, 
 		}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to query %s: %w", a.query, err)
+		return nil, fmt.Errorf("%w: failed to query (source_sql_len=%d; see debug log for physical SQL)", err, len(a.query))
 	}
 	return &Rows{conn: conn, rows: rows, columns: a.outputColumns}, nil
 }
