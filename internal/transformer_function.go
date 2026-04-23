@@ -702,6 +702,23 @@ func isPrimitiveSQLiteType(expr ExpressionData) bool {
 	}
 }
 
+// duckDBUnwireGooglesqlStringScalarForConcatArg mirrors decodeStringOrLayout for a single SQL
+// expression: VARCHAR columns often store googlesqlite base64+JSON wire; native concat() would
+// concatenate those blobs. Decode to plain text when the payload is a string wire layout.
+func duckDBUnwireGooglesqlStringScalarForConcatArg(arg *SQLExpression) *SQLExpression {
+	s := NewFunctionExpression("trim", NewSQLCastExpression(arg, "VARCHAR", false))
+	tryB64 := NewFunctionExpression("try", NewFunctionExpression("from_base64", s))
+	utf8raw := NewFunctionExpression("convert_from", tryB64, NewLiteralExpression("'utf8'"))
+	utf8 := NewFunctionExpression("try", utf8raw)
+	j := NewSQLCastExpression(utf8, "JSON", true)
+	header := NewFunctionExpression("try", NewFunctionExpression("lower", NewFunctionExpression("json_extract_string", j, NewLiteralExpression(`'$.header'`))))
+	body := NewFunctionExpression("try", NewFunctionExpression("json_extract_string", j, NewLiteralExpression(`'$.body'`)))
+	isStringWire := NewBinaryExpression(header, "=", NewLiteralExpression(`'string'`))
+	decoded := NewCaseExpression([]*WhenClause{{Condition: isStringWire, Result: body}}, NewLiteralExpression("NULL"))
+	pick := NewFunctionExpression("try", decoded)
+	return NewFunctionExpression("coalesce", pick, s)
+}
+
 // duckDBRewriteFunctionCall returns a DuckDB-native expression for special cases that are not
 // covered by RewriteEmittedFunctionName alone (extra args, frozen clock, or arity-specific INSTR).
 func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []ExpressionData, d Dialect) (*SQLExpression, bool) {
@@ -709,6 +726,15 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 		return nil, false
 	}
 	switch name {
+	case "googlesqlite_concat":
+		if len(args) < 1 {
+			return nil, false
+		}
+		unwrapped := make([]*SQLExpression, len(args))
+		for i, a := range args {
+			unwrapped[i] = duckDBUnwireGooglesqlStringScalarForConcatArg(a)
+		}
+		return NewFunctionExpression("concat", unwrapped...), true
 	case "googlesqlite_equal":
 		if len(args) == 2 {
 			if len(argData) == 2 {

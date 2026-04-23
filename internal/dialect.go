@@ -124,7 +124,7 @@ var duckDBNativeFunctions = map[string]string{
 	"googlesqlite_trim":    "trim",
 	"googlesqlite_ltrim":   "ltrim",
 	"googlesqlite_rtrim":   "rtrim",
-	"googlesqlite_concat":  "concat",
+	// googlesqlite_concat: DuckDB rewrite unwraps wire-encoded VARCHAR operands (see transformer_function.go).
 	"googlesqlite_replace": "replace",
 	"googlesqlite_reverse": "reverse",
 	"googlesqlite_repeat":  "repeat",

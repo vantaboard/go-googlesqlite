@@ -49,6 +49,12 @@ func TestDialectGolden_emitStringBuiltinRenames(t *testing.T) {
 						t.Fatal(err)
 					}
 					got := expr.String()
+					if tc.fnName == "googlesqlite_concat" && pair.name == "duckdb" {
+						if !strings.Contains(got, "concat(") || !strings.Contains(got, "from_base64(") {
+							t.Fatalf("duckdb concat should unwrap wire then concat; got %q", got)
+						}
+						return
+					}
 					if !strings.Contains(got, pair.substr) {
 						t.Fatalf("got %q, want substring %q", got, pair.substr)
 					}

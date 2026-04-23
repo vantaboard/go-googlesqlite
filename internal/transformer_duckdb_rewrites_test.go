@@ -180,6 +180,33 @@ func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
 	}
 }
 
+func TestTransformDuckDB_concatUnwrapsWireBeforeNativeConcat(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	fn := NewFunctionCallExpressionData("googlesqlite_concat",
+		ExpressionData{Type: ExpressionTypeColumn, Column: &ColumnRefData{ColumnName: "fn", Type: types.StringType()}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue(" ")}},
+		ExpressionData{Type: ExpressionTypeColumn, Column: &ColumnRefData{ColumnName: "ln", Type: types.StringType()}},
+	)
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	expr, err := coord.TransformExpression(fn, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if !strings.Contains(got, "concat(") {
+		t.Fatalf("expected concat(, got %q", got)
+	}
+	if !strings.Contains(got, "from_base64(") || !strings.Contains(got, "json_extract_string(") {
+		t.Fatalf("expected wire unwrap (from_base64 + json_extract_string), got %q", got)
+	}
+	if strings.Contains(got, "googlesqlite_concat") {
+		t.Fatalf("expected rewrite off googlesqlite_concat, got %q", got)
+	}
+}
+
 func TestTransformDuckDB_extractYearCastsDateColumnForDatePart(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	colED := ExpressionData{
