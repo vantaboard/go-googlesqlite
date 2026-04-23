@@ -4,6 +4,37 @@ import (
 	"fmt"
 )
 
+// fromItemPrimaryAlias returns the alias whose columns are visible as the unnest join's outer row.
+func fromItemPrimaryAlias(f *FromItem) string {
+	if f == nil {
+		return ""
+	}
+	switch f.Type {
+	case FromItemTypeSubquery, FromItemTypeTable, FromItemTypeTableFunction, FromItemTypeUnnest, FromItemTypeWithRef:
+		return f.Alias
+	case FromItemTypeJoin:
+		if f.Join != nil && f.Join.Left != nil {
+			return fromItemPrimaryAlias(f.Join.Left)
+		}
+	}
+	return ""
+}
+
+// qualifyPlainColumnWithTable fills in TableAlias on an unqualified column reference (copy-on-write).
+// DuckDB FROM UNNEST(expr) requires expr to denote a list correlated to the outer FROM row;
+// bare "col" fails binding with "UNNEST requires a single list as input".
+func qualifyPlainColumnWithTable(e *SQLExpression, tableAlias string) *SQLExpression {
+	if e == nil || tableAlias == "" {
+		return e
+	}
+	if e.Type != ExpressionTypeColumn || e.TableAlias != "" {
+		return e
+	}
+	out := *e
+	out.TableAlias = tableAlias
+	return &out
+}
+
 // ArrayScanTransformer handles array scan (UNNEST operations) transformations from GoogleSQL to SQLite.
 //
 // In BigQuery/GoogleSQL, array scans represent UNNEST operations that flatten array values
@@ -135,12 +166,18 @@ func (t *ArrayScanTransformer) Transform(data ScanData, ctx TransformContext) (*
 		return nil, fmt.Errorf("failed to transform array expression: %w", err)
 	}
 
+	correlated := arrayData.InputScan != nil
+	if correlated && ctx.Dialect().ArrayUnnestUseLateralCorrelation() && innerFromItem != nil {
+		if ta := fromItemPrimaryAlias(innerFromItem); ta != "" {
+			arrayExpr = qualifyPlainColumnWithTable(arrayExpr, ta)
+		}
+	}
+
 	arrayAlias := fmt.Sprintf("$array_%s", ctx.FragmentContext().GetID())
 	includeOffset := arrayData.ArrayOffsetColumn != nil
 
 	var expansion *FromItem
 	if ctx.Dialect().ArrayUnnestUseLateralCorrelation() {
-		correlated := arrayData.InputScan != nil
 		expansion = t.unnestExpansionFromItem(arrayExpr, arrayAlias, includeOffset, correlated)
 	} else {
 		expansion = &FromItem{
