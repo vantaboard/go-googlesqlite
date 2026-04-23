@@ -410,21 +410,23 @@ func (f *FunctionCall) WriteSql(writer *SQLWriter) {
 			}
 			arg.WriteSql(writer)
 		}
-	}
-	writer.Write(")")
-	if len(aggOrderBy) > 0 {
-		writer.Write(" ORDER BY ")
-		for i, item := range aggOrderBy {
-			if i > 0 {
-				writer.Write(", ")
+		// DuckDB: ORDER BY / LIMIT belong inside the aggregate call, before ')'
+		// (e.g. string_agg(DISTINCT x, sep ORDER BY x ASC), not after the closing paren).
+		if len(aggOrderBy) > 0 {
+			writer.Write(" ORDER BY ")
+			for i, item := range aggOrderBy {
+				if i > 0 {
+					writer.Write(", ")
+				}
+				item.WriteSql(writer)
 			}
-			item.WriteSql(writer)
+		}
+		if aggLimit != nil {
+			writer.Write(" LIMIT ")
+			aggLimit.WriteSql(writer)
 		}
 	}
-	if aggLimit != nil {
-		writer.Write(" LIMIT ")
-		aggLimit.WriteSql(writer)
-	}
+	writer.Write(")")
 	if aggFilter != nil {
 		writer.Write(" FILTER (WHERE ")
 		aggFilter.WriteSql(writer)

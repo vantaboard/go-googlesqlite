@@ -126,7 +126,10 @@ func TestDuckDBAggregateWriteSql_stringAggDistinctOrderBy(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	if !strings.Contains(got, "ORDER BY") || !strings.Contains(got, "ASC") {
-		t.Fatalf("expected ORDER BY ... ASC after aggregate args, got %q", got)
+		t.Fatalf("expected ORDER BY ... ASC inside aggregate call, got %q", got)
+	}
+	if strings.Contains(strings.ReplaceAll(got, " ", ""), ")ORDERBY") {
+		t.Fatalf("ORDER BY must be inside aggregate parens, not after ')', got %q", got)
 	}
 	if !strings.Contains(strings.ReplaceAll(got, " ", ""), "string_agg(DISTINCT") {
 		t.Fatalf("expected DISTINCT inside aggregate call, got %q", got)
