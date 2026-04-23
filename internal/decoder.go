@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math/big"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -61,12 +62,40 @@ func DecodeValue(v driver.Value) (Value, error) {
 		// Use TimestampValue as the widest temporal carrier; CastValue maps to
 		// DATE, DATETIME, TIME, or TIMESTAMP from column metadata.
 		return TimestampValue(vv), nil
+	case []interface{}:
+		// DuckDB LIST / array_agg results often scan as []interface{} (elements may be
+		// int64, string, nested slices, etc.).
+		return decodeNativeSlice(vv)
+	}
+	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Slice && rv.Type().Elem().Kind() != reflect.Uint8 {
+		// Typed slices from native drivers (e.g. []int64, []string); []byte / []uint8
+		// are handled above as wire/string payloads.
+		n := rv.Len()
+		out := make([]interface{}, n)
+		for i := 0; i < n; i++ {
+			out[i] = rv.Index(i).Interface()
+		}
+		return decodeNativeSlice(out)
 	}
 	s, ok := v.(string)
 	if !ok {
 		return nil, fmt.Errorf("unexpected value type: %T", v)
 	}
 	return decodeStringOrLayout(s)
+}
+
+func decodeNativeSlice(elems []interface{}) (Value, error) {
+	ret := &ArrayValue{
+		values: make([]Value, 0, len(elems)),
+	}
+	for _, elem := range elems {
+		value, err := DecodeValue(elem)
+		if err != nil {
+			return nil, err
+		}
+		ret.values = append(ret.values, value)
+	}
+	return ret, nil
 }
 
 // decodeStringOrLayout decodes a SQLite/googlesqlengine base64+JSON wire value when present;
