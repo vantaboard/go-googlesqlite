@@ -45,13 +45,12 @@ func qualifyPlainColumnWithTable(e *SQLExpression, tableAlias string) *SQLExpres
 // The transformer converts GoogleSQL ArrayScan nodes by:
 // - Transforming array expressions through the coordinator
 // - Using SQLite's json_each() table function with googlesqlengine_decode_array() for UNNEST
-// - Using DuckDB json_each() over wire-decoded ARRAY JSON (VARCHAR storage) with JOIN LATERAL when correlated
+// - Using DuckDB UNNEST(string_split(...)) or list_extract+range for offsets (no JSON casts on ARRAY wire)
 // - Handling correlated arrays with proper JOIN semantics (INNER vs LEFT)
 // - Managing element and offset column availability in the fragment context
 // - Supporting both standalone UNNEST and UNNEST with input scans
 //
-// The json_each() approach provides 'key' (offset) and 'value' (element) columns
-// that map to GoogleSQL's array element and offset semantics in SQLite.
+// SQLite json_each provides 'key' (offset) and 'value' (element); DuckDB uses the same column names.
 type ArrayScanTransformer struct {
 	coordinator Coordinator
 }
@@ -72,19 +71,27 @@ func (t *ArrayScanTransformer) unnestExpansionFromItem(
 	correlated bool,
 ) *FromItem {
 	if !correlated {
-		// (SELECT expr AS _arr) CROSS JOIN LATERAL json_each(decoded array JSON).
+		// (SELECT expr AS _arr) CROSS JOIN LATERAL UNNEST(wire split list) — no JSON casts.
 		src := NewSelectStatement()
 		src.SelectList = []*SelectListItem{{Expression: arrayExpr, Alias: "_arr"}}
 		srcFrom := NewSubqueryFromItem(src, "_unnest_src")
 
 		arrCol := NewColumnExpression("_arr", "_unnest_src")
-		jeFrom := &FromItem{
-			Type: FromItemTypeTableFunction,
-			TableFunction: &TableFunction{
-				Name:      "json_each",
-				Arguments: []*SQLExpression{sqlexpr.DuckDBGooglesqlWireArrayJSONForJsonEach(arrCol)},
-			},
-			Alias: "_je",
+		splitList := sqlexpr.DuckDBGooglesqlWireArraySplitList(arrCol)
+
+		if includeOffset {
+			listSel := NewSelectStatement()
+			listSel.SelectList = []*SelectListItem{{Expression: splitList, Alias: "lst"}}
+			listSel.FromClause = srcFrom
+			listFrom := NewSubqueryFromItem(listSel, "_ls")
+			return duckDBJoinSplitListWithRange(listFrom, arrayAlias)
+		}
+
+		unnestFrom := &FromItem{
+			Type:              FromItemTypeUnnest,
+			UnnestExpr:        splitList,
+			Alias:             "_je",
+			UnnestColumnAlias: "value",
 		}
 
 		body := NewSelectStatement()
@@ -93,59 +100,83 @@ func (t *ArrayScanTransformer) unnestExpansionFromItem(
 			Join: &JoinClause{
 				Type:           JoinTypeCross,
 				Left:           srcFrom,
-				Right:          jeFrom,
+				Right:          unnestFrom,
 				RightIsLateral: true,
 			},
 		}
-		items := []*SelectListItem{
-			{Expression: NewColumnExpression("value", "_je"), Alias: "value"},
+		body.SelectList = []*SelectListItem{
+			{Expression: sqlexpr.DuckDBTrimWireArrayElement(NewColumnExpression("value", "_je")), Alias: "value"},
 		}
-		if includeOffset {
-			keyRaw := NewColumnExpression("key", "_je")
-			items = append(items, &SelectListItem{
-				Expression: NewSQLCastExpression(NewFunctionExpression("try", keyRaw), "BIGINT", true),
-				Alias:      "key",
-			})
-		}
-		body.SelectList = items
 		return NewSubqueryFromItem(body, arrayAlias)
 	}
 
 	if includeOffset {
 		return duckDBCorrelatedUnnestWithOffset(arrayExpr, arrayAlias)
 	}
-	return &FromItem{
-		Type: FromItemTypeTableFunction,
-		TableFunction: &TableFunction{
-			Name:      "json_each",
-			Arguments: []*SQLExpression{sqlexpr.DuckDBGooglesqlWireArrayJSONForJsonEach(arrayExpr)},
-		},
-		Alias: arrayAlias,
+
+	unnestInner := &FromItem{
+		Type:              FromItemTypeUnnest,
+		UnnestExpr:        sqlexpr.DuckDBGooglesqlWireArraySplitList(arrayExpr),
+		Alias:             "_u",
+		UnnestColumnAlias: "value",
 	}
+	wrap := NewSelectStatement()
+	wrap.FromClause = unnestInner
+	wrap.SelectList = []*SelectListItem{
+		{Expression: sqlexpr.DuckDBTrimWireArrayElement(NewColumnExpression("value", "_u")), Alias: "value"},
+	}
+	return NewSubqueryFromItem(wrap, arrayAlias)
 }
 
-// duckDBCorrelatedUnnestWithOffset expands a correlated wire-backed array with json_each key/value
-// (same semantics as SQLite json_each).
-func duckDBCorrelatedUnnestWithOffset(arrayExpr *SQLExpression, arrayAlias string) *FromItem {
-	body := NewSelectStatement()
-	body.FromClause = &FromItem{
+// duckDBJoinSplitListWithRange expands lst (VARCHAR[]) with 0-based key matching SQLite json_each.
+// listFrom must expose column "lst" (table alias typically "_ls").
+func duckDBJoinSplitListWithRange(listFrom *FromItem, arrayAlias string) *FromItem {
+	lstRef := NewColumnExpression("lst", "_ls")
+	lenLst := NewFunctionExpression("len", lstRef)
+	stopExclusive := NewBinaryExpression(lenLst, "+", NewLiteralExpression("1"))
+	rngFrom := &FromItem{
 		Type: FromItemTypeTableFunction,
 		TableFunction: &TableFunction{
-			Name:      "json_each",
-			Arguments: []*SQLExpression{sqlexpr.DuckDBGooglesqlWireArrayJSONForJsonEach(arrayExpr)},
+			Name: "range",
+			Arguments: []*SQLExpression{
+				NewLiteralExpression("1"),
+				stopExclusive,
+				NewLiteralExpression("1"),
+			},
 		},
-		Alias: "_unnest_json",
+		Alias: "_gs",
 	}
-	keyRaw := NewColumnExpression("key", "_unnest_json")
-	items := []*SelectListItem{
-		{Expression: NewColumnExpression("value", "_unnest_json"), Alias: "value"},
-		{
-			Expression: NewSQLCastExpression(NewFunctionExpression("try", keyRaw), "BIGINT", true),
-			Alias:      "key",
+	join := &FromItem{
+		Type: FromItemTypeJoin,
+		Join: &JoinClause{
+			Type:           JoinTypeCross,
+			Left:           listFrom,
+			Right:          rngFrom,
+			RightIsLateral: true,
 		},
 	}
-	body.SelectList = items
+	rngIdx := NewColumnExpression("range", "_gs")
+	extracted := NewFunctionExpression("list_extract", lstRef, rngIdx)
+	trimmedVal := sqlexpr.DuckDBTrimWireArrayElement(extracted)
+	keyExpr := NewBinaryExpression(NewSQLCastExpression(rngIdx, "BIGINT", true), "-", NewLiteralExpression("1"))
+
+	body := NewSelectStatement()
+	body.FromClause = join
+	body.SelectList = []*SelectListItem{
+		{Expression: trimmedVal, Alias: "value"},
+		{Expression: keyExpr, Alias: "key"},
+	}
 	return NewSubqueryFromItem(body, arrayAlias)
+}
+
+// duckDBCorrelatedUnnestWithOffset expands a correlated wire-backed array with list_extract + range
+// (json_each key/value semantics without TRY_CAST(... AS JSON)).
+func duckDBCorrelatedUnnestWithOffset(arrayExpr *SQLExpression, arrayAlias string) *FromItem {
+	listSel := NewSelectStatement()
+	listSel.SelectList = []*SelectListItem{{Expression: sqlexpr.DuckDBGooglesqlWireArraySplitList(arrayExpr), Alias: "lst"}}
+	listSel.FromClause = &FromItem{Type: FromItemTypeSingleRow}
+	listFrom := NewSubqueryFromItem(listSel, "_ls")
+	return duckDBJoinSplitListWithRange(listFrom, arrayAlias)
 }
 
 // Transform converts ArrayScanData to a FromItem representing UNNEST operation
