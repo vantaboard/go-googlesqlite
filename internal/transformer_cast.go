@@ -16,10 +16,10 @@ import (
 // The transformer converts GoogleSQL cast operations by:
 // - Recursively transforming the expression being cast
 // - Encoding source and target type information as JSON
-// - Using the googlesqlite_cast runtime function for complex type conversions
+// - Using the googlesqlengine_cast runtime function for complex type conversions
 // - Handling safe cast semantics (SAFE_CAST returns NULL on conversion failure)
 //
-// The googlesqlite_cast function bridges the type system gap by implementing GoogleSQL's
+// The googlesqlengine_cast function bridges the type system gap by implementing GoogleSQL's
 // casting semantics in the SQLite runtime, preserving behavior for complex types
 // and edge cases that SQLite's native CAST cannot handle.
 type CastTransformer struct {
@@ -47,18 +47,23 @@ func (t *CastTransformer) Transform(data ExpressionData, ctx TransformContext) (
 		return nil, fmt.Errorf("failed to transform cast expression: %w", err)
 	}
 
-	native, err := ctx.Dialect().MaybeEmitNativeCast(innerExpr, cast)
+	native, err := ctx.Dialect().MaybeEmitNativeCast(innerExpr, &CastMetadata{
+		FromType:        cast.FromType,
+		ToType:          cast.ToType,
+		SafeCast:        cast.SafeCast,
+		ReturnNullOnErr: cast.ReturnNullOnErr,
+	})
 	if err != nil {
 		return nil, err
 	}
 	if native != nil {
 		return native, nil
 	}
-	return t.createGoogleSQLiteCast(innerExpr, cast)
+	return t.createGoogleSQLEngineCast(innerExpr, cast)
 }
 
-// createGoogleSQLiteCast creates a googlesqlite_cast function call for complex casts
-func (t *CastTransformer) createGoogleSQLiteCast(expr *SQLExpression, cast *CastData) (*SQLExpression, error) {
+// createGoogleSQLEngineCast creates a googlesqlengine_cast function call for complex casts
+func (t *CastTransformer) createGoogleSQLEngineCast(expr *SQLExpression, cast *CastData) (*SQLExpression, error) {
 	jsonFromType, err := json.Marshal(newType(cast.FromType))
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal source type: %w", err)
@@ -80,11 +85,11 @@ func (t *CastTransformer) createGoogleSQLiteCast(expr *SQLExpression, cast *Cast
 		return nil, fmt.Errorf("failed to encode target type: %w", err)
 	}
 
-	// Create the googlesqlite_cast function call
+	// Create the googlesqlengine_cast function call
 	return &SQLExpression{
 		Type: ExpressionTypeFunction,
 		FunctionCall: &FunctionCall{
-			Name: "googlesqlite_cast",
+			Name: "googlesqlengine_cast",
 			Arguments: []*SQLExpression{
 				expr,            // Expression to cast
 				encodedFromType, // Source type

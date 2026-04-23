@@ -1,32 +1,30 @@
-package internal
+package duckdb
 
 import (
 	"fmt"
 
 	"github.com/vantaboard/go-googlesql/types"
+
+	sqlexpr "github.com/vantaboard/go-googlesql-engine/internal/sqlexpr"
 )
 
 // MaybeEmitNativeCast implements Dialect for DuckDB: emit CAST / TRY_CAST for scalar types only.
-func (DuckDBDialect) MaybeEmitNativeCast(inner *SQLExpression, cast *CastData) (*SQLExpression, error) {
+func (Dialect) MaybeEmitNativeCast(inner *sqlexpr.SQLExpression, cast *sqlexpr.CastMetadata) (*sqlexpr.SQLExpression, error) {
 	if inner == nil || cast == nil {
 		return nil, nil
 	}
-	target, ok := duckDBSQLCastType(cast.ToType)
+	target, ok := sqlCastType(cast.ToType)
 	if !ok {
 		return nil, fmt.Errorf("duckdb: native CAST not implemented for target type %s", cast.ToType.DebugString(false))
 	}
 	try := cast.ReturnNullOnErr || cast.SafeCast
-	if cast.FromType != nil && target != "VARCHAR" && duckDBNativeCastNeedsWireUnwrap(cast.FromType, target) {
-		inner = duckDBUnwireGooglesqlStringOperand(inner)
+	if cast.FromType != nil && target != "VARCHAR" && nativeCastNeedsWireUnwrap(cast.FromType, target) {
+		inner = sqlexpr.DuckDBUnwireGooglesqlStringOperand(inner)
 	}
-	return NewSQLCastExpression(inner, target, try), nil
+	return sqlexpr.NewSQLCastExpression(inner, target, try), nil
 }
 
-// duckDBNativeCastNeedsWireUnwrap mirrors how the BigQuery emulator stores values in DuckDB: many
-// logical DATE/TIMESTAMP/TIME columns are physically VARCHAR holding googlesqlite base64+JSON wire.
-// The analyzer still types CAST inputs as DATE etc., so we must unwrap for those casts too, not
-// only for STRING-typed sources.
-func duckDBNativeCastNeedsWireUnwrap(from types.Type, targetSQL string) bool {
+func nativeCastNeedsWireUnwrap(from types.Type, targetSQL string) bool {
 	if from == nil {
 		return false
 	}
@@ -45,7 +43,7 @@ func duckDBNativeCastNeedsWireUnwrap(from types.Type, targetSQL string) bool {
 	}
 }
 
-func duckDBSQLCastType(t types.Type) (sql string, ok bool) {
+func sqlCastType(t types.Type) (sql string, ok bool) {
 	if t == nil {
 		return "", false
 	}
@@ -81,7 +79,6 @@ func duckDBSQLCastType(t types.Type) (sql string, ok bool) {
 	case types.ENUM:
 		return "VARCHAR", true
 	case types.NUMERIC, types.BIG_NUMERIC:
-		// Wide decimal; adjust if a workload needs exact BigQuery NUMERIC scale.
 		return "DECIMAL(38, 9)", true
 	default:
 		return "", false

@@ -8,6 +8,8 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/vantaboard/go-googlesql/types"
+
+	sqlexpr "github.com/vantaboard/go-googlesql-engine/internal/sqlexpr"
 )
 
 // FunctionCallTransformer handles transformation of function calls from GoogleSQL to SQLite.
@@ -15,15 +17,15 @@ import (
 // BigQuery/GoogleSQL supports a rich set of built-in functions with different semantics than SQLite.
 // This transformer bridges the gap by:
 // - Converting GoogleSQL function calls to SQLite equivalents
-// - Handling special GoogleSQL functions (IFNULL, IF, CASE) via custom googlesqlite_* functions
+// - Handling special GoogleSQL functions (IFNULL, IF, CASE) via custom googlesqlengine_* functions
 // - Managing window functions with proper OVER clause transformation
 // - Processing function arguments recursively through the coordinator
 // - Injecting current time for time-dependent functions when needed
 //
 // Key GoogleSQL -> SQLite transformations handled:
-// - googlesqlite_ifnull -> CASE WHEN...IS NULL pattern
-// - googlesqlite_if -> CASE WHEN...THEN...ELSE pattern
-// - googlesqlite_case_* -> CASE expressions with proper value/condition handling
+// - googlesqlengine_ifnull -> CASE WHEN...IS NULL pattern
+// - googlesqlengine_if -> CASE WHEN...THEN...ELSE pattern
+// - googlesqlengine_case_* -> CASE expressions with proper value/condition handling
 // - Window functions with PARTITION BY, ORDER BY, and frame specifications
 // - Built-in function mapping through the function registry
 //
@@ -71,10 +73,10 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 
 	// Handle special GoogleSQL functions that need transformation
 	switch function.Name {
-	case "googlesqlite_ifnull":
+	case "googlesqlengine_ifnull":
 		// Convert to CASE expression: IFNULL(a, b) => CASE WHEN a IS NULL THEN b ELSE a END
 		if len(args) != 2 {
-			return nil, fmt.Errorf("googlesqlite_ifnull requires exactly 2 arguments")
+			return nil, fmt.Errorf("googlesqlengine_ifnull requires exactly 2 arguments")
 		}
 		return NewCaseExpression(
 			[]*WhenClause{
@@ -86,14 +88,14 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 			args[0],
 		), nil
 
-	case "googlesqlite_if":
+	case "googlesqlengine_if":
 		// Convert to CASE expression: IF(condition, then_result, else_result) => CASE WHEN condition THEN then_result ELSE else_result END
 		if len(args) != 3 {
-			return nil, fmt.Errorf("googlesqlite_if requires exactly 3 arguments")
+			return nil, fmt.Errorf("googlesqlengine_if requires exactly 3 arguments")
 		}
 		return NewCaseExpression([]*WhenClause{{Condition: args[0], Result: args[1]}}, args[2]), nil
 
-	case "googlesqlite_case_no_value":
+	case "googlesqlengine_case_no_value":
 		// Convert to CASE expression: arguments are condition, result, condition, result, ..., [else]
 		whenClauses := make([]*WhenClause, 0, len(args)/2)
 		for i := 0; i < len(args)-1; i += 2 {
@@ -109,10 +111,10 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 		}
 		return NewCaseExpression(whenClauses, elseExpr), nil
 
-	case "googlesqlite_case_with_value":
+	case "googlesqlengine_case_with_value":
 		// Convert to CASE expression with value: first arg is value, then condition, result, condition, result, ..., [else]
 		if len(args) < 3 {
-			return nil, fmt.Errorf("googlesqlite_case_with_value requires at least 3 arguments")
+			return nil, fmt.Errorf("googlesqlengine_case_with_value requires at least 3 arguments")
 		}
 
 		valueExpr := args[0]
@@ -130,9 +132,9 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 		if len(remainingArgs) > (len(remainingArgs)/2)*2 {
 			elseExpr = remainingArgs[len(remainingArgs)-1]
 		}
-		if ctx.Dialect() != nil && ctx.Dialect().ID() == "duckdb" {
+		if ctx.Dialect() != nil && ctx.Dialect().RewritesSimpleCaseForWireBackedColumns() {
 			// Simple CASE compares CASE expr to each WHEN value with '='. VARCHAR columns often
-			// hold googlesqlite wire while literals decode to plain text — no branch matches (see
+			// hold googlesqlengine wire while literals decode to plain text — no branch matches (see
 			// UNNEST vs table column). Rewrite to searched CASE on unwire(expr) = unwire(when).
 			return duckDBSimpleCaseExprToSearchedCaseForWireStrings(valueExpr, whenClauses, elseExpr), nil
 		}
@@ -224,10 +226,10 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 			}
 		}
 
-		// DuckDB has no googlesqlite_* comparators/logical helpers. Fold them to native operators even
+		// DuckDB has no googlesqlengine_* comparators/logical helpers. Fold them to native operators even
 		// when arguments are column refs (metadata DELETE/UPDATE WHERE), which skip the primitive-only
 		// fast path below.
-		if ctx.Dialect() != nil && ctx.Dialect().ID() == "duckdb" {
+		if ctx.Dialect() != nil && ctx.Dialect().NativeFunctionRewritesEnabled() {
 			if rewritten, ok := duckDBOptimizeComparatorOrLogical(function.Name, args, function.Arguments); ok {
 				return rewritten, nil
 			}
@@ -235,14 +237,14 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 
 		// Fast path optimization: bypass function calls for primitive type operations
 		// Function calls incur huge overheads: as each call's args must be decoded/encoded, as well as
-		// allocated within both the modernc.org/sqlite driver and the go-googlesqlite driver
+		// allocated within both the modernc.org/sqlite driver and the go-googlesql-engine driver
 		// This could happen potentially hundreds of thousands of times per query in the case of complex JOINs
 		if canOptimizeFunction(function) {
 			e, err := optimizeFunctionToSQL(function.Name, args)
 			if err != nil {
 				return nil, err
 			}
-			if ctx.Dialect() != nil && ctx.Dialect().ID() == "duckdb" {
+			if ctx.Dialect() != nil && ctx.Dialect().NativeFunctionRewritesEnabled() {
 				return duckDBCoerceOptimizedCallForDuckDB(function.Name, args, function.Arguments, e), nil
 			}
 			return e, nil
@@ -275,7 +277,7 @@ func (t *FunctionCallTransformer) Transform(data ExpressionData, ctx TransformCo
 	}
 }
 
-// duckDBComparisonOps is the set of binary operators emitted from googlesqlite_* comparators
+// duckDBComparisonOps is the set of binary operators emitted from googlesqlengine_* comparators
 // that require homogeneous temporal types in DuckDB (physical VARCHAR vs CAST DATE, etc.).
 var duckDBComparisonOps = map[string]struct{}{
 	"=": {}, "!=": {}, "<": {}, ">": {}, "<=": {}, ">=": {},
@@ -292,7 +294,7 @@ func duckDBExprIsList(e *SQLExpression) bool {
 }
 
 // duckDBExprShouldUnwireBeforeTemporalCast reports whether TRY_CAST(... AS DATE/TIMESTAMP/...)
-// should run on the decoded googlesqlite payload: DuckDB stores DATE/TIMESTAMP and many STRING
+// should run on the decoded googlesqlengine payload: DuckDB stores DATE/TIMESTAMP and many STRING
 // values as VARCHAR wire (base64+JSON); TRY_CAST on the raw cell is always NULL.
 func duckDBExprShouldUnwireBeforeTemporalCast(d ExpressionData) bool {
 	if _, ok := duckDBExpressionDataTemporalTarget(d); ok {
@@ -311,7 +313,7 @@ func duckDBExprShouldUnwireBeforeTemporalCast(d ExpressionData) bool {
 func duckDBTryCastTemporalMaybeWire(expr *SQLExpression, meta ExpressionData, target string) *SQLExpression {
 	inner := expr
 	if duckDBExprShouldUnwireBeforeTemporalCast(meta) {
-		inner = duckDBUnwireGooglesqlStringOperand(expr)
+		inner = sqlexpr.DuckDBUnwireGooglesqlStringOperand(expr)
 	}
 	return NewSQLCastExpression(inner, target, true)
 }
@@ -391,11 +393,11 @@ func duckDBWrapExprForDuckDBDatePart(src *SQLExpression, srcMeta ExpressionData,
 	// Unknown static type (still often VARCHAR in DuckDB storage): pick a TRY_CAST target from part.
 	switch strings.ToLower(strings.TrimSpace(duckPart)) {
 	case "year", "month", "day", "quarter", "dow", "doy", "week", "isoweek", "isoyear":
-		return NewSQLCastExpression(duckDBUnwireGooglesqlStringOperand(src), "DATE", true)
+		return NewSQLCastExpression(sqlexpr.DuckDBUnwireGooglesqlStringOperand(src), "DATE", true)
 	case "hour", "minute", "second", "milliseconds", "microseconds":
-		return NewSQLCastExpression(duckDBUnwireGooglesqlStringOperand(src), "TIMESTAMP", true)
+		return NewSQLCastExpression(sqlexpr.DuckDBUnwireGooglesqlStringOperand(src), "TIMESTAMP", true)
 	default:
-		return NewSQLCastExpression(duckDBUnwireGooglesqlStringOperand(src), "TIMESTAMP", true)
+		return NewSQLCastExpression(sqlexpr.DuckDBUnwireGooglesqlStringOperand(src), "TIMESTAMP", true)
 	}
 }
 
@@ -523,7 +525,7 @@ func duckDBCoerceOptimizedCallForDuckDB(name string, args []*SQLExpression, argD
 }
 
 // duckDBCoerceInPredicateForWire unwraps the probe expression for IN (...) when it may hold
-// googlesqlite VARCHAR wire. Temporal comparison coercion skips list RHS, so without this
+// googlesqlengine VARCHAR wire. Temporal comparison coercion skips list RHS, so without this
 // `SchoolYear IN ('a','b')` compares raw wire to plain literals and matches nothing.
 func duckDBCoerceInPredicateForWire(e *SQLExpression, argData []ExpressionData) *SQLExpression {
 	if e == nil || e.Type != ExpressionTypeBinary || e.BinaryExpression == nil {
@@ -539,7 +541,7 @@ func duckDBCoerceInPredicateForWire(e *SQLExpression, argData []ExpressionData) 
 	if !duckDBExprShouldUnwireBeforeTemporalCast(argData[0]) {
 		return e
 	}
-	left := duckDBUnwireGooglesqlStringOperand(be.Left)
+	left := sqlexpr.DuckDBUnwireGooglesqlStringOperand(be.Left)
 	return NewBinaryExpression(left, "IN", be.Right)
 }
 
@@ -587,11 +589,11 @@ func duckDBCoerceTemporalComparisons(e *SQLExpression) *SQLExpression {
 	}
 }
 
-// duckDBOptimizeComparatorOrLogical maps googlesqlite_* helpers to native SQL operators for DuckDB
+// duckDBOptimizeComparatorOrLogical maps googlesqlengine_* helpers to native SQL operators for DuckDB
 // without requiring primitive-only arguments (see canOptimizeFunction).
 func duckDBOptimizeComparatorOrLogical(name string, args []*SQLExpression, argData []ExpressionData) (*SQLExpression, bool) {
 	switch name {
-	case "googlesqlite_and", "googlesqlite_or":
+	case "googlesqlengine_and", "googlesqlengine_or":
 		if len(args) < 2 {
 			return nil, false
 		}
@@ -600,7 +602,7 @@ func duckDBOptimizeComparatorOrLogical(name string, args []*SQLExpression, argDa
 			return nil, false
 		}
 		return duckDBCoerceTemporalComparisons(e), true
-	case "googlesqlite_not":
+	case "googlesqlengine_not":
 		if len(args) != 1 {
 			return nil, false
 		}
@@ -609,7 +611,7 @@ func duckDBOptimizeComparatorOrLogical(name string, args []*SQLExpression, argDa
 			return nil, false
 		}
 		return duckDBCoerceTemporalComparisons(e), true
-	case "googlesqlite_in":
+	case "googlesqlengine_in":
 		if len(args) < 2 {
 			return nil, false
 		}
@@ -648,11 +650,11 @@ func canOptimizeFunction(function *FunctionCallData) bool {
 
 	// Check argument count requirements
 	switch function.Name {
-	case "googlesqlite_not":
+	case "googlesqlengine_not":
 		if len(function.Arguments) != 1 {
 			return false
 		}
-	case "googlesqlite_and", "googlesqlite_or":
+	case "googlesqlengine_and", "googlesqlengine_or":
 		if len(function.Arguments) < 2 {
 			return false
 		}
@@ -674,19 +676,19 @@ func canOptimizeFunction(function *FunctionCallData) bool {
 
 var functionToOperator = map[string]string{
 	// Comparison operators
-	"googlesqlite_equal":                "=",
-	"googlesqlite_not_equal":            "!=",
-	"googlesqlite_less":                 "<",
-	"googlesqlite_greater":              ">",
-	"googlesqlite_less_or_equal":        "<=",
-	"googlesqlite_greater_or_equal":     ">=",
-	"googlesqlite_in":                   "IN",
-	"googlesqlite_is_not_distinct_from": "IS NOT DISTINCT FROM",
-	"googlesqlite_is_distinct_from":     "IS DISTINCT FROM",
+	"googlesqlengine_equal":                "=",
+	"googlesqlengine_not_equal":            "!=",
+	"googlesqlengine_less":                 "<",
+	"googlesqlengine_greater":              ">",
+	"googlesqlengine_less_or_equal":        "<=",
+	"googlesqlengine_greater_or_equal":     ">=",
+	"googlesqlengine_in":                   "IN",
+	"googlesqlengine_is_not_distinct_from": "IS NOT DISTINCT FROM",
+	"googlesqlengine_is_distinct_from":     "IS DISTINCT FROM",
 	// Logical operators
-	"googlesqlite_and": "AND",
-	"googlesqlite_or":  "OR",
-	"googlesqlite_not": "NOT",
+	"googlesqlengine_and": "AND",
+	"googlesqlengine_or":  "OR",
+	"googlesqlengine_not": "NOT",
 }
 
 // optimizeFunctionToSQL converts functions to direct SQL operators
@@ -697,7 +699,7 @@ func optimizeFunctionToSQL(functionName string, args []*SQLExpression) (*SQLExpr
 	}
 
 	switch functionName {
-	case "googlesqlite_and", "googlesqlite_or":
+	case "googlesqlengine_and", "googlesqlengine_or":
 		if len(args) < 2 {
 			return nil, fmt.Errorf("%s expected at least 2 arguments, got %d", functionName, len(args))
 		}
@@ -708,12 +710,12 @@ func optimizeFunctionToSQL(functionName string, args []*SQLExpression) (*SQLExpr
 		}
 		return result, nil
 
-	case "googlesqlite_not":
+	case "googlesqlengine_not":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("%s expected only 1 argument, got %d", functionName, len(args))
 		}
 		return NewNotExpression(args[0]), nil
-	case "googlesqlite_in":
+	case "googlesqlengine_in":
 		return NewBinaryExpression(args[0], operator, NewListExpression(args[1:])), nil
 	default: // comparison operators
 		if len(args) != 2 {
@@ -763,9 +765,7 @@ func isPrimitiveSQLiteType(expr ExpressionData) bool {
 	}
 }
 
-// duckDBUnwireGooglesqlStringOperand mirrors decodeStringOrLayout for a single SQL expression.
-// VARCHAR columns often store googlesqlite base64+JSON wire; use for CONCAT operands and for
-// simple-CASE equality so table values match plain WHEN literals (UNNEST literals are already plain).
+// duckDBMakeStructFieldKeyFromExpr extracts a struct field key string from a literal expression.
 func duckDBMakeStructFieldKeyFromExpr(e *SQLExpression) (string, bool) {
 	if e == nil || e.Type != ExpressionTypeLiteral {
 		return "", false
@@ -773,34 +773,11 @@ func duckDBMakeStructFieldKeyFromExpr(e *SQLExpression) (string, bool) {
 	return duckDBPlainStringFromWireOrQuotedLiteral(e.Value)
 }
 
-func duckDBUnwireGooglesqlStringOperand(arg *SQLExpression) *SQLExpression {
-	raw := NewSQLCastExpression(arg, "VARCHAR", false)
-	// Trim only for base64 decode: coalesce fallback must use raw (e.g. CONCAT(a, ' ', b) — TRIM(' ') is '').
-	trimmed := NewFunctionExpression("trim", raw)
-	tryB64 := NewFunctionExpression("try", NewFunctionExpression("from_base64", trimmed))
-	// DuckDB: from_base64 -> BLOB; decode(blob) -> UTF-8 VARCHAR (convert_from is not always available).
-	utf8raw := NewFunctionExpression("decode", tryB64)
-	utf8 := NewFunctionExpression("try", utf8raw)
-	j := NewSQLCastExpression(utf8, "JSON", true)
-	header := NewFunctionExpression("try", NewFunctionExpression("lower", NewFunctionExpression("json_extract_string", j, NewLiteralExpression(`'$.header'`))))
-	body := NewFunctionExpression("try", NewFunctionExpression("json_extract_string", j, NewLiteralExpression(`'$.body'`)))
-	// DATE/DATETIME/TIME use distinct headers (see codec.go ValueLayout); only "string" was handled
-	// here, so TRY_CAST on DATE columns saw raw base64 and returned NULL for join predicates.
-	decoded := NewCaseExpression([]*WhenClause{
-		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'string'`)), Result: body},
-		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'date'`)), Result: body},
-		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'datetime'`)), Result: body},
-		{Condition: NewBinaryExpression(header, "=", NewLiteralExpression(`'time'`)), Result: body},
-	}, NewLiteralExpression("NULL"))
-	pick := NewFunctionExpression("try", decoded)
-	return NewFunctionExpression("coalesce", pick, raw)
-}
-
 func duckDBSimpleCaseExprToSearchedCaseForWireStrings(valueExpr *SQLExpression, whenClauses []*WhenClause, elseExpr *SQLExpression) *SQLExpression {
-	left := duckDBUnwireGooglesqlStringOperand(valueExpr)
+	left := sqlexpr.DuckDBUnwireGooglesqlStringOperand(valueExpr)
 	searched := make([]*WhenClause, len(whenClauses))
 	for i, w := range whenClauses {
-		right := duckDBUnwireGooglesqlStringOperand(w.Condition)
+		right := sqlexpr.DuckDBUnwireGooglesqlStringOperand(w.Condition)
 		searched[i] = &WhenClause{
 			Condition: NewBinaryExpression(left, "=", right),
 			Result:    w.Result,
@@ -812,35 +789,35 @@ func duckDBSimpleCaseExprToSearchedCaseForWireStrings(valueExpr *SQLExpression, 
 // duckDBRewriteFunctionCall returns a DuckDB-native expression for special cases that are not
 // covered by RewriteEmittedFunctionName alone (extra args, frozen clock, or arity-specific INSTR).
 func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []ExpressionData, d Dialect) (*SQLExpression, bool) {
-	if d == nil || d.ID() != "duckdb" {
+	if d == nil || !d.NativeFunctionRewritesEnabled() {
 		return nil, false
 	}
 	switch name {
-	case "googlesqlite_concat":
+	case "googlesqlengine_concat":
 		if len(args) < 1 {
 			return nil, false
 		}
 		unwrapped := make([]*SQLExpression, len(args))
 		for i, a := range args {
-			unwrapped[i] = duckDBUnwireGooglesqlStringOperand(a)
+			unwrapped[i] = sqlexpr.DuckDBUnwireGooglesqlStringOperand(a)
 		}
 		return NewFunctionExpression("concat", unwrapped...), true
-	case "googlesqlite_replace":
+	case "googlesqlengine_replace":
 		if len(args) != 3 {
 			return nil, false
 		}
 		out := []*SQLExpression{
-			duckDBUnwireGooglesqlStringOperand(args[0]),
+			sqlexpr.DuckDBUnwireGooglesqlStringOperand(args[0]),
 			args[1],
 			args[2],
 		}
 		return NewFunctionExpression("replace", out...), true
-	case "googlesqlite_make_array":
+	case "googlesqlengine_make_array":
 		if len(args) == 0 {
 			return NewLiteralExpression("[]"), true
 		}
 		return NewFunctionExpression("list_value", args...), true
-	case "googlesqlite_make_struct":
+	case "googlesqlengine_make_struct":
 		if len(args) < 2 || len(args)%2 != 0 {
 			return nil, false
 		}
@@ -853,7 +830,7 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 			entries = append(entries, DuckDBStructLiteralEntry{Key: key, Value: args[i+1]})
 		}
 		return NewDuckDBStructLiteralExpression(entries), true
-	case "googlesqlite_equal":
+	case "googlesqlengine_equal":
 		if len(args) == 2 {
 			if len(argData) == 2 {
 				l, r := duckDBApplyTemporalComparisonCoercionWithExprData(args[0], args[1], argData[0], argData[1], "=")
@@ -861,7 +838,7 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 			}
 			return duckDBCoerceTemporalComparisons(NewBinaryExpression(args[0], "=", args[1])), true
 		}
-	case "googlesqlite_is_not_distinct_from":
+	case "googlesqlengine_is_not_distinct_from":
 		if len(args) == 2 {
 			op := "IS NOT DISTINCT FROM"
 			if len(argData) == 2 {
@@ -870,25 +847,25 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 			}
 			return duckDBCoerceTemporalComparisons(NewBinaryExpression(args[0], op, args[1])), true
 		}
-	case "googlesqlite_add", "googlesqlite_safe_add":
+	case "googlesqlengine_add", "googlesqlengine_safe_add":
 		if len(args) == 2 {
 			return NewBinaryExpression(args[0], "+", args[1]), true
 		}
-	case "googlesqlite_subtract", "googlesqlite_safe_subtract":
+	case "googlesqlengine_subtract", "googlesqlengine_safe_subtract":
 		if len(args) == 2 {
 			return NewBinaryExpression(args[0], "-", args[1]), true
 		}
-	case "googlesqlite_multiply", "googlesqlite_safe_multiply":
+	case "googlesqlengine_multiply", "googlesqlengine_safe_multiply":
 		if len(args) == 2 {
 			return NewBinaryExpression(args[0], "*", args[1]), true
 		}
-	case "googlesqlite_divide", "googlesqlite_safe_divide":
+	case "googlesqlengine_divide", "googlesqlengine_safe_divide":
 		if len(args) == 2 {
 			return NewBinaryExpression(args[0], "/", args[1]), true
 		}
-	case "googlesqlite_extract":
+	case "googlesqlengine_extract":
 		if len(args) >= 2 {
-			part, ok := googlesqliteWireStringArg(args[1])
+			part, ok := googlesqlengineWireStringArg(args[1])
 			if !ok {
 				break
 			}
@@ -898,7 +875,7 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 			}
 			srcExpr := args[0]
 			if len(args) == 3 {
-				if zone, zok := googlesqliteWireStringArg(args[2]); zok && zone != "" && !strings.EqualFold(zone, "UTC") {
+				if zone, zok := googlesqlengineWireStringArg(args[2]); zok && zone != "" && !strings.EqualFold(zone, "UTC") {
 					zoneLit := "'" + strings.ReplaceAll(zone, "'", "''") + "'"
 					srcExpr = NewFunctionExpression("timezone", NewLiteralExpression(zoneLit), srcExpr)
 				}
@@ -909,29 +886,29 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 			}
 			return NewFunctionExpression("date_part", NewLiteralExpression(partLit), srcExpr), true
 		}
-	case "googlesqlite_parse_json":
+	case "googlesqlengine_parse_json":
 		if len(args) >= 1 {
 			// DuckDB: CAST(string AS JSON); drop BigQuery optional widen mode when present.
 			return NewSQLCastExpression(args[0], "JSON", false), true
 		}
-	case "googlesqlite_is_null":
+	case "googlesqlengine_is_null":
 		if len(args) == 1 {
 			return NewBinaryExpression(args[0], "IS", NewLiteralExpression("NULL")), true
 		}
-	case "googlesqlite_not":
+	case "googlesqlengine_not":
 		if len(args) == 1 {
 			return NewNotExpression(args[0]), true
 		}
-	case "googlesqlite_byte_length":
+	case "googlesqlengine_byte_length":
 		if len(args) == 1 {
 			blob := NewSQLCastExpression(args[0], "BLOB", false)
 			return NewFunctionExpression("octet_length", blob), true
 		}
-	case "googlesqlite_instr":
+	case "googlesqlengine_instr":
 		if len(args) == 2 {
 			return NewFunctionExpression("strpos", args...), true
 		}
-	case "googlesqlite_between":
+	case "googlesqlengine_between":
 		if len(args) == 3 {
 			// Matches runtime BETWEEN (bindBetween): inclusive bounds; any NULL arg -> NULL via SQL 3VL.
 			var ge, le *SQLExpression
@@ -946,14 +923,14 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 			}
 			return NewBinaryExpression(ge, "AND", le), true
 		}
-	case "googlesqlite_get_struct_field":
+	case "googlesqlengine_get_struct_field":
 		if len(args) == 2 {
 			// Named STRUCT: second arg is a string field key (see extractGetStructFieldData for DuckDB).
-			if key, ok := googlesqliteWireStringArg(args[1]); ok {
+			if key, ok := googlesqlengineWireStringArg(args[1]); ok {
 				esc := strings.ReplaceAll(key, "'", "''")
 				return NewFunctionExpression("struct_extract", args[0], NewLiteralExpression("'"+esc+"'")), true
 			}
-			idx, ok := googlesqliteWireIntArg(args[1])
+			idx, ok := googlesqlengineWireIntArg(args[1])
 			if !ok || idx < 0 {
 				break
 			}
@@ -961,47 +938,47 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 			duck1 := idx + 1
 			return NewFunctionExpression("struct_extract", args[0], NewLiteralExpression(strconv.FormatInt(duck1, 10))), true
 		}
-	case "googlesqlite_date":
+	case "googlesqlengine_date":
 		switch len(args) {
 		case 1:
 			inner := args[0]
 			if len(argData) >= 1 && duckDBExprShouldUnwireBeforeTemporalCast(argData[0]) {
-				inner = duckDBUnwireGooglesqlStringOperand(inner)
+				inner = sqlexpr.DuckDBUnwireGooglesqlStringOperand(inner)
 			}
 			return NewSQLCastExpression(inner, "DATE", false), true
 		case 2:
 			// DATE(ts, zone) -> CAST(timezone(zone, ts) AS DATE)
 			src := args[0]
 			if len(argData) >= 1 && duckDBExprShouldUnwireBeforeTemporalCast(argData[0]) {
-				src = duckDBUnwireGooglesqlStringOperand(src)
+				src = sqlexpr.DuckDBUnwireGooglesqlStringOperand(src)
 			}
 			tz := NewFunctionExpression("timezone", args[1], src)
 			return NewSQLCastExpression(tz, "DATE", false), true
 		case 3:
 			return NewFunctionExpression("make_date", args[0], args[1], args[2]), true
 		}
-	case "googlesqlite_current_timestamp", "googlesqlite_current_datetime":
+	case "googlesqlengine_current_timestamp", "googlesqlengine_current_datetime":
 		switch len(args) {
 		case 0:
 			return NewFunctionExpression("current_timestamp"), true
 		case 1:
 			return duckDBToTimestampFromUnixNano(args[0]), true
 		}
-	case "googlesqlite_current_date":
+	case "googlesqlengine_current_date":
 		switch len(args) {
 		case 0:
 			return NewFunctionExpression("current_date"), true
 		case 1:
 			return NewSQLCastExpression(duckDBToTimestampFromUnixNano(args[0]), "DATE", false), true
 		}
-	case "googlesqlite_current_time":
+	case "googlesqlengine_current_time":
 		switch len(args) {
 		case 0:
 			return NewFunctionExpression("current_time"), true
 		case 1:
 			return NewSQLCastExpression(duckDBToTimestampFromUnixNano(args[0]), "TIME", false), true
 		}
-	case "googlesqlite_generate_array":
+	case "googlesqlengine_generate_array":
 		if out, ok := duckDBRewriteGenerateArrayToRange(args); ok {
 			return out, true
 		}
@@ -1010,7 +987,7 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 }
 
 // duckDBRewriteGenerateArrayToRange maps BigQuery GENERATE_ARRAY (inclusive endpoints) to DuckDB
-// range(start, stop_exclusive, step). SQLite registers googlesqlite_generate_array; DuckDB has no
+// range(start, stop_exclusive, step). SQLite registers googlesqlengine_generate_array; DuckDB has no
 // such UDF, so this rewrite is required for native execution.
 func duckDBRewriteGenerateArrayToRange(args []*SQLExpression) (*SQLExpression, bool) {
 	if len(args) != 2 && len(args) != 3 {
@@ -1055,9 +1032,9 @@ func duckDBRewriteGenerateArrayToRange(args []*SQLExpression) (*SQLExpression, b
 	return NewCaseExpression([]*WhenClause{{Condition: valid, Result: rng}}, empty), true
 }
 
-// googlesqliteWireStringArg decodes a string literal produced by LiteralFromValue (double-quoted base64 JSON layout).
-// googlesqliteWireIntArg parses an integer literal emitted for the resolver (plain decimal or wire JSON layout).
-func googlesqliteWireIntArg(expr *SQLExpression) (int64, bool) {
+// googlesqlengineWireStringArg decodes a string literal produced by LiteralFromValue (double-quoted base64 JSON layout).
+// googlesqlengineWireIntArg parses an integer literal emitted for the resolver (plain decimal or wire JSON layout).
+func googlesqlengineWireIntArg(expr *SQLExpression) (int64, bool) {
 	if expr == nil || expr.Type != ExpressionTypeLiteral {
 		return 0, false
 	}
@@ -1084,7 +1061,7 @@ func googlesqliteWireIntArg(expr *SQLExpression) (int64, bool) {
 	return i, true
 }
 
-func googlesqliteWireStringArg(expr *SQLExpression) (string, bool) {
+func googlesqlengineWireStringArg(expr *SQLExpression) (string, bool) {
 	if expr == nil || expr.Type != ExpressionTypeLiteral {
 		return "", false
 	}

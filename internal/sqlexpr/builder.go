@@ -1,8 +1,7 @@
-package internal
+package sqlexpr
 
 import (
 	"fmt"
-	"github.com/vantaboard/go-googlesql/types"
 	"strings"
 )
 
@@ -18,7 +17,7 @@ type SQLWriter struct {
 	indentLevel int
 	useNewlines bool
 	// dialect selects identifier quoting; nil means SQLite (backticks).
-	dialect Dialect
+	dialect SQLDialect
 }
 
 func NewSQLWriter() *SQLWriter {
@@ -28,7 +27,7 @@ func NewSQLWriter() *SQLWriter {
 }
 
 // NewSQLWriterForDialect creates a writer that quotes identifiers for the given engine (nil => SQLite).
-func NewSQLWriterForDialect(d Dialect) *SQLWriter {
+func NewSQLWriterForDialect(d SQLDialect) *SQLWriter {
 	return &SQLWriter{
 		useNewlines: true,
 		dialect:     d,
@@ -36,12 +35,12 @@ func NewSQLWriterForDialect(d Dialect) *SQLWriter {
 }
 
 // SQLFragmentString renders a fragment with dialect-appropriate identifier quoting.
-func SQLFragmentString(f SQLFragment, d Dialect) string {
+func SQLFragmentString(f SQLFragment, d SQLDialect) string {
 	if f == nil {
 		return ""
 	}
 	if d == nil {
-		d = SQLiteDialect{}
+		d = NilSQLDialect{}
 	}
 	w := NewSQLWriterForDialect(d)
 	f.WriteSql(w)
@@ -52,7 +51,7 @@ func SQLFragmentString(f SQLFragment, d Dialect) string {
 func (w *SQLWriter) WriteQuotedIdent(name string) {
 	d := w.dialect
 	if d == nil {
-		d = SQLiteDialect{}
+		d = NilSQLDialect{}
 	}
 	w.Write(d.QuoteIdent(name))
 }
@@ -61,11 +60,9 @@ func (w *SQLWriter) WriteQuotedIdent(name string) {
 // strings; DuckDB needs native SQL literals (or parse_json / list literals) decoded from that wire.
 func writeDialectLiteral(w *SQLWriter, val string) {
 	d := w.dialect
-	if d != nil && d.ID() == "duckdb" {
-		if sql, ok := duckDBNativeLiteralSQL(val); ok {
-			w.Write(sql)
-			return
-		}
+	if d != nil {
+		d.EmitWireLiteral(w, val)
+		return
 	}
 	w.Write(val)
 }
@@ -130,7 +127,7 @@ const (
 	ExpressionTypeDuckDBStructLiteral
 )
 
-// DuckDBStructLiteralExpr is a DuckDB {'k': v, ...} literal (googlesqlite_make_struct rewrite).
+// DuckDBStructLiteralExpr is a DuckDB {'k': v, ...} literal (googlesqlengine_make_struct rewrite).
 type DuckDBStructLiteralExpr struct {
 	Entries []DuckDBStructLiteralEntry
 }
@@ -306,14 +303,18 @@ func (e *SQLExpression) WriteSql(writer *SQLWriter) {
 				if i > 0 {
 					writer.Write(", ")
 				}
-				writer.Write(duckDBQuoteString(ent.Key))
+				writer.Write(QuoteStringSingleQuoted(ent.Key))
 				writer.Write(": ")
 				ent.Value.WriteSql(writer)
 			}
 			writer.Write("}")
 		}
 	case ExpressionTypeParameter:
-		writer.Write(FormatParameterPlaceholder(writer.dialect, e.Value))
+		d := writer.dialect
+		if d == nil {
+			d = NilSQLDialect{}
+		}
+		writer.Write(d.FormatParameterPlaceholder(e.Value))
 	}
 
 	// Add collation if specified
@@ -394,7 +395,7 @@ type FunctionCall struct {
 }
 
 func (f *FunctionCall) WriteSql(writer *SQLWriter) {
-	name, args, distinct, countStar, aggFilter := duckDBNormalizeAggregateCall(f, writer.dialect)
+	name, args, distinct, countStar, aggFilter := DuckDBNormalizeAggregateCall(f, writer.dialect)
 	writer.Write(name)
 	writer.Write("(")
 	if countStar {
@@ -423,9 +424,9 @@ func (f *FunctionCall) WriteSql(writer *SQLWriter) {
 	}
 }
 
-// duckDBNormalizeAggregateCall strips SQLite-only synthetic args (e.g. googlesqlite_distinct) and
+// DuckDBNormalizeAggregateCall strips SQLite-only synthetic args (e.g. googlesqlengine_distinct) and
 // maps COUNT() with no arguments to COUNT(*) for DuckDB.
-func duckDBNormalizeAggregateCall(f *FunctionCall, d Dialect) (name string, args []*SQLExpression, distinct bool, countStar bool, aggFilter *SQLExpression) {
+func DuckDBNormalizeAggregateCall(f *FunctionCall, d SQLDialect) (name string, args []*SQLExpression, distinct bool, countStar bool, aggFilter *SQLExpression) {
 	name = f.Name
 	args = f.Arguments
 	distinct = f.IsDistinct
@@ -433,15 +434,15 @@ func duckDBNormalizeAggregateCall(f *FunctionCall, d Dialect) (name string, args
 		return name, args, distinct, false, nil
 	}
 	ignoreNulls := false
-	for len(args) > 0 && isBareFunctionCall(args[len(args)-1], "googlesqlite_ignore_nulls") {
+	for len(args) > 0 && isBareFunctionCall(args[len(args)-1], "googlesqlengine_ignore_nulls") {
 		ignoreNulls = true
 		args = args[:len(args)-1]
 	}
-	for len(args) > 0 && isBareFunctionCall(args[len(args)-1], "googlesqlite_distinct") {
+	for len(args) > 0 && isBareFunctionCall(args[len(args)-1], "googlesqlengine_distinct") {
 		distinct = true
 		args = args[:len(args)-1]
 	}
-	for len(args) > 0 && isBareFunctionCall(args[0], "googlesqlite_distinct") {
+	for len(args) > 0 && isBareFunctionCall(args[0], "googlesqlengine_distinct") {
 		distinct = true
 		args = args[1:]
 	}
@@ -1260,17 +1261,6 @@ func NewLiteralExpression(value string) *SQLExpression {
 	}
 }
 
-func NewLiteralExpressionFromGoValue(t types.Type, value interface{}) (*SQLExpression, error) {
-	encoded, err := ValueFromGoValue(value)
-	if err != nil {
-		return nil, err
-	}
-	literal, err := LiteralFromValue(encoded)
-	if err != nil {
-		return nil, err
-	}
-	return NewLiteralExpression(literal), nil
-}
 
 // NewFunctionExpression creates a new function call expression
 func NewFunctionExpression(name string, args ...*SQLExpression) *SQLExpression {
@@ -1283,7 +1273,7 @@ func NewFunctionExpression(name string, args ...*SQLExpression) *SQLExpression {
 	}
 }
 
-// NewDuckDBStructLiteralExpression builds {'key': expr, ...} for DuckDB (googlesqlite_make_struct rewrite).
+// NewDuckDBStructLiteralExpression builds {'key': expr, ...} for DuckDB (googlesqlengine_make_struct rewrite).
 func NewDuckDBStructLiteralExpression(entries []DuckDBStructLiteralEntry) *SQLExpression {
 	return &SQLExpression{
 		Type: ExpressionTypeDuckDBStructLiteral,

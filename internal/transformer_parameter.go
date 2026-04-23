@@ -1,7 +1,5 @@
 package internal
 
-import "strings"
-
 // ParameterTransformer handles transformation of parameters/argument identifiers from GoogleSQL to SQLite.
 //
 // In BigQuery/GoogleSQL, parameters represent named or positional placeholders in SQL queries
@@ -31,14 +29,8 @@ func (t *ParameterTransformer) Transform(data ExpressionData, ctx TransformConte
 
 // FormatParameterPlaceholder renders a bound-parameter token for the physical SQL dialect.
 func FormatParameterPlaceholder(d Dialect, identifier string) string {
-	if d != nil && d.ID() == "duckdb" {
-		if identifier == "?" {
-			return "?"
-		}
-		if strings.HasPrefix(identifier, "@") {
-			return "$" + strings.TrimPrefix(identifier, "@")
-		}
+	if d == nil {
 		return identifier
 	}
-	return identifier
+	return d.FormatBoundParameter(identifier)
 }
