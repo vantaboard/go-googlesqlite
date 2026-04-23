@@ -614,7 +614,7 @@ CREATE TABLE IF NOT EXISTS Singers (
 		var itemID string
 		err = stmt.QueryRowContext(ctx, sql.Named("itemID", 123), sql.Named("bool", true)).Scan(&itemID)
 		if err != nil {
-			t.Fatal("expected one row; got error %w", err)
+			t.Fatalf("expected one row; got error %v", err)
 		}
 	})
 

@@ -4,6 +4,7 @@ import (
 	"google.golang.org/api/bigquery/v2"
 
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"fmt"
 	"regexp"
@@ -1108,9 +1109,18 @@ func getArgsFromParams(ctx context.Context, values []driver.NamedValue, params [
 		}
 	}
 	if v, ok := ctx.Value(DisableQueryFormattingKey{}).(bool); ok && v {
+		// Raw driver SQL keeps @/$ named placeholders; pass sql.Named so DuckDB (and SQLite
+		// drivers that bind by name) receive matching names — not only positional values.
 		args := make([]interface{}, 0, argNum)
-		for _, nv := range namedValues {
-			args = append(args, nv.Value)
+		for idx, nv := range namedValues {
+			if idx >= len(params) {
+				return nil, fmt.Errorf("namedValues longer than params")
+			}
+			if name := params[idx].Name(); name != "" {
+				args = append(args, sql.Named(name, nv.Value))
+			} else {
+				args = append(args, nv.Value)
+			}
 		}
 		return args, nil
 	}

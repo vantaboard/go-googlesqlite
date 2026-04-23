@@ -155,6 +155,7 @@ func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
 			Expression: ExpressionData{
 				Type: ExpressionTypeColumn,
 				Column: &ColumnRefData{
+					ColumnID:   1,
 					ColumnName: "x",
 					Type:       types.StringType(),
 				},
@@ -164,6 +165,7 @@ func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
 	colArg := ExpressionData{
 		Type: ExpressionTypeColumn,
 		Column: &ColumnRefData{
+			ColumnID:   2,
 			ColumnName: "y",
 			Type:       types.StringType(),
 		},
@@ -173,6 +175,11 @@ func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
 	cfg := DefaultTransformConfig()
 	cfg.Dialect = DuckDBDialect{}
 	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	fcx := tctx.FragmentContext()
+	fcx.RegisterColumnScope(1, "t")
+	fcx.AddAvailableColumn(1, &ColumnInfo{Name: "x"})
+	fcx.RegisterColumnScope(2, "t")
+	fcx.AddAvailableColumn(2, &ColumnInfo{Name: "y"})
 	expr, err := coord.TransformExpression(fn, tctx)
 	if err != nil {
 		t.Fatal(err)
@@ -189,14 +196,19 @@ func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
 func TestTransformDuckDB_concatUnwrapsWireBeforeNativeConcat(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	fn := NewFunctionCallExpressionData("googlesqlite_concat",
-		ExpressionData{Type: ExpressionTypeColumn, Column: &ColumnRefData{ColumnName: "fn", Type: types.StringType()}},
+		ExpressionData{Type: ExpressionTypeColumn, Column: &ColumnRefData{ColumnID: 10, ColumnName: "fn", Type: types.StringType()}},
 		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue(" ")}},
-		ExpressionData{Type: ExpressionTypeColumn, Column: &ColumnRefData{ColumnName: "ln", Type: types.StringType()}},
+		ExpressionData{Type: ExpressionTypeColumn, Column: &ColumnRefData{ColumnID: 11, ColumnName: "ln", Type: types.StringType()}},
 	)
 	ctx := context.Background()
 	cfg := DefaultTransformConfig()
 	cfg.Dialect = DuckDBDialect{}
 	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	fcx := tctx.FragmentContext()
+	fcx.RegisterColumnScope(10, "t")
+	fcx.AddAvailableColumn(10, &ColumnInfo{Name: "fn"})
+	fcx.RegisterColumnScope(11, "t")
+	fcx.AddAvailableColumn(11, &ColumnInfo{Name: "ln"})
 	expr, err := coord.TransformExpression(fn, tctx)
 	if err != nil {
 		t.Fatal(err)
@@ -217,7 +229,7 @@ func TestTransformDuckDB_simpleCaseUsesSearchedCaseWithUnwiredEquality(t *testin
 	coord := GetGlobalCoordinator()
 	gl := ExpressionData{
 		Type:   ExpressionTypeColumn,
-		Column: &ColumnRefData{ColumnName: "GradeLevel__4", Type: types.StringType()},
+		Column: &ColumnRefData{ColumnID: 4, ColumnName: "GradeLevel__4", Type: types.StringType()},
 	}
 	fn := NewFunctionCallExpressionData("googlesqlite_case_with_value",
 		gl,
@@ -228,6 +240,9 @@ func TestTransformDuckDB_simpleCaseUsesSearchedCaseWithUnwiredEquality(t *testin
 	cfg := DefaultTransformConfig()
 	cfg.Dialect = DuckDBDialect{}
 	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	fcx := tctx.FragmentContext()
+	fcx.RegisterColumnScope(4, "t")
+	fcx.AddAvailableColumn(4, &ColumnInfo{Name: "GradeLevel__4"})
 	expr, err := coord.TransformExpression(fn, tctx)
 	if err != nil {
 		t.Fatal(err)
@@ -243,6 +258,9 @@ func TestTransformDuckDB_simpleCaseUsesSearchedCaseWithUnwiredEquality(t *testin
 	cfg2 := DefaultTransformConfig()
 	cfg2.Dialect = SQLiteDialect{}
 	tctx2 := NewQueryTransformFactory(cfg2, coord).CreateTransformContext(ctx)
+	fcx2 := tctx2.FragmentContext()
+	fcx2.RegisterColumnScope(4, "t")
+	fcx2.AddAvailableColumn(4, &ColumnInfo{Name: "GradeLevel__4"})
 	sqliteExpr, err := coord.TransformExpression(fn, tctx2)
 	if err != nil {
 		t.Fatal(err)
@@ -257,7 +275,7 @@ func TestTransformDuckDB_extractYearCastsDateColumnForDatePart(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	colED := ExpressionData{
 		Type:   ExpressionTypeColumn,
-		Column: &ColumnRefData{ColumnName: "StartDate__15", Type: types.DateType()},
+		Column: &ColumnRefData{ColumnID: 15, ColumnName: "StartDate__15", Type: types.DateType()},
 	}
 	yearED := ExpressionData{
 		Type:    ExpressionTypeLiteral,
@@ -268,6 +286,9 @@ func TestTransformDuckDB_extractYearCastsDateColumnForDatePart(t *testing.T) {
 	cfg := DefaultTransformConfig()
 	cfg.Dialect = DuckDBDialect{}
 	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	fcx := tctx.FragmentContext()
+	fcx.RegisterColumnScope(15, "t")
+	fcx.AddAvailableColumn(15, &ColumnInfo{Name: "StartDate__15"})
 	expr, err := coord.TransformExpression(fn, tctx)
 	if err != nil {
 		t.Fatal(err)

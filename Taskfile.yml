@@ -75,8 +75,11 @@ tasks:
         set -euo pipefail
         source .envrc
         : "${DUCKDB_LIB_DIR:?set DUCKDB_LIB_DIR to the directory with libduckdb (see duckdb-go README)}"
+        # Absolute path: relative rpath breaks when test binaries run from a different cwd.
+        DUCKDB_LIB_DIR="$(cd "${DUCKDB_LIB_DIR}" && pwd)"
+        export DUCKDB_LIB_DIR
         export CGO_ENABLED=1
-        export CGO_LDFLAGS="${CGO_LDFLAGS} -lduckdb -L${DUCKDB_LIB_DIR}"
+        export CGO_LDFLAGS="${CGO_LDFLAGS} -lduckdb -L${DUCKDB_LIB_DIR} -Wl,-rpath,${DUCKDB_LIB_DIR}"
         # Nounset-safe prepend: ${VAR:+...} trips `set -u` under zsh when VAR is unset.
         if [[ "$(uname -s)" == "Darwin" ]]; then
           if [[ -n "${DYLD_LIBRARY_PATH-}" ]]; then
