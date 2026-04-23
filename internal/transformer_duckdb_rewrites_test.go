@@ -193,6 +193,45 @@ func TestTransformDuckDB_greaterOrEqualTemporalCoercion(t *testing.T) {
 	}
 }
 
+func TestTransformDuckDB_castDateColumnToDateUnwrapsWire(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	castArg := ExpressionData{
+		Type: ExpressionTypeCast,
+		Cast: &CastData{
+			FromType:        types.DateType(),
+			ToType:          types.DateType(),
+			ReturnNullOnErr: false,
+			SafeCast:        false,
+			Expression: ExpressionData{
+				Type: ExpressionTypeColumn,
+				Column: &ColumnRefData{
+					ColumnID:   1,
+					ColumnName: "StartDate__10",
+					Type:       types.DateType(),
+				},
+			},
+		},
+	}
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	fcx := tctx.FragmentContext()
+	fcx.RegisterColumnScope(1, "t")
+	fcx.AddAvailableColumn(1, &ColumnInfo{Name: "StartDate__10"})
+	expr, err := coord.TransformExpression(castArg, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if !strings.Contains(got, " AS DATE)") {
+		t.Fatalf("expected native DATE cast, got %q", got)
+	}
+	if !strings.Contains(got, "from_base64(") {
+		t.Fatalf("expected wire unwrap for DATE-typed column backed by VARCHAR wire, got %q", got)
+	}
+}
+
 func TestTransformDuckDB_concatUnwrapsWireBeforeNativeConcat(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	fn := NewFunctionCallExpressionData("googlesqlite_concat",
