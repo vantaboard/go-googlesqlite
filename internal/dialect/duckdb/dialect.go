@@ -44,6 +44,21 @@ var nativeFunctions = map[string]string{
 	"googlesqlengine_error":        "error",
 }
 
+// canonicalGooglesqlRuntimeName maps googlesqlite_* names (SQLite UDF prefix emitted by some
+// analyzer builds) to googlesqlengine_* keys used in rename tables below.
+func canonicalGooglesqlRuntimeName(name string) string {
+	switch {
+	case strings.HasPrefix(name, "googlesqlite_window_"):
+		return "googlesqlengine_window_" + strings.TrimPrefix(name, "googlesqlite_window_")
+	case strings.HasPrefix(name, "googlesqlite_safe_"):
+		return "googlesqlengine_safe_" + strings.TrimPrefix(name, "googlesqlite_safe_")
+	case strings.HasPrefix(name, "googlesqlite_"):
+		return "googlesqlengine_" + strings.TrimPrefix(name, "googlesqlite_")
+	default:
+		return name
+	}
+}
+
 // Dialect is the GoogleSQL-to-DuckDB codegen target (incremental parity).
 type Dialect struct{}
 
@@ -52,13 +67,14 @@ func (Dialect) ID() string { return core.IDDuckDB }
 func (Dialect) WindowPartitionCollation() string { return "" }
 
 func (Dialect) RewriteEmittedFunctionName(name string) (string, bool) {
-	if alt, ok := nativeFunctions[name]; ok {
+	key := canonicalGooglesqlRuntimeName(name)
+	if alt, ok := nativeFunctions[key]; ok {
 		return alt, true
 	}
-	if alt, ok := windowRenames[name]; ok {
+	if alt, ok := windowRenames[key]; ok {
 		return alt, true
 	}
-	if alt, ok := aggregateRenames[name]; ok {
+	if alt, ok := aggregateRenames[key]; ok {
 		return alt, true
 	}
 	return name, false
