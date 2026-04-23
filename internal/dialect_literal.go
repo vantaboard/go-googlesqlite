@@ -168,3 +168,25 @@ func duckDBNativeLiteralSQL(val string) (string, bool) {
 		return "", false
 	}
 }
+
+// duckDBPlainStringFromWireOrQuotedLiteral extracts a STRING payload from a Literal expression's
+// Value field: googlesqlite wire (`"base64"`) or a single-quoted SQL string (`'eDate'`).
+func duckDBPlainStringFromWireOrQuotedLiteral(val string) (string, bool) {
+	s := strings.TrimSpace(val)
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		inner := s[1 : len(s)-1]
+		b, err := base64.StdEncoding.DecodeString(inner)
+		if err != nil {
+			return "", false
+		}
+		var layout ValueLayout
+		if err := json.Unmarshal(b, &layout); err != nil || layout.Header != StringValueType {
+			return "", false
+		}
+		return layout.Body, true
+	}
+	if len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\'' {
+		return strings.ReplaceAll(s[1:len(s)-1], "''", "'"), true
+	}
+	return "", false
+}

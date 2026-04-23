@@ -217,6 +217,13 @@ func updateTableAlias(expr *SQLExpression, newAlias string) {
 			updateTableAlias(expr.Cast.Expr, newAlias)
 		}
 
+	case ExpressionTypeDuckDBStructLiteral:
+		if expr.DuckDBStructLiteral != nil {
+			for _, ent := range expr.DuckDBStructLiteral.Entries {
+				updateTableAlias(ent.Value, newAlias)
+			}
+		}
+
 	// Types with their own scope - don't traverse into them
 	case ExpressionTypeSubquery, ExpressionTypeExists:
 		return
@@ -487,6 +494,23 @@ func substituteColumnRefsWithDepth(expr *SQLExpression, aliasMap map[string]*SQL
 			Collation: expr.Collation,
 		}
 
+	case ExpressionTypeDuckDBStructLiteral:
+		if expr.DuckDBStructLiteral == nil {
+			return expr
+		}
+		newEntries := make([]DuckDBStructLiteralEntry, len(expr.DuckDBStructLiteral.Entries))
+		for i, ent := range expr.DuckDBStructLiteral.Entries {
+			newEntries[i] = DuckDBStructLiteralEntry{
+				Key:   ent.Key,
+				Value: substituteColumnRefsWithDepth(ent.Value, aliasMap, tableAlias, depth+1),
+			}
+		}
+		return &SQLExpression{
+			Type: ExpressionTypeDuckDBStructLiteral,
+			DuckDBStructLiteral: &DuckDBStructLiteralExpr{Entries: newEntries},
+			Collation:           expr.Collation,
+		}
+
 	case ExpressionTypeLiteral, ExpressionTypeParameter, ExpressionTypeStar:
 		// Literals, parameters, and star expressions don't need substitution
 		return expr
@@ -576,6 +600,14 @@ func copyExpression(expr *SQLExpression) *SQLExpression {
 			TargetType: expr.Cast.TargetType,
 			Try:        expr.Cast.Try,
 		}
+	}
+
+	if expr.DuckDBStructLiteral != nil {
+		cpEnt := make([]DuckDBStructLiteralEntry, len(expr.DuckDBStructLiteral.Entries))
+		for i, ent := range expr.DuckDBStructLiteral.Entries {
+			cpEnt[i] = DuckDBStructLiteralEntry{Key: ent.Key, Value: copyExpression(ent.Value)}
+		}
+		copied.DuckDBStructLiteral = &DuckDBStructLiteralExpr{Entries: cpEnt}
 	}
 
 	if expr.Subquery != nil {

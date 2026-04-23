@@ -127,7 +127,19 @@ const (
 	ExpressionTypeCase
 	ExpressionTypeExists
 	ExpressionTypeCast
+	ExpressionTypeDuckDBStructLiteral
 )
+
+// DuckDBStructLiteralExpr is a DuckDB {'k': v, ...} literal (googlesqlite_make_struct rewrite).
+type DuckDBStructLiteralExpr struct {
+	Entries []DuckDBStructLiteralEntry
+}
+
+// DuckDBStructLiteralEntry is one field of [DuckDBStructLiteralExpr].
+type DuckDBStructLiteralEntry struct {
+	Key   string
+	Value *SQLExpression
+}
 
 // CaseExpression represents SQL CASE expressions
 type CaseExpression struct {
@@ -226,6 +238,7 @@ type SQLExpression struct {
 	CaseExpression   *CaseExpression
 	ExistsExpr       *ExistsExpression
 	Cast             *SQLCastSpec
+	DuckDBStructLiteral *DuckDBStructLiteralExpr
 	Alias            string
 	TableAlias       string
 	Collation        string
@@ -285,6 +298,19 @@ func (e *SQLExpression) WriteSql(writer *SQLWriter) {
 			writer.Write(" AS ")
 			writer.Write(e.Cast.TargetType)
 			writer.Write(")")
+		}
+	case ExpressionTypeDuckDBStructLiteral:
+		if e.DuckDBStructLiteral != nil {
+			writer.Write("{")
+			for i, ent := range e.DuckDBStructLiteral.Entries {
+				if i > 0 {
+					writer.Write(", ")
+				}
+				writer.Write(duckDBQuoteString(ent.Key))
+				writer.Write(": ")
+				ent.Value.WriteSql(writer)
+			}
+			writer.Write("}")
 		}
 	case ExpressionTypeParameter:
 		writer.Write(FormatParameterPlaceholder(writer.dialect, e.Value))
@@ -1254,6 +1280,14 @@ func NewFunctionExpression(name string, args ...*SQLExpression) *SQLExpression {
 			Name:      name,
 			Arguments: args,
 		},
+	}
+}
+
+// NewDuckDBStructLiteralExpression builds {'key': expr, ...} for DuckDB (googlesqlite_make_struct rewrite).
+func NewDuckDBStructLiteralExpression(entries []DuckDBStructLiteralEntry) *SQLExpression {
+	return &SQLExpression{
+		Type: ExpressionTypeDuckDBStructLiteral,
+		DuckDBStructLiteral: &DuckDBStructLiteralExpr{Entries: entries},
 	}
 }
 

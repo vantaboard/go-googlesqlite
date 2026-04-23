@@ -744,6 +744,13 @@ func isPrimitiveSQLiteType(expr ExpressionData) bool {
 // duckDBUnwireGooglesqlStringOperand mirrors decodeStringOrLayout for a single SQL expression.
 // VARCHAR columns often store googlesqlite base64+JSON wire; use for CONCAT operands and for
 // simple-CASE equality so table values match plain WHEN literals (UNNEST literals are already plain).
+func duckDBMakeStructFieldKeyFromExpr(e *SQLExpression) (string, bool) {
+	if e == nil || e.Type != ExpressionTypeLiteral {
+		return "", false
+	}
+	return duckDBPlainStringFromWireOrQuotedLiteral(e.Value)
+}
+
 func duckDBUnwireGooglesqlStringOperand(arg *SQLExpression) *SQLExpression {
 	raw := NewSQLCastExpression(arg, "VARCHAR", false)
 	// Trim only for base64 decode: coalesce fallback must use raw (e.g. CONCAT(a, ' ', b) — TRIM(' ') is '').
@@ -806,6 +813,24 @@ func duckDBRewriteFunctionCall(name string, args []*SQLExpression, argData []Exp
 			args[2],
 		}
 		return NewFunctionExpression("replace", out...), true
+	case "googlesqlite_make_array":
+		if len(args) == 0 {
+			return NewLiteralExpression("[]"), true
+		}
+		return NewFunctionExpression("list_value", args...), true
+	case "googlesqlite_make_struct":
+		if len(args) < 2 || len(args)%2 != 0 {
+			return nil, false
+		}
+		entries := make([]DuckDBStructLiteralEntry, 0, len(args)/2)
+		for i := 0; i < len(args); i += 2 {
+			key, ok := duckDBMakeStructFieldKeyFromExpr(args[i])
+			if !ok {
+				return nil, false
+			}
+			entries = append(entries, DuckDBStructLiteralEntry{Key: key, Value: args[i+1]})
+		}
+		return NewDuckDBStructLiteralExpression(entries), true
 	case "googlesqlite_equal":
 		if len(args) == 2 {
 			if len(argData) == 2 {

@@ -355,6 +355,51 @@ func TestTransformDuckDB_generateArrayThreeArgToRange(t *testing.T) {
 	}
 }
 
+func TestTransformDuckDB_makeArrayToListValue(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	fn := NewFunctionCallExpressionData("googlesqlite_make_array",
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(1)}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(2)}},
+	)
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	expr, err := coord.TransformExpression(fn, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if !strings.Contains(got, "list_value(") || strings.Contains(got, "googlesqlite_make_array") {
+		t.Fatalf("expected list_value rewrite, got %q", got)
+	}
+}
+
+func TestTransformDuckDB_makeStructToStructLiteral(t *testing.T) {
+	coord := GetGlobalCoordinator()
+	fn := NewFunctionCallExpressionData("googlesqlite_make_struct",
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("eDate")}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: IntValue(42)}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("sy")}},
+		ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: StringValue("2025")}},
+	)
+	ctx := context.Background()
+	cfg := DefaultTransformConfig()
+	cfg.Dialect = DuckDBDialect{}
+	tctx := NewQueryTransformFactory(cfg, coord).CreateTransformContext(ctx)
+	expr, err := coord.TransformExpression(fn, tctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := expr.String()
+	if !strings.Contains(got, "{") || !strings.Contains(got, "'eDate':") || !strings.Contains(got, "'sy':") {
+		t.Fatalf("expected DuckDB struct literal with eDate and sy, got %q", got)
+	}
+	if strings.Contains(got, "googlesqlite_make_struct") {
+		t.Fatalf("expected rewrite off googlesqlite_make_struct, got %q", got)
+	}
+}
+
 func TestTransformDuckDB_replaceUnwrapsWireBeforeReplace(t *testing.T) {
 	coord := GetGlobalCoordinator()
 	col := ExpressionData{
