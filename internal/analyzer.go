@@ -838,7 +838,7 @@ func (a *Analyzer) buildScalarTypeFuncFromTemplatedFunc(node *ast.CreateFunction
 		args = append(args, fmt.Sprintf("%s %s", arg.ArgumentName(), typ))
 	}
 	return fmt.Sprintf(
-		"CREATE TEMP FUNCTION __googlesqlite_func__(%s) as (%s)",
+		"CREATE TEMP FUNCTION __googlesqlengine_func__(%s) as (%s)",
 		strings.Join(args, ","),
 		node.Code(),
 	)
@@ -855,7 +855,7 @@ func (a *Analyzer) buildArrayTypeFuncFromTemplatedFunc(node *ast.CreateFunctionS
 		args = append(args, fmt.Sprintf("%s %s", arg.ArgumentName(), typ))
 	}
 	return fmt.Sprintf(
-		"CREATE TEMP FUNCTION __googlesqlite_func__(%s) as (%s)",
+		"CREATE TEMP FUNCTION __googlesqlengine_func__(%s) as (%s)",
 		strings.Join(args, ","),
 		node.Code(),
 	)
@@ -1040,7 +1040,7 @@ func (a *Analyzer) newMergeStmtAction(ctx context.Context, query string, args []
 		stmts = []string{a.formatSQLFragment(result.Fragment)}
 	}
 
-	// Ingestion-time partitioned tables and partition decorators are not modeled in GoogleSQLite;
+	// Ingestion-time partitioned tables and partition decorators are not modeled in the go-googlesql-engine catalog;
 	// BigQuery-emulator or upstream catalog should enforce column lists and partition rules if needed.
 
 	return &MergeStmtAction{stmts: stmts, dupCheckSQL: dupCheck}, nil

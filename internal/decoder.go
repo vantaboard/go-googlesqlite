@@ -69,7 +69,7 @@ func DecodeValue(v driver.Value) (Value, error) {
 	return decodeStringOrLayout(s)
 }
 
-// decodeStringOrLayout decodes a SQLite/Googlesqlite base64+JSON wire value when present;
+// decodeStringOrLayout decodes a SQLite/googlesqlengine base64+JSON wire value when present;
 // otherwise treats s as a plain SQL string (DuckDB and other native drivers).
 func decodeStringOrLayout(s string) (Value, error) {
 	decoded, err := base64.StdEncoding.DecodeString(s)

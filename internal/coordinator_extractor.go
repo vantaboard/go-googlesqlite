@@ -91,10 +91,10 @@ func (e *NodeExtractor) extractLiteralData(node *ast.LiteralNode, ctx TransformC
 	originalValue := node.Value()
 	originalType := node.Type()
 
-	// Convert GoogleSQL value to googlesqlite Value
-	googlesqliteValue, err := ValueFromGoogleSQLValue(originalValue)
+	// Convert GoogleSQL value to googlesqlengine Value
+	googlesqlengineValue, err := ValueFromGoogleSQLValue(originalValue)
 	if err != nil {
-		return ExpressionData{}, fmt.Errorf("failed to convert GoogleSQL value to googlesqlite Value: %w", err)
+		return ExpressionData{}, fmt.Errorf("failed to convert GoogleSQL value to googlesqlengine Value: %w", err)
 	}
 
 	var typeName string
@@ -105,7 +105,7 @@ func (e *NodeExtractor) extractLiteralData(node *ast.LiteralNode, ctx TransformC
 	return ExpressionData{
 		Type: ExpressionTypeLiteral,
 		Literal: &LiteralData{
-			Value:    googlesqliteValue,
+			Value:    googlesqlengineValue,
 			TypeName: typeName,
 		},
 	}, nil
@@ -156,7 +156,7 @@ func resolvedFunctionNamePath(node ast.Node) []string {
 	return path
 }
 
-func getGoogleSQLiteFuncName(ctx context.Context, node *ast.BaseFunctionCallNode, isWindowFunc bool) (string, error) {
+func getGoogleSQLEngineFuncName(ctx context.Context, node *ast.BaseFunctionCallNode, isWindowFunc bool) (string, error) {
 	funcName := node.Function().FullName(false)
 	funcName = strings.ReplaceAll(funcName, ".", "_")
 
@@ -165,12 +165,12 @@ func getGoogleSQLiteFuncName(ctx context.Context, node *ast.BaseFunctionCallNode
 	_, existsAggregateFunc := aggregateFuncMap[funcName]
 	_, existsWindowFunc := windowFuncMap[funcName]
 
-	funcPrefix := "googlesqlite"
+	funcPrefix := "googlesqlengine"
 	if node.ErrorMode() == ast.SafeErrorMode {
 		if !existsNormalFunc {
 			return "", fmt.Errorf("SAFE is not supported for function %s", funcName)
 		}
-		funcPrefix = "googlesqlite_safe"
+		funcPrefix = "googlesqlengine_safe"
 	}
 
 	if strings.HasPrefix(funcName, "$") {
@@ -204,7 +204,7 @@ func getGoogleSQLiteFuncName(ctx context.Context, node *ast.BaseFunctionCallNode
 // extractFunctionCallData extracts data from function call nodes
 func (e *NodeExtractor) extractFunctionCallData(node *ast.BaseFunctionCallNode, ctx TransformContext, isWindowFunc bool) (ExpressionData, error) {
 	// Extract function name
-	funcName, err := getGoogleSQLiteFuncName(ctx.Context(), node, isWindowFunc)
+	funcName, err := getGoogleSQLEngineFuncName(ctx.Context(), node, isWindowFunc)
 	if err != nil {
 		return ExpressionData{}, fmt.Errorf("failed to get function name: %w", err)
 	}
@@ -242,9 +242,9 @@ func (e *NodeExtractor) extractFunctionCallData(node *ast.BaseFunctionCallNode, 
 		// Determine the HAVING modifier type
 		var havingFunc string
 		if originalFuncName == "min_by" {
-			havingFunc = "googlesqlite_having_min"
+			havingFunc = "googlesqlengine_having_min"
 		} else {
-			havingFunc = "googlesqlite_having_max"
+			havingFunc = "googlesqlengine_having_max"
 		}
 
 		// Transform to ANY_VALUE with HAVING modifier
@@ -252,7 +252,7 @@ func (e *NodeExtractor) extractFunctionCallData(node *ast.BaseFunctionCallNode, 
 		return ExpressionData{
 			Type: ExpressionTypeFunction,
 			Function: &FunctionCallData{
-				Name: "googlesqlite_any_value",
+				Name: "googlesqlengine_any_value",
 				Arguments: []ExpressionData{
 					arguments[0], // x - the value to return
 					NewFunctionCallExpressionData(havingFunc, arguments[1]), // HAVING MIN/MAX(y)
@@ -391,7 +391,7 @@ func (e *NodeExtractor) extractMakeStructData(node *ast.MakeStructNode, ctx Tran
 	return ExpressionData{
 		Type: ExpressionTypeFunction,
 		Function: &FunctionCallData{
-			Name:      "googlesqlite_make_struct",
+			Name:      "googlesqlengine_make_struct",
 			Arguments: fieldArgs,
 		},
 	}, nil
@@ -418,7 +418,7 @@ func (e *NodeExtractor) extractGetStructFieldData(node *ast.GetStructFieldNode, 
 				return ExpressionData{
 					Type: ExpressionTypeFunction,
 					Function: &FunctionCallData{
-						Name: "googlesqlite_get_struct_field",
+						Name: "googlesqlengine_get_struct_field",
 						Arguments: []ExpressionData{
 							exprData,
 							{
@@ -438,7 +438,7 @@ func (e *NodeExtractor) extractGetStructFieldData(node *ast.GetStructFieldNode, 
 	return ExpressionData{
 		Type: ExpressionTypeFunction,
 		Function: &FunctionCallData{
-			Name: "googlesqlite_get_struct_field",
+			Name: "googlesqlengine_get_struct_field",
 			Arguments: []ExpressionData{
 				exprData,
 				{
@@ -463,7 +463,7 @@ func (e *NodeExtractor) extractGetJsonFieldData(node *ast.GetJsonFieldNode, ctx 
 	return ExpressionData{
 		Type: ExpressionTypeFunction,
 		Function: &FunctionCallData{
-			Name: "googlesqlite_get_json_field",
+			Name: "googlesqlengine_get_json_field",
 			Arguments: []ExpressionData{
 				exprData,
 				{
@@ -494,7 +494,7 @@ func (e *NodeExtractor) extractAggregateFunctionCallData(node *ast.AggregateFunc
 			return ExpressionData{}, fmt.Errorf("failed to extract aggregate function call function order by arg: %w", err)
 		}
 		orderBy := NewFunctionCallExpressionData(
-			"googlesqlite_order_by",
+			"googlesqlengine_order_by",
 			orderItem,
 			ExpressionData{Type: ExpressionTypeLiteral, Literal: &LiteralData{Value: BoolValue(!item.IsDescending())}},
 		)
@@ -503,7 +503,7 @@ func (e *NodeExtractor) extractAggregateFunctionCallData(node *ast.AggregateFunc
 	}
 
 	if node.Distinct() {
-		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlite_distinct"))
+		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlengine_distinct"))
 	}
 
 	if node.Limit() != nil {
@@ -512,7 +512,7 @@ func (e *NodeExtractor) extractAggregateFunctionCallData(node *ast.AggregateFunc
 			return ExpressionData{}, fmt.Errorf("failed to extract aggregate function call function limit: %w", err)
 		}
 
-		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlite_limit", limit))
+		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlengine_limit", limit))
 	}
 
 	// Extract HAVING MAX/MIN modifier if present
@@ -527,9 +527,9 @@ func (e *NodeExtractor) extractAggregateFunctionCallData(node *ast.AggregateFunc
 		var havingFunc string
 		switch havingModifier.ModifierKind() {
 		case ast.HavingModifierKindMax:
-			havingFunc = "googlesqlite_having_max"
+			havingFunc = "googlesqlengine_having_max"
 		case ast.HavingModifierKindMin:
-			havingFunc = "googlesqlite_having_min"
+			havingFunc = "googlesqlengine_having_min"
 		default:
 			return ExpressionData{}, fmt.Errorf("unsupported having modifier kind: %v", havingModifier.ModifierKind())
 		}
@@ -539,7 +539,7 @@ func (e *NodeExtractor) extractAggregateFunctionCallData(node *ast.AggregateFunc
 
 	switch node.NullHandlingModifier() {
 	case ast.IgnoreNulls:
-		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlite_ignore_nulls"))
+		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlengine_ignore_nulls"))
 	case ast.RespectNulls:
 	}
 
@@ -601,12 +601,12 @@ func getWindowBoundaryTypeData(boundaryType ast.BoundaryType, literal Expression
 }
 
 var windowFuncFixedRanges = map[string]*FrameClauseData{
-	"googlesqlite_window_ntile": {
+	"googlesqlengine_window_ntile": {
 		Unit:  "ROWS",
 		Start: &FrameBoundData{Type: "CURRENT ROW"},
 		End:   &FrameBoundData{Type: "UNBOUNDED FOLLOWING"},
 	},
-	"googlesqlite_window_cume_dist": {
+	"googlesqlengine_window_cume_dist": {
 		Unit: "GROUPS",
 		Start: &FrameBoundData{Type: "FOLLOWING",
 			Offset: ExpressionData{
@@ -616,32 +616,32 @@ var windowFuncFixedRanges = map[string]*FrameClauseData{
 		},
 		End: &FrameBoundData{Type: "UNBOUNDED FOLLOWING"},
 	},
-	"googlesqlite_window_dense_rank": {
+	"googlesqlengine_window_dense_rank": {
 		Unit:  "RANGE",
 		Start: &FrameBoundData{Type: "UNBOUNDED PRECEDING"},
 		End:   &FrameBoundData{Type: "CURRENT ROW"},
 	},
-	"googlesqlite_window_rank": {
+	"googlesqlengine_window_rank": {
 		Unit:  "GROUPS",
 		Start: &FrameBoundData{Type: "UNBOUNDED PRECEDING"},
 		End:   &FrameBoundData{Type: "CURRENT ROW EXCLUDE TIES"},
 	},
-	"googlesqlite_window_percent_rank": {
+	"googlesqlengine_window_percent_rank": {
 		Unit:  "GROUPS",
 		Start: &FrameBoundData{Type: "CURRENT ROW"},
 		End:   &FrameBoundData{Type: "UNBOUNDED FOLLOWING"},
 	},
-	"googlesqlite_window_row_number": {
+	"googlesqlengine_window_row_number": {
 		Unit:  "ROWS",
 		Start: &FrameBoundData{Type: "UNBOUNDED PRECEDING"},
 		End:   &FrameBoundData{Type: "CURRENT ROW"},
 	},
-	"googlesqlite_window_lag": {
+	"googlesqlengine_window_lag": {
 		Unit:  "ROWS",
 		Start: &FrameBoundData{Type: "UNBOUNDED PRECEDING"},
 		End:   &FrameBoundData{Type: "CURRENT ROW"},
 	},
-	"googlesqlite_window_lead": {
+	"googlesqlengine_window_lead": {
 		Unit:  "ROWS",
 		Start: &FrameBoundData{Type: "CURRENT ROW"},
 		End:   &FrameBoundData{Type: "UNBOUNDED FOLLOWING"},
@@ -649,7 +649,7 @@ var windowFuncFixedRanges = map[string]*FrameClauseData{
 }
 
 var windowFunctionsIgnoreNullsByDefault = map[string]bool{
-	"googlesqlite_window_percentile_disc": true,
+	"googlesqlengine_window_percentile_disc": true,
 }
 
 // extractAnalyticFunctionCallData extracts data from analytic function nodes
@@ -662,17 +662,17 @@ func (e *NodeExtractor) extractAnalyticFunctionCallData(node *ast.AnalyticFuncti
 	function := baseData.Function
 
 	if node.Distinct() {
-		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlite_distinct"))
+		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlengine_distinct"))
 	}
 
 	_, ignoreNullsByDefault := windowFunctionsIgnoreNullsByDefault[baseData.Function.Name]
 
 	switch node.NullHandlingModifier() {
 	case ast.IgnoreNulls:
-		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlite_ignore_nulls"))
+		function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlengine_ignore_nulls"))
 	case ast.DefaultNullHandling:
 		if ignoreNullsByDefault {
-			function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlite_ignore_nulls"))
+			function.Arguments = append(function.Arguments, NewFunctionCallExpressionData("googlesqlengine_ignore_nulls"))
 		}
 	}
 
@@ -990,7 +990,7 @@ func (e *NodeExtractor) extractWildcardTableAsSetOp(wildcardTable *WildcardTable
 				if wildcardTable.existsColumn(tableSpec, col.Name) {
 					t, err := col.Type.ToGoogleSQLType()
 					if err != nil {
-						return ScanData{}, fmt.Errorf("failed to extract googlesqlite type: %w", err)
+						return ScanData{}, fmt.Errorf("failed to extract googlesqlengine type: %w", err)
 					}
 					// Column exists - reference it directly
 					columnExpr = ExpressionData{

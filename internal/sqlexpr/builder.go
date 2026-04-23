@@ -56,7 +56,7 @@ func (w *SQLWriter) WriteQuotedIdent(name string) {
 	w.Write(d.QuoteIdent(name))
 }
 
-// writeDialectLiteral emits a literal fragment. SQLite accepts double-quoted Googlesqlite wire
+// writeDialectLiteral emits a literal fragment. SQLite accepts double-quoted googlesqlengine wire
 // strings; DuckDB needs native SQL literals (or parse_json / list literals) decoded from that wire.
 func writeDialectLiteral(w *SQLWriter, val string) {
 	d := w.dialect
