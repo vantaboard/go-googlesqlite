@@ -1,6 +1,6 @@
 # DuckDB parity roadmap (vs SQLite execution layer)
 
-This document tracks work to make the **DuckDB** path (`googlesqlduck` driver, [`DuckDBDialect`](../internal/dialect.go)) match **SQLite** behavior for the same GoogleSQL inputs. “100% parity” here means: **the same GoogleSQL corpus produces observably equivalent results** (and passes the same conformance tests) on both engines—not necessarily byte-identical SQL text.
+This document tracks work to make the **DuckDB** path (`googlesqlengineduck` driver, [`DuckDBDialect`](../internal/dialect.go)) match **SQLite** behavior for the same GoogleSQL inputs. “100% parity” here means: **the same GoogleSQL corpus produces observably equivalent results** (and passes the same conformance tests) on both engines—not necessarily byte-identical SQL text.
 
 ## Current baseline (already shipped)
 
@@ -12,7 +12,7 @@ This document tracks work to make the **DuckDB** path (`googlesqlduck` driver, [
 ## How to use this roadmap
 
 - Work **top to bottom** within each phase; later phases depend on earlier ones.
-- For each bullet, add **tests** (golden SQL and/or `sql.Open("googlesqlduck", …)` integration) before claiming parity.
+- For each bullet, add **tests** (golden SQL and/or `sql.Open("googlesqlengineduck", …)` integration) before claiming parity.
 - Track progress by copying unchecked items into issues/PRs; tick boxes when merged.
 
 ---
@@ -33,11 +33,11 @@ These files still embed **SQLite-specific** function names, temp table names, or
 
 | Area | Primary files | Notes |
 |------|----------------|-------|
-| Array subquery wrap | [`transformer_subquery.go`](../internal/transformer_subquery.go) (`googlesqlite_array`) | DuckDB may need `LIST` / `ARRAY` / subquery shape different from SQLite UDF. |
-| UNNEST / `json_each` | [`transformer_scan_array.go`](../internal/transformer_scan_array.go) (`googlesqlite_decode_array`) | Likely native `UNNEST` or list functions in DuckDB. |
-| Complex casts | [`transformer_cast.go`](../internal/transformer_cast.go) (`googlesqlite_cast`) | Map to DuckDB `CAST` / `TRY_CAST` where possible; keep SQLite UDF where not. |
+| Array subquery wrap | [`transformer_subquery.go`](../internal/transformer_subquery.go) (`googlesqlengine_array`) | DuckDB may need `LIST` / `ARRAY` / subquery shape different from SQLite UDF. |
+| UNNEST / `json_each` | [`transformer_scan_array.go`](../internal/transformer_scan_array.go) (`googlesqlengine_decode_array`) | Likely native `UNNEST` or list functions in DuckDB. |
+| Complex casts | [`transformer_cast.go`](../internal/transformer_cast.go) (`googlesqlengine_cast`) | Map to DuckDB `CAST` / `TRY_CAST` where possible; keep SQLite UDF where not. |
 | MERGE simulation | [`transformer_stmt_merge.go`](../internal/transformer_stmt_merge.go) | **Dialect:** scratch table name + `CREATE TEMP TABLE … AS` on DuckDB (session-local); SQLite keeps plain `CREATE TABLE … AS`. Same multi-statement rewrite as SQLite; native `MERGE INTO` deferred. |
-| GROUP BY wrapper | [`transformer_scan_aggregate.go`](../internal/transformer_scan_aggregate.go) (`googlesqlite_group_by`) | GoogleSQL semantics vs DuckDB `GROUP BY`; may require expression rewrite, not only rename. |
+| GROUP BY wrapper | [`transformer_scan_aggregate.go`](../internal/transformer_scan_aggregate.go) (`googlesqlengine_group_by`) | GoogleSQL semantics vs DuckDB `GROUP BY`; may require expression rewrite, not only rename. |
 
 Checklist:
 
@@ -45,11 +45,11 @@ Checklist:
 - [x] Array scan / UNNEST: DuckDB-native FROM clause + tests.
 - [x] Cast: split simple casts to SQL `CAST` vs retain multi-step UDF path on SQLite only.
 - [x] MERGE: temp-table simulation aligned with SQLite; DuckDB uses `CREATE TEMP TABLE` for the scratch table via [`Dialect`](../internal/dialect.go) (`MergeTempTableName`, `MergeScratchTableIsTemporary`).
-- [x] `googlesqlite_group_by`: semantic parity or documented divergence + tests (DuckDB: omit wrapper; see [`internal/dialect.go`](../internal/dialect.go)).
+- [x] `googlesqlengine_group_by`: semantic parity or documented divergence + tests (DuckDB: omit wrapper; see [`internal/dialect.go`](../internal/dialect.go)).
 
 ---
 
-## Phase 2 — Function surface (`googlesqlite_*` → DuckDB)
+## Phase 2 — Function surface (`googlesqlengine_*` → DuckDB)
 
 SQLite registers a large UDF set in [`function_register.go`](../internal/function_register.go) / [`function_bind.go`](../internal/function_bind.go). DuckDB parity options, per function or family:
 
@@ -60,12 +60,12 @@ SQLite registers a large UDF set in [`function_register.go`](../internal/functio
 
 Suggested order (high leverage first):
 
-- [x] **Comparison / logic:** Audited (Phase 2): comparison and boolean ops lower to SQL `=`, `AND`, `IN`, … when [`canOptimizeFunction`](../internal/transformer_function.go) accepts primitive args; MERGE key paths still use `googlesqlite_*` comparators by design; window `googlesqlite_window_*` remains follow-on (see [`duckdb_function_matrix.md`](../internal/duckdb_function_matrix.md) inventory notes).
+- [x] **Comparison / logic:** Audited (Phase 2): comparison and boolean ops lower to SQL `=`, `AND`, `IN`, … when [`canOptimizeFunction`](../internal/transformer_function.go) accepts primitive args; MERGE key paths still use `googlesqlengine_*` comparators by design; window `googlesqlengine_window_*` remains follow-on (see [`duckdb_function_matrix.md`](../internal/duckdb_function_matrix.md) inventory notes).
 - [x] **Strings (batch 1):** low-risk renames (`trim`, `ltrim`, `rtrim`, `concat`, `replace`, `reverse`, `repeat`, `strpos`, `chr`, `ascii`) in [`dialect.go`](../internal/dialect.go); `INSTR` with extra args still uses SQLite UDF until rewritten.
 - [x] **Strings / bytes / regex (batch 2):** DuckDB renames (`starts_with`, `ends_with`, `left`, `right`, `lpad`, `rpad`, `initcap`, `unicode`, `byte_length` → `octet_length`, `md5`/`sha1`/`sha256`/`sha512`); **INSTR** 2-arg → `strpos` rewrite in [`transformer_function.go`](../internal/transformer_function.go); golden + [`transformer_duckdb_rewrites_test.go`](../internal/transformer_duckdb_rewrites_test.go) + [`duckdb_integration_test.go`](../duckdb_integration_test.go) Phase 2 corpus.
 - [x] **Date/time (batch 1):** `CURRENT_TIMESTAMP` / `CURRENT_DATE` / `CURRENT_TIME` DuckDB rewrites (including frozen clock via [`WithCurrentTime`](../context.go) → `to_timestamp`); see matrix + rewrite tests.
-- [x] **JSON (batch 1):** `googlesqlite_json_extract` → `json_extract` rename; `PARSE_JSON` first-arg-only rewrite (optional BigQuery widen mode dropped on DuckDB); dual-backend smoke on `JSON_EXTRACT` + `CAST` in [`duckdb_integration_test.go`](../duckdb_integration_test.go).
-- [x] **Aggregates / window builtins (starter):** common `googlesqlite_*` / `googlesqlite_window_*` names map to DuckDB builtins via [`dialect_duckdb_renames.go`](../internal/dialect_duckdb_renames.go); `COUNT(DISTINCT …)` / `count(*)` normalization in [`sqlbuilder_sqlbuilder.go`](../internal/sqlbuilder_sqlbuilder.go); dual-backend tests (`sum_group_by`, `row_number_over`). Option modifiers (`googlesqlite_having_*`, `googlesqlite_order_by`, …) and rare aggregates remain follow-on.
+- [x] **JSON (batch 1):** `googlesqlengine_json_extract` → `json_extract` rename; `PARSE_JSON` first-arg-only rewrite (optional BigQuery widen mode dropped on DuckDB); dual-backend smoke on `JSON_EXTRACT` + `CAST` in [`duckdb_integration_test.go`](../duckdb_integration_test.go).
+- [x] **Aggregates / window builtins (starter):** common `googlesqlengine_*` / `googlesqlengine_window_*` names map to DuckDB builtins via [`dialect_duckdb_renames.go`](../internal/dialect_duckdb_renames.go); `COUNT(DISTINCT …)` / `count(*)` normalization in [`sqlbuilder_sqlbuilder.go`](../internal/sqlbuilder_sqlbuilder.go); dual-backend tests (`sum_group_by`, `row_number_over`). Option modifiers (`googlesqlengine_having_*`, `googlesqlengine_order_by`, …) and rare aggregates remain follow-on.
 - [ ] **Geography / ML / rare builtins:** lowest priority unless your corpus needs them.
 
 Deliverable: **`internal/duckdb_function_matrix.md`** is the single strategy table (rename / rewrite / macro / unsupported); this roadmap links to it.
@@ -89,7 +89,7 @@ Planning note: [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.
 - [x] **Parameters (smoke):** dual-backend named param test in [`duckdb_integration_test.go`](../duckdb_integration_test.go) (`CAST(@p AS INT64)`).
 - [x] **Transactions (smoke):** commit + rollback DDL/DML via `database/sql` `BeginTx` in [`duckdb_integration_test.go`](../duckdb_integration_test.go).
 - [x] **Connection settings:** `SetMaxIdleConns(0)` in [`OpenSQLBackend`](../internal/backend.go) for DuckDB; lifecycle notes in [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.md).
-- [ ] **bigquery-emulator:** driver selection + shared job SQL corpus still **not wired** (repository uses `*googlesqlite.GoogleSQLiteConn`); see **DuckDB execution layer** in [bigquery-emulator README](https://github.com/vantaboard/bigquery-emulator/blob/main/README.md). Optional CI for DuckDB lives in **go-googlesqlite** `duckdb-lib` workflow.
+- [ ] **bigquery-emulator:** driver selection + shared job SQL corpus still **not wired** (repository uses `*googlesqlengine.GoogleSQLEngineConn`); see **DuckDB execution layer** in [bigquery-emulator README](https://github.com/vantaboard/bigquery-emulator/blob/main/README.md). Optional CI for DuckDB lives in **go-googlesql-engine** `duckdb-lib` workflow.
 
 ---
 

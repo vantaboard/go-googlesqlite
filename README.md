@@ -1,23 +1,23 @@
-# go-googlesqlite
+# go-googlesql-engine
 
-![Go](https://github.com/vantaboard/go-googlesqlite/workflows/Go/badge.svg)
-[![GoDoc](https://godoc.org/github.com/vantaboard/go-googlesqlite?status.svg)](https://pkg.go.dev/github.com/vantaboard/go-googlesqlite?tab=doc)
-[![codecov](https://codecov.io/gh/vantaboard/go-googlesqlite/branch/main/graph/badge.svg)](https://codecov.io/gh/vantaboard/go-googlesqlite)
+![Go](https://github.com/vantaboard/go-googlesql-engine/workflows/Go/badge.svg)
+[![GoDoc](https://godoc.org/github.com/vantaboard/go-googlesql-engine?status.svg)](https://pkg.go.dev/github.com/vantaboard/go-googlesql-engine?tab=doc)
+[![codecov](https://codecov.io/gh/vantaboard/go-googlesql-engine/branch/main/graph/badge.svg)](https://codecov.io/gh/vantaboard/go-googlesql-engine)
 
 A database driver library that interprets GoogleSQL queries and runs them using SQLite3
 
 # Features
 
-`go-googlesqlite` supports `database/sql` driver interface.
-So, you can use GoogleSQL queries just by importing `github.com/vantaboard/go-googlesqlite`.
-Also, go-googlesqlite uses SQLite3 as the database engine.
+`go-googlesql-engine` supports `database/sql` driver interface.
+So, you can use GoogleSQL queries just by importing `github.com/vantaboard/go-googlesql-engine`.
+Also, go-googlesql-engine uses SQLite3 as the database engine.
 Since we are using [modernc.org/sqlite](https://modernc.org/sqlite), we can use the options ( like `:memory:` ) supported by `sqlite` ( see [details](https://pkg.go.dev/modernc.org/sqlite#Driver.Open) ).
 GoogleSQL functionality is provided by [go-googlesql](https://github.com/vantaboard/go-googlesql)
 
 # Installation
 
 ```
-go get github.com/vantaboard/go-googlesqlite
+go get github.com/vantaboard/go-googlesql-engine
 ```
 
 ## **NOTE**
@@ -29,7 +29,7 @@ CGO_ENABLED=1
 CXX=clang++
 ```
 
-For a full local stack (`go-googlesql`, `go-googlesqlite`, and the Vantaboard `bigquery-emulator` fork as sibling repos), copy [`go.work.dev`](go.work.dev) to `go.work` (or set `GOWORK` to that file). Local path overrides live in the workspace file, not in `go.mod`. Emulator Docker builds use only that module's tree, so they rely on published versions unless you change the build context.
+For a full local stack (`go-googlesql`, `go-googlesql-engine`, and the Vantaboard `bigquery-emulator` fork as sibling repos), copy [`go.work.dev`](go.work.dev) to `go.work` (or set `GOWORK` to that file). Local path overrides live in the workspace file, not in `go.mod`. Emulator Docker builds use only that module's tree, so they rely on published versions unless you change the build context.
 
 When exercising the whole stack, run **`go test` in each repo one at a time** (not in parallel) to avoid OOM from overlapping CGO builds, and set a **shared `GOCACHE`** (and optionally `GOMODCACHE`) as described in the [go-googlesql README](https://github.com/vantaboard/go-googlesql#development) so `go-googlesql` compile artifacts are reused.
 
@@ -39,7 +39,7 @@ When exercising the whole stack, run **`go test` in each repo one at a time** (n
 
 **Deprecated alias:** **`googlesql_tier_b`** is a compatibility name for older scripts; the supported default is **`googlesql_unified_prebuilt`** (see upstream README). Do not mix Abseil Tier B pilot tags with the default protobuf stack without reading [`prebuilt-absl-overlap.md`](https://github.com/vantaboard/go-googlesql/blob/main/docs/prebuilt-absl-overlap.md).
 
-**Shared cache directory (`GO_CACHE_ROOT`):** The [Taskfile](Taskfile.yml) target **`task test:linux`** bind-mounts the same tree as `go-googlesql`: **`GO_CACHE_ROOT`** (default **`$HOME/.cache/go-googlesql`**) into **`gocache`**, **`gomodcache`**, and **`ccache`** inside the **`go-googlesql:dev`** container. Override **`GO_CACHE_ROOT`** if you need a different path; keep it identical across **`go-googlesql`**, **`go-googlesqlite`**, and **`bigquery-emulator`** so the stack shares one warm cache.
+**Shared cache directory (`GO_CACHE_ROOT`):** The [Taskfile](Taskfile.yml) target **`task test:linux`** bind-mounts the same tree as `go-googlesql`: **`GO_CACHE_ROOT`** (default **`$HOME/.cache/go-googlesql`**) into **`gocache`**, **`gomodcache`**, and **`ccache`** inside the **`go-googlesql:dev`** container. Override **`GO_CACHE_ROOT`** if you need a different path; keep it identical across **`go-googlesql`**, **`go-googlesql-engine`**, and **`bigquery-emulator`** so the stack shares one warm cache.
 
 **Host-native builds and tests:** For incremental C++ compiles on the host, mirror [go-googlesql](https://github.com/vantaboard/go-googlesql#development): use **`CC="ccache clang"`** and **`CXX="ccache clang++"`**, point **`GOCACHE`**, **`GOMODCACHE`**, and **`CCACHE_DIR`** at the same tree (for example under **`GO_CACHE_ROOT`**), or run **`task test:local`** from **`go-googlesql`** (prebuilts + **`googlesql,googlesql_unified_prebuilt`**). See [`link-only-cgo-migration.md`](https://github.com/vantaboard/go-googlesql/blob/main/docs/link-only-cgo-migration.md). On **Linux**, install **`mold`** and keep it on **`PATH`**; the **`go-googlesql:dev`** image already sets **`mold`** for Docker-based **`task test:linux`** here.
 
@@ -60,11 +60,11 @@ import (
   "database/sql"
   "fmt"
 
-  _ "github.com/vantaboard/go-googlesqlite"
+  _ "github.com/vantaboard/go-googlesql-engine"
 )
 
 func main() {
-  db, err := sql.Open("googlesqlite", ":memory:")
+  db, err := sql.Open("googlesqlengine", ":memory:")
   if err != nil {
     panic(err)
   }
@@ -88,13 +88,13 @@ func main() {
 
 # Tools
 
-## GoogleSQLite CLI
+## GoogleSQLEngine CLI
 
-You can execute GoogleSQL queries interactively by using the tools provided by `cmd/googlesqlite-cli`. See [here](https://github.com/vantaboard/go-googlesqlite/tree/main/cmd/googlesqlite-cli#readme) for details
+You can execute GoogleSQL queries interactively by using the tools provided by `cmd/googlesqlengine-cli`. See [here](https://github.com/vantaboard/go-googlesql-engine/tree/main/cmd/googlesqlengine-cli#readme) for details
 
 # Status
 
-A list of GoogleSQL ( Google Standard SQL ) specifications and features supported by go-googlesqlite.
+A list of GoogleSQL ( Google Standard SQL ) specifications and features supported by go-googlesql-engine.
 
 ## Types
 

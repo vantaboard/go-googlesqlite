@@ -4,11 +4,11 @@ This document locks the **parity contract**, **minimum test corpus**, **CI shape
 
 ## Parity definition
 
-- **In scope:** For an agreed **GoogleSQL corpus**, the same input must yield **logically equivalent results** on `googlesqlite` (SQLite) and `googlesqlduck` (DuckDB): same row counts and column values under a defined comparison order (see dual-backend tests).
+- **In scope:** For an agreed **GoogleSQL corpus**, the same input must yield **logically equivalent results** on `googlesqlengine` (SQLite) and `googlesqlengineduck` (DuckDB): same row counts and column values under a defined comparison order (see dual-backend tests).
 
 ### Connection pooling (parity tests and apps)
 
-- The `googlesqlite` / `googlesqlduck` drivers cache `*sql.DB` per DSN; reuse of `""` shares one pool. Use **private DSNs** for isolated dual-backend cases (see [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.md)).
+- The `googlesqlengine` / `googlesqlengineduck` drivers cache `*sql.DB` per DSN; reuse of `""` shares one pool. Use **private DSNs** for isolated dual-backend cases (see [duckdb-phase3-phase4-followon.md](duckdb-phase3-phase4-followon.md)).
 
 ### Comparison order
 
@@ -35,7 +35,7 @@ This document locks the **parity contract**, **minimum test corpus**, **CI shape
 ## Failure policy (unsupported vs wrong answers)
 
 - **Preferred:** If a GoogleSQL feature is not implemented for DuckDB, fail **during analysis or execution** with a **stable, typed error** (or driver error wrapping a clear message), not silent wrong results.
-- **Avoid:** Emitting SQLite-only artifacts on DuckDB (e.g. `googlesqlite_*` UDFs) without registration or macro shims—this tends to produce confusing runtime errors or incorrect data.
+- **Avoid:** Emitting SQLite-only artifacts on DuckDB (e.g. `googlesqlengine_*` UDFs) without registration or macro shims—this tends to produce confusing runtime errors or incorrect data.
 - **Casts:** DuckDB uses native `CAST` / `TRY_CAST` only for **scalar** type pairs we explicitly map; other type combinations should return an error until mapped (see [`internal/duckdb_function_matrix.md`](../internal/duckdb_function_matrix.md)).
 
 ## References

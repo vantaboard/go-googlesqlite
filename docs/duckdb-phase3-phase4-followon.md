@@ -10,7 +10,7 @@ This note captures **what to do after Phase 2 function coverage** matches your w
 
 ## Phase 4 — Runtime and integration
 
-- **Parameters:** Named and positional binding through [`driver.go`](../driver.go) / `googlesqlduck`; confirm DuckDB driver behavior matches SQLite paths.
+- **Parameters:** Named and positional binding through [`driver.go`](../driver.go) / `googlesqlengineduck`; confirm DuckDB driver behavior matches SQLite paths.
 - **Transactions:** `BEGIN` / `COMMIT` / rollback through the same connection abstraction used by the analyzer executor.
 - **Connection lifecycle:** `SetMaxIdleConns(0)` and other [duckdb-go](https://github.com/duckdb/duckdb-go#memory-allocation) guidance for long-lived processes.
 - **bigquery-emulator:** Optional driver selection and shared SQL corpus remain a **separate repo** milestone.
