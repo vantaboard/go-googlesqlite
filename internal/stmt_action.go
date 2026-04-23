@@ -377,14 +377,16 @@ type DropStmtAction struct {
 func (a *DropStmtAction) exec(ctx context.Context, conn *Conn) error {
 	switch a.objectType {
 	case "TABLE", "VIEW":
+		spec := a.catalog.PeekTableSpecForFlatName(a.name)
 		if _, err := conn.ExecContext(ctx, a.formattedQuery, a.args...); err != nil {
 			return fmt.Errorf("failed to exec %s: %w", a.query, err)
 		}
-		spec := a.catalog.tableMap[a.name]
 		if err := a.catalog.DeleteTableSpec(ctx, conn, a.name); err != nil {
 			return fmt.Errorf("failed to delete table spec: %w", err)
 		}
-		conn.deleteTable(spec)
+		if spec != nil {
+			conn.deleteTable(spec)
+		}
 	case "FUNCTION":
 		if err := a.catalog.DeleteFunctionSpec(ctx, conn, a.name); err != nil {
 			return fmt.Errorf("failed to delete function spec: %w", err)

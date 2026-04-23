@@ -19,7 +19,7 @@ const (
 	TableSpecKind    CatalogSpecKind = "table"
 	ViewSpecKind     CatalogSpecKind = "view"
 	FunctionSpecKind CatalogSpecKind = "function"
-	catalogName                      = "googlesqlite"
+	catalogName                      = "googlesqlengine"
 )
 
 type Catalog struct {
@@ -206,7 +206,7 @@ func (c *Catalog) SuggestConstant(mistypedPath []string) string {
 }
 
 func (c *Catalog) formatNamePath(path []string) string {
-	return strings.Join(path, "_")
+	return formatPath(path)
 }
 
 func (c *Catalog) getFunctions(namePath *NamePath) []*FunctionSpec {
@@ -310,13 +310,24 @@ func (c *Catalog) DeleteTableSpec(ctx context.Context, conn *Conn, name string) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := c.deleteTableSpecByName(name); err != nil {
+	storageKey, err := c.deleteTableSpecByName(name)
+	if err != nil {
 		return err
 	}
-	if err := c.repo.Delete(catalogDriverCtx(ctx), conn, name); err != nil {
+	if err := c.repo.Delete(catalogDriverCtx(ctx), conn, storageKey); err != nil {
 		return err
 	}
 	return nil
+}
+
+// PeekTableSpecForFlatName returns the in-memory table spec for a flattened logical name,
+// resolving hyphen vs underscore segment variants (BigQuery project IDs often contain hyphens).
+// It does not mutate the catalog; use before DROP + DeleteTableSpec to snapshot for conn.deleteTable.
+func (c *Catalog) PeekTableSpecForFlatName(name string) *TableSpec {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	spec, _ := c.resolveTableSpecByFlatName(name)
+	return spec
 }
 
 func (c *Catalog) DeleteFunctionSpec(ctx context.Context, conn *Conn, name string) error {
@@ -332,10 +343,12 @@ func (c *Catalog) DeleteFunctionSpec(ctx context.Context, conn *Conn, name strin
 	return nil
 }
 
-func (c *Catalog) deleteTableSpecByName(name string) error {
-	spec, exists := c.tableMap[name]
-	if !exists {
-		return fmt.Errorf("failed to find table spec from map by %s", name)
+// deleteTableSpecByName removes the table spec and returns the persistence key used in the catalog repo
+// (canonical spec.TableName()), which may differ from the DROP-analyzer name only by '-' vs '_' in segments.
+func (c *Catalog) deleteTableSpecByName(name string) (storageKey string, err error) {
+	spec, storageKey := c.resolveTableSpecByFlatName(name)
+	if spec == nil {
+		return "", fmt.Errorf("failed to find table spec from map by %s", name)
 	}
 	tables := make([]*TableSpec, 0, len(c.tables))
 	specName := c.formatNamePath(spec.NamePath)
@@ -346,9 +359,29 @@ func (c *Catalog) deleteTableSpecByName(name string) error {
 		tables = append(tables, table)
 	}
 	if err := c.resetCatalog(tables, c.functions); err != nil {
-		return err
+		return "", err
 	}
-	return nil
+	return storageKey, nil
+}
+
+func (c *Catalog) resolveTableSpecByFlatName(name string) (*TableSpec, string) {
+	if spec, ok := c.tableMap[name]; ok {
+		return spec, name
+	}
+	for _, t := range c.tables {
+		tn := t.TableName()
+		if tableFlatNamesEquivalent(tn, name) {
+			return t, tn
+		}
+	}
+	return nil, ""
+}
+
+func tableFlatNamesEquivalent(a, b string) bool {
+	if a == b {
+		return true
+	}
+	return strings.ReplaceAll(a, "-", "_") == strings.ReplaceAll(b, "-", "_")
 }
 
 func (c *Catalog) deleteFunctionSpecByName(name string) error {
