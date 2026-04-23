@@ -58,15 +58,17 @@ func DuckDBUnwireGooglesqlStringOperand(arg *SQLExpression) *SQLExpression {
 
 // DuckDBGooglesqlWireArraySplitList builds a DuckDB VARCHAR[] list from a VARCHAR ARRAY column
 // without JSON casts. Accepts:
-//   - googlesql wire object: {"header":"array","body":[...]}
+//   - googlesql wire object with body as JSON value: {"header":"array","body":[...]}
+//   - googlesql wire object with body as JSON string (engine codec ValueLayout): {"header":"array","body":"[...]"}
 //   - a plain flat JSON array cell: [...] (when storage omits the wire wrapper)
 // Inner elements are split on commas; trim with DuckDBTrimWireArrayElement after UNNEST/list_extract.
 func DuckDBGooglesqlWireArraySplitList(arg *SQLExpression) *SQLExpression {
 	payload := duckDBWireGooglesqlUtf8Payload(arg)
 	trimmed := NewFunctionExpression("trim", payload)
-	fromWireBody := duckDBRegexpExtractFirstGroup(trimmed, `"body"\s*:\s*(\[[^\]]*\])`)
+	fromWireBodyJSON := duckDBRegexpExtractFirstGroup(trimmed, `"body"\s*:\s*(\[[^\]]*\])`)
+	fromWireBodyString := duckDBRegexpExtractFirstGroup(trimmed, `"body"\s*:\s*"(\[[^\]]*\])"`)
 	fromPlainCell := duckDBRegexpExtractFirstGroup(trimmed, `^(\[[^\]]*\])\s*$`)
-	bracketArray := NewFunctionExpression("coalesce", fromWireBody, fromPlainCell)
+	bracketArray := NewFunctionExpression("coalesce", fromWireBodyJSON, fromWireBodyString, fromPlainCell)
 	innerTrim := NewFunctionExpression("trim", NewFunctionExpression("coalesce", bracketArray, NewLiteralExpression(`''`)), NewLiteralExpression(`'[]'`))
 	split := NewFunctionExpression("string_split", innerTrim, NewLiteralExpression(`','`))
 	emptyList := NewLiteralExpression(`CAST([] AS VARCHAR[])`)
