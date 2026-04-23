@@ -41,8 +41,10 @@ func truncateSQLForLog(s string, max int) string {
 
 // logPhysicalSQL logs the SQL string executed on SQLite/DuckDB after GoogleSQL
 // codegen and catalog expansion. Callers pass the original GoogleSQL in sourceSQL
-// when available for correlation.
-func logPhysicalSQL(ctx context.Context, sourceSQL, physicalSQL string, args []interface{}) {
+// when available for correlation. If correlationID is non-zero, logs correlation_id
+// and a pprof heap hint (pair with GOOGLESQL_ENGINE_DUCK_EXPLAIN_ANALYZE or
+// GOOGLESQL_ENGINE_LOG_SQL_CORRELATION).
+func logPhysicalSQL(ctx context.Context, sourceSQL, physicalSQL string, args []interface{}, correlationID uint64) {
 	if physicalSQL == "" {
 		return
 	}
@@ -59,6 +61,12 @@ func logPhysicalSQL(ctx context.Context, sourceSQL, physicalSQL string, args []i
 	}
 	if len(args) > 0 && len(args) <= physicalSQLMaxArgs {
 		attrs = append(attrs, slog.Any("args", args))
+	}
+	if correlationID != 0 {
+		attrs = append(attrs,
+			slog.Uint64("correlation_id", correlationID),
+			slog.String("pprof_heap_hint", "curl -sS 'http://127.0.0.1:6060/debug/pprof/heap' -o heap.prof"),
+		)
 	}
 	Logger(ctx).LogAttrs(ctx, level, "googlesqlengine physical sql", attrs...)
 }
@@ -431,6 +439,7 @@ type DMLStmtAction struct {
 	args           []interface{}
 	formattedQuery string
 	catalog        *Catalog
+	dialect        Dialect
 }
 
 var missingObjectPattern = regexp.MustCompile(`no such (table|function): ([^ )]+)`)
@@ -451,16 +460,25 @@ func (a *DMLStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.Stmt, e
 }
 
 func (a *DMLStmtAction) exec(ctx context.Context, conn *Conn) (driver.Result, error) {
-	result, err := conn.ExecContext(ctx, a.formattedQuery, a.args...)
+	formattedQuery := a.formattedQuery
+	var correlationID uint64
+	if shouldEmitSQLCorrelation() {
+		correlationID = nextSQLCorrelationID()
+	}
+	logPhysicalSQL(ctx, a.query, formattedQuery, a.args, correlationID)
+	logDuckExplainLogical(ctx, conn, a.query, formattedQuery, a.args, correlationID, a.dialect)
+	result, err := conn.ExecContext(ctx, formattedQuery, a.args...)
 	if err != nil {
-		retriedQuery, retryErr := rewriteMissingTableQuery(a.catalog, a.formattedQuery, err)
-		if retryErr == nil && retriedQuery != a.formattedQuery {
+		retriedQuery, retryErr := rewriteMissingTableQuery(a.catalog, formattedQuery, err)
+		if retryErr == nil && retriedQuery != formattedQuery {
+			logPhysicalSQL(ctx, a.query, retriedQuery, a.args, correlationID)
+			logDuckExplainLogical(ctx, conn, a.query, retriedQuery, a.args, correlationID, a.dialect)
 			result, err = conn.ExecContext(ctx, retriedQuery, a.args...)
 			if err == nil {
 				return result, nil
 			}
 		}
-		return nil, fmt.Errorf("failed to exec %s: %w", a.formattedQuery, err)
+		return nil, fmt.Errorf("failed to exec %s: %w", formattedQuery, err)
 	}
 	return result, nil
 }
@@ -553,6 +571,7 @@ type QueryStmtAction struct {
 	outputColumns  []*ColumnSpec
 	isExplainMode  bool
 	catalog        *Catalog
+	dialect        Dialect
 }
 
 func (a *QueryStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.Stmt, error) {
@@ -573,16 +592,35 @@ func (a *QueryStmtAction) Prepare(ctx context.Context, conn *Conn) (driver.Stmt,
 
 func (a *QueryStmtAction) ExecContext(ctx context.Context, conn *Conn) (driver.Result, error) {
 	formattedQuery := expandCatalogFunctions(a.formattedQuery, a.catalog)
-	logPhysicalSQL(ctx, a.query, formattedQuery, a.args)
+	var correlationID uint64
+	if shouldEmitSQLCorrelation() {
+		correlationID = nextSQLCorrelationID()
+	}
+	logPhysicalSQL(ctx, a.query, formattedQuery, a.args, correlationID)
+	mode := duckdbExplainAnalyzeMode()
+	execSQL := formattedQuery
+	if isDuckDBDialect(a.dialect) && mode == "before" {
+		logDuckExplainAnalyze(ctx, conn, a.query, execSQL, a.args, "before", correlationID, a.dialect)
+	}
 	if _, err := conn.ExecContext(ctx, formattedQuery, a.args...); err != nil {
 		retriedQuery, retryErr := rewriteMissingTableQuery(a.catalog, formattedQuery, err)
 		if retryErr == nil && retriedQuery != formattedQuery {
-			logPhysicalSQL(ctx, a.query, retriedQuery, a.args)
+			logPhysicalSQL(ctx, a.query, retriedQuery, a.args, correlationID)
+			execSQL = retriedQuery
+			if isDuckDBDialect(a.dialect) && mode == "before" {
+				logDuckExplainAnalyze(ctx, conn, a.query, execSQL, a.args, "before", correlationID, a.dialect)
+			}
 			if _, err := conn.ExecContext(ctx, retriedQuery, a.args...); err == nil {
+				if isDuckDBDialect(a.dialect) && mode == "after" {
+					logDuckExplainAnalyze(ctx, conn, a.query, execSQL, a.args, "after", correlationID, a.dialect)
+				}
 				return &Result{conn: conn}, nil
 			}
 		}
 		return nil, fmt.Errorf("%w: failed to execute query (source_sql_len=%d; see debug log for physical SQL)", err, len(a.query))
+	}
+	if isDuckDBDialect(a.dialect) && mode == "after" {
+		logDuckExplainAnalyze(ctx, conn, a.query, execSQL, a.args, "after", correlationID, a.dialect)
 	}
 	return &Result{conn: conn}, nil
 }
@@ -616,17 +654,33 @@ func (a *QueryStmtAction) QueryContext(ctx context.Context, conn *Conn) (*Rows, 
 		return &Rows{}, nil
 	}
 	formattedQuery := expandCatalogFunctions(a.formattedQuery, a.catalog)
-	logPhysicalSQL(ctx, a.query, formattedQuery, a.args)
+	var correlationID uint64
+	if shouldEmitSQLCorrelation() {
+		correlationID = nextSQLCorrelationID()
+	}
+	logPhysicalSQL(ctx, a.query, formattedQuery, a.args, correlationID)
+	mode := duckdbExplainAnalyzeMode()
+	execSQL := formattedQuery
+	if isDuckDBDialect(a.dialect) && mode == "before" {
+		logDuckExplainAnalyze(ctx, conn, a.query, execSQL, a.args, "before", correlationID, a.dialect)
+	}
 	rows, err := conn.QueryContext(ctx, formattedQuery, a.args...)
 	if err != nil {
 		retriedQuery, retryErr := rewriteMissingTableQuery(a.catalog, formattedQuery, err)
 		if retryErr == nil && retriedQuery != formattedQuery {
-			logPhysicalSQL(ctx, a.query, retriedQuery, a.args)
+			logPhysicalSQL(ctx, a.query, retriedQuery, a.args, correlationID)
+			execSQL = retriedQuery
+			if isDuckDBDialect(a.dialect) && mode == "before" {
+				logDuckExplainAnalyze(ctx, conn, a.query, execSQL, a.args, "before", correlationID, a.dialect)
+			}
 			rows, err = conn.QueryContext(ctx, retriedQuery, a.args...)
 		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to query (source_sql_len=%d; see debug log for physical SQL)", err, len(a.query))
+	}
+	if isDuckDBDialect(a.dialect) && mode == "after" {
+		logDuckExplainAnalyze(ctx, conn, a.query, execSQL, a.args, "after", correlationID, a.dialect)
 	}
 	return &Rows{conn: conn, rows: rows, columns: a.outputColumns}, nil
 }

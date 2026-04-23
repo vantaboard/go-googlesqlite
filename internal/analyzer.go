@@ -939,6 +939,7 @@ func (a *Analyzer) newDMLStmtAction(ctx context.Context, query string, args []dr
 		args:           queryArgs,
 		formattedQuery: formattedQuery,
 		catalog:        a.catalog,
+		dialect:        a.dialect,
 	}, nil
 }
 
@@ -979,6 +980,7 @@ func (a *Analyzer) newQueryStmtAction(ctx context.Context, query string, args []
 		outputColumns:  outputColumns,
 		isExplainMode:  a.isExplainMode,
 		catalog:        a.catalog,
+		dialect:        a.dialect,
 	}, nil
 }
 
