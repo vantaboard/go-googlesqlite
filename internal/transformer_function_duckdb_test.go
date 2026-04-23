@@ -134,4 +134,7 @@ func TestDuckDBAggregateWriteSql_stringAggDistinctOrderBy(t *testing.T) {
 	if !strings.Contains(strings.ReplaceAll(got, " ", ""), "string_agg(DISTINCT") {
 		t.Fatalf("expected DISTINCT inside aggregate call, got %q", got)
 	}
+	if !strings.Contains(got, "from_base64(") {
+		t.Fatalf("expected STRING_AGG value wrapped with googlesql VARCHAR wire unwrap, got %q", got)
+	}
 }

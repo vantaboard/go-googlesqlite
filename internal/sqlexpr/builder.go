@@ -487,6 +487,19 @@ func DuckDBNormalizeAggregateCall(f *FunctionCall, d SQLDialect) (name string, a
 	if name == "count" && len(args) == 0 {
 		countStar = true
 	}
+	// VARCHAR columns in DuckDB often hold googlesqlengine base64+JSON wire; STRING_AGG must
+	// aggregate decoded text (mirroring decodeStringOrLayout at scan time). Apply the same
+	// unwrap to ORDER BY expressions so DISTINCT / sort keys match the aggregated values.
+	if d != nil && d.ID() == "duckdb" && name == "string_agg" {
+		if len(args) >= 1 {
+			args[0] = DuckDBUnwireGooglesqlStringOperand(args[0])
+		}
+		for _, ob := range orderBy {
+			if ob != nil && ob.Expression != nil {
+				ob.Expression = DuckDBUnwireGooglesqlStringOperand(ob.Expression)
+			}
+		}
+	}
 	return name, args, distinct, countStar, aggFilter, orderBy, limit
 }
 
