@@ -6,9 +6,9 @@ import (
 
 	"github.com/vantaboard/go-googlesql"
 	ast "github.com/vantaboard/go-googlesql/resolved_ast"
+	"github.com/vantaboard/go-googlesql/pure/analyzer"
+	"github.com/vantaboard/go-googlesql/pure/oracle"
 	"github.com/vantaboard/go-googlesql/types"
-
-	"github.com/vantaboard/go-googlesql-engine/internal/pureanalyzer"
 )
 
 // StatementAnalysisDriver is the seam for GoogleSQL statement analysis. The
@@ -54,15 +54,15 @@ func (v validatingStatementDriver) AnalyzeStatement(stmtQuery string, catalog ty
 	if stmt == nil || stmt.Kind() != ast.QueryStmt {
 		return out, nil
 	}
-	aq, perr := pureanalyzer.AnalyzeSelect(stmtQuery, catalog)
+	aq, perr := analyzer.AnalyzeSelect(stmtQuery, catalog)
 	if perr != nil {
 		return out, nil
 	}
-	cgoSum, err := pureanalyzer.ResolvedQuerySummary(stmt)
+	cgoSum, err := oracle.ResolvedQuerySummary(stmt)
 	if err != nil {
 		return out, nil
 	}
-	pureSum, err := pureanalyzer.PureSelectSummary(aq)
+	pureSum, err := oracle.PureSelectSummary(aq)
 	if err != nil {
 		return out, nil
 	}

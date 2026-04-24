@@ -18,7 +18,7 @@ import (
 	ast "github.com/vantaboard/go-googlesql/resolved_ast"
 	"github.com/vantaboard/go-googlesql/types"
 
-	"github.com/vantaboard/go-googlesql-engine/engineopts"
+	"github.com/vantaboard/go-googlesql/engineopts"
 )
 
 type Analyzer struct {

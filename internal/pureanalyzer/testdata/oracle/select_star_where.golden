@@ -1,8 +1,0 @@
-stmt:QueryStmt
-output_columns:2
-col0:name=col1 type=INT64
-col1:name=col2 type=STRING
-ProjectScan
-  FilterScan
-    TableScan table=z_table
-  filter:FunctionCall($equal)(ColumnRef(col1),Literal(INT64=1000))

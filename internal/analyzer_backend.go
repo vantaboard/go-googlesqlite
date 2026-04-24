@@ -28,7 +28,7 @@ type StatementAnalysis struct {
 // Production analysis today uses [StatementAnalysisDriver] (see analysis_driver.go)
 // from the in-process [Analyzer]: default [CGOStatementAnalysisDriver], optional
 // validation when GOOGLESQL_ENGINE_PURE_ANALYZER_VALIDATE=1, and the pure-Go subset
-// in package pureanalyzer for differential/oracle tests.
+// in github.com/vantaboard/go-googlesql/pure/oracle for differential tests.
 type AnalyzerBackend interface {
 	ParseScript(ctx context.Context, query string, req *ParseScriptRequest) (*ParseScriptResponse, error)
 	AnalyzeStatement(ctx context.Context, query string, req *AnalyzeStatementRequest) (*StatementAnalysis, error)

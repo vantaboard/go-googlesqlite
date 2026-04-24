@@ -1,10 +1,11 @@
 # Pure analyzer expansion order
 
-This document sequences feature work for `internal/pureanalyzer` after the initial
-oracle-backed subset (single-table `SELECT`, narrow `WHERE`, parameters, small builtins).
+This document sequences feature work for `github.com/vantaboard/go-googlesql/pure/analyzer`
+after the initial oracle-backed subset (single-table `SELECT`, narrow `WHERE`, parameters, small builtins).
 
-Each slice should add SQL fixtures, `.golden` updates from CGO, differential tests,
-and explicit `ErrUnsupportedFeature` or parse errors for out-of-scope syntax until implemented.
+Each slice should add SQL fixtures under `go-googlesql/pure/oracle/testdata/`, `.golden` updates
+from the CGO structural oracle, differential tests in `pure/oracle`, and explicit
+`ErrUnsupportedFeature` or parse errors for out-of-scope syntax until implemented.
 
 ## Phase A — Query shape
 
@@ -39,6 +40,6 @@ and explicit `ErrUnsupportedFeature` or parse errors for out-of-scope syntax unt
 
 ## Verification gates
 
-- Never expand the grammar without a CGO oracle golden and a passing differential test.
+- Never expand the grammar without a CGO oracle golden (`go-googlesql/pure/oracle/testdata/cgo`) and a passing differential test (`pure/oracle`).
 - Keep `GOOGLESQL_ENGINE_PURE_ANALYZER_VALIDATE` green on a growing corpus before relying on pure output for execution.
 - Prefer promoting features that unlock real queries in `query_test.go` and DuckDB parity tests.
