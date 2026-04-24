@@ -24,6 +24,11 @@ type StatementAnalysis struct {
 // AnalyzerBackend describes the new analysis seam. The existing in-process
 // googlesql calls should move behind this interface so the package can switch to
 // the embedded gRPC path without re-threading planner state everywhere.
+//
+// Production analysis today uses [StatementAnalysisDriver] (see analysis_driver.go)
+// from the in-process [Analyzer]: default [CGOStatementAnalysisDriver], optional
+// validation when GOOGLESQL_ENGINE_PURE_ANALYZER_VALIDATE=1, and the pure-Go subset
+// in package pureanalyzer for differential/oracle tests.
 type AnalyzerBackend interface {
 	ParseScript(ctx context.Context, query string, req *ParseScriptRequest) (*ParseScriptResponse, error)
 	AnalyzeStatement(ctx context.Context, query string, req *AnalyzeStatementRequest) (*StatementAnalysis, error)

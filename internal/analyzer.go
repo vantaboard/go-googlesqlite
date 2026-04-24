@@ -17,6 +17,8 @@ import (
 	parsed_ast "github.com/vantaboard/go-googlesql/ast"
 	ast "github.com/vantaboard/go-googlesql/resolved_ast"
 	"github.com/vantaboard/go-googlesql/types"
+
+	"github.com/vantaboard/go-googlesql-engine/engineopts"
 )
 
 type Analyzer struct {
@@ -28,6 +30,7 @@ type Analyzer struct {
 	queryParameters []*bigquery.QueryParameter
 	dialect         Dialect
 	queryFactory    *QueryTransformFactory
+	analysisDriver  StatementAnalysisDriver
 }
 
 type DisableQueryFormattingKey struct{}
@@ -91,11 +94,12 @@ func NewAnalyzerWithDialect(catalog *Catalog, dialect Dialect) (*Analyzer, error
 	cfg := DefaultTransformConfig()
 	cfg.Dialect = dialect
 	return &Analyzer{
-		catalog:      catalog,
-		opt:          opt,
-		namePath:     &NamePath{},
-		dialect:      dialect,
-		queryFactory: NewQueryTransformFactory(cfg, nil),
+		catalog:        catalog,
+		opt:            opt,
+		namePath:       &NamePath{},
+		dialect:        dialect,
+		queryFactory:   NewQueryTransformFactory(cfg, nil),
+		analysisDriver: newDefaultStatementAnalysisDriver(),
 	}, nil
 }
 
@@ -103,100 +107,15 @@ func (a *Analyzer) formatSQLFragment(f SQLFragment) string {
 	return SQLFragmentString(f, a.dialect)
 }
 
-func newAnalyzerOptions() (*googlesql.AnalyzerOptions, error) {
-	langOpt := googlesql.NewLanguageOptions()
-	langOpt.SetNameResolutionMode(googlesql.NameResolutionDefault)
-	langOpt.SetProductMode(types.ProductInternal)
-	langOpt.SetEnabledLanguageFeatures([]googlesql.LanguageFeature{
-		googlesql.FeatureAnalyticFunctions,
-		googlesql.FeatureNamedArguments,
-		googlesql.FeatureNumericType,
-		googlesql.FeatureBignumericType,
-		googlesql.FeatureV13DecimalAlias,
-		googlesql.FeatureCreateTableNotNull,
-		googlesql.FeatureParameterizedTypes,
-		googlesql.FeatureTablesample,
-		googlesql.FeatureTimestampNanos,
-		googlesql.FeatureV11HavingInAggregate,
-		googlesql.FeatureV11NullHandlingModifierInAggregate,
-		googlesql.FeatureV11NullHandlingModifierInAnalytic,
-		googlesql.FeatureV11OrderByCollate,
-		googlesql.FeatureV11SelectStarExceptReplace,
-		googlesql.FeatureV12SafeFunctionCall,
-		googlesql.FeatureJsonType,
-		googlesql.FeatureJsonArrayFunctions,
-		googlesql.FeatureJsonConstructorFunctions,
-		googlesql.FeatureJsonMutatorFunctions,
-		googlesql.FeatureJsonKeysFunction,
-		googlesql.FeatureJsonLaxValueExtractionFunctions,
-		googlesql.FeatureJsonStrictNumberParsing,
-		googlesql.FeatureV13IsDistinct,
-		googlesql.FeatureV13FormatInCast,
-		googlesql.FeatureV13DateArithmetics,
-		googlesql.FeatureV11OrderByInAggregate,
-		googlesql.FeatureV11LimitInAggregate,
-		googlesql.FeatureV13DateTimeConstructors,
-		googlesql.FeatureV13ExtendedDateTimeSignatures,
-		googlesql.FeatureV12CivilTime,
-		googlesql.FeatureV12WeekWithWeekday,
-		googlesql.FeatureIntervalType,
-		googlesql.FeatureGroupByRollup,
-		googlesql.FeatureV13NullsFirstLastInOrderBy,
-		googlesql.FeatureV13Qualify,
-		googlesql.FeatureV13AllowDashesInTableName,
-		googlesql.FeatureGeography,
-		googlesql.FeatureV13ExtendedGeographyParsers,
-		googlesql.FeatureTemplateFunctions,
-		googlesql.FeatureV11WithOnSubquery,
-		googlesql.FeatureV13Pivot,
-		googlesql.FeatureV13Unpivot,
-		googlesql.FeatureDMLUpdateWithJoin,
-		googlesql.FeatureV13OmitInsertColumnList,
-		googlesql.FeatureV13WithRecursive,
-		googlesql.FeatureV12GroupByArray,
-		googlesql.FeatureV12GroupByStruct,
-		googlesql.FeatureV14GroupByAll,
-		// v1.4 builtins (numeric ids until named in go-googlesql enum): FIRST/LAST N, NULLIFZERO/ZEROIFNULL, PI
-		googlesql.LanguageFeature(14027),
-		googlesql.LanguageFeature(14028),
-		googlesql.LanguageFeature(14029),
-		// 2023.09.1 options.proto: singleton UNNEST alias, ARRAY_ZIP, multiway UNNEST
-		googlesql.LanguageFeature(14031),
-		googlesql.LanguageFeature(14032),
-		googlesql.LanguageFeature(14033),
-	})
-	langOpt.SetSupportedStatementKinds([]ast.Kind{
-		ast.BeginStmt,
-		ast.CommitStmt,
-		ast.MergeStmt,
-		ast.QueryStmt,
-		ast.InsertStmt,
-		ast.UpdateStmt,
-		ast.DeleteStmt,
-		ast.DropStmt,
-		ast.TruncateStmt,
-		ast.CreateSchemaStmt,
-		ast.CreateTableStmt,
-		ast.CreateTableAsSelectStmt,
-		ast.CreateProcedureStmt,
-		ast.CreateFunctionStmt,
-		ast.CreateTableFunctionStmt,
-		ast.CreateViewStmt,
-		ast.DropFunctionStmt,
-		ast.DropRowAccessPolicyStmt,
-		ast.CreateRowAccessPolicyStmt,
-	})
-	// Enable QUALIFY without WHERE
-	//https://github.com/google/googlesql/issues/124
-	err := langOpt.EnableReservableKeyword("QUALIFY", true)
-	if err != nil {
-		return nil, err
+func (a *Analyzer) driver() StatementAnalysisDriver {
+	if a.analysisDriver != nil {
+		return a.analysisDriver
 	}
-	opt := googlesql.NewAnalyzerOptions()
-	opt.SetAllowUndeclaredParameters(true)
-	opt.SetLanguage(langOpt)
-	opt.SetParseLocationRecordType(googlesql.ParseLocationRecordFullNodeScope)
-	return opt, nil
+	return CGOStatementAnalysisDriver{}
+}
+
+func newAnalyzerOptions() (*googlesql.AnalyzerOptions, error) {
+	return engineopts.NewAnalyzerOptions()
 }
 
 func (a *Analyzer) SetAutoIndexMode(enabled bool) {
@@ -507,7 +426,7 @@ func (a *Analyzer) Analyze(ctx context.Context, conn *Conn, query string, args [
 				return nil, err
 			}
 			options.SetParameterMode(mode)
-			out, err := googlesql.AnalyzeStatement(stmtQuery, a.catalog, options)
+			out, err := a.driver().AnalyzeStatement(stmtQuery, a.catalog, options)
 			if err != nil {
 				return nil, fmt.Errorf("failed to analyze: %w", err)
 			}
@@ -607,7 +526,7 @@ func (a *Analyzer) context(
 }
 
 func (a *Analyzer) analyzeTemplatedFunctionWithRuntimeArgument(ctx context.Context, query string) (*FunctionSpec, error) {
-	out, err := googlesql.AnalyzeStatement(query, a.catalog, a.opt)
+	out, err := a.driver().AnalyzeStatement(query, a.catalog, a.opt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze: %w", err)
 	}
@@ -809,7 +728,7 @@ var inferTypes = []string{
 func (a *Analyzer) inferTemplatedTypeByRealType(query string, node *ast.CreateFunctionStmtNode) ([]*ast.CreateFunctionStmtNode, error) {
 	var stmts []*ast.CreateFunctionStmtNode
 	for _, typ := range inferTypes {
-		if out, err := googlesql.AnalyzeStatement(a.buildScalarTypeFuncFromTemplatedFunc(node, typ), a.catalog, a.opt); err == nil {
+		if out, err := a.driver().AnalyzeStatement(a.buildScalarTypeFuncFromTemplatedFunc(node, typ), a.catalog, a.opt); err == nil {
 			stmts = append(stmts, out.Statement().(*ast.CreateFunctionStmtNode))
 		}
 	}
@@ -817,7 +736,7 @@ func (a *Analyzer) inferTemplatedTypeByRealType(query string, node *ast.CreateFu
 		return stmts, nil
 	}
 	for _, typ := range inferTypes {
-		if out, err := googlesql.AnalyzeStatement(a.buildArrayTypeFuncFromTemplatedFunc(node, typ), a.catalog, a.opt); err == nil {
+		if out, err := a.driver().AnalyzeStatement(a.buildArrayTypeFuncFromTemplatedFunc(node, typ), a.catalog, a.opt); err == nil {
 			stmts = append(stmts, out.Statement().(*ast.CreateFunctionStmtNode))
 		}
 	}
