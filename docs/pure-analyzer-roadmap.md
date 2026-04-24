@@ -25,8 +25,8 @@ from the CGO structural oracle, differential tests in `pure/oracle`, and explici
 
 ## Phase D — Nested queries
 
-8. Subqueries in `FROM` and `WHERE`
-9. `WITH` / `WITH RECURSIVE` (align with engine `newAnalyzerOptions` statement kinds)
+8. **In progress (first slice):** uncorrelated **scalar** subqueries in `WHERE` (e.g. `WHERE col1 = (SELECT MAX(col1) FROM z_table)`) with CGO golden `go-googlesql/pure/oracle/testdata/cgo/subquery_scalar_where`, `TestBucketSubqueryPhaseDPureMatchesCGO`, and `internal/pure_analyzer_phase_d_validation_test.go`. Multi-column subqueries, `IN` / `EXISTS`, correlated forms, and **derived tables in `FROM`** stay rejected (`ErrUnsupportedFeature` or parse) until a later sub-slice.
+9. `WITH` / `WITH RECURSIVE` (align with engine `newAnalyzerOptions` statement kinds) — not started
 
 ## Phase E — Advanced types in expressions
 
@@ -41,5 +41,5 @@ from the CGO structural oracle, differential tests in `pure/oracle`, and explici
 ## Verification gates
 
 - Never expand the grammar without a CGO oracle golden (`go-googlesql/pure/oracle/testdata/cgo`) and a passing differential test (`pure/oracle`).
-- Keep `GOOGLESQL_ENGINE_PURE_ANALYZER_VALIDATE` green on a growing corpus before relying on pure output for execution (engine: `internal/pure_analyzer_phase_c_validation_test.go`; from `go-googlesql` run `task test:go-googlesql-engine-pure-validate` so GOWORK includes prebuilts and the sibling engine module).
+- Keep `GOOGLESQL_ENGINE_PURE_ANALYZER_VALIDATE` green on a growing corpus before relying on pure output for execution (engine: `internal/pure_analyzer_phase_c_validation_test.go`, `internal/pure_analyzer_phase_d_validation_test.go`; from `go-googlesql` run `task test:go-googlesql-engine-pure-validate` so GOWORK includes prebuilts and the sibling engine module).
 - Prefer promoting features that unlock real queries in `query_test.go` and DuckDB parity tests.
