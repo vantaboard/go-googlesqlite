@@ -16,12 +16,12 @@ from the CGO structural oracle, differential tests in `pure/oracle`, and explici
 ## Phase B — Joins
 
 4. `INNER` / `LEFT` / `RIGHT` / `CROSS` join for **a single** join between two catalog tables (done: parser + analyzer, `JoinScan` in `pure/oracle/summary`, fixtures `join_*` under `pure/oracle/testdata/cgo`, bucket `buckets/joins/inner_on`). **Multi-join** chains: explicit parse error until a later slice.
-5. `ON` predicates in the current expression subset (done). `USING` is parsed, resolved to equality for analysis, and covered by unit tests; `SELECT *` with `USING` vs CGO coalesced column output is not yet in CGO goldens.
+5. `ON` predicates in the current expression subset (done). `USING` is parsed, resolved to equality for analysis, with `SELECT *` `USING` coalesced column order in CGO goldens (`join_inner_using` under `go-googlesql/pure/oracle/testdata/cgo` and the joins bucket).
 
 ## Phase C — Aggregation
 
-6. `GROUP BY`, `HAVING`
-7. Common aggregate builtins wired to resolved function names
+6. `GROUP BY`, `HAVING`, `ORDER BY` / `LIMIT` on aggregates (done: CGO goldens under `pure/oracle/testdata/cgo`, `PureSelectSummary` parity, `TestBucketAggregatesPhaseCPureMatchesCGO` in `pure/oracle/differential_test.go`).
+7. Common aggregate builtins (done: `COUNT(*)`, `COUNT(col)`, `SUM`, `MIN`, `MAX`, `AVG` in CGO goldens; rejection tests in `pure/analyzer/aggregate_rejections_test.go`).
 
 ## Phase D — Nested queries
 
@@ -41,5 +41,5 @@ from the CGO structural oracle, differential tests in `pure/oracle`, and explici
 ## Verification gates
 
 - Never expand the grammar without a CGO oracle golden (`go-googlesql/pure/oracle/testdata/cgo`) and a passing differential test (`pure/oracle`).
-- Keep `GOOGLESQL_ENGINE_PURE_ANALYZER_VALIDATE` green on a growing corpus before relying on pure output for execution.
+- Keep `GOOGLESQL_ENGINE_PURE_ANALYZER_VALIDATE` green on a growing corpus before relying on pure output for execution (engine: `internal/pure_analyzer_phase_c_validation_test.go`; from `go-googlesql` run `task test:go-googlesql-engine-pure-validate` so GOWORK includes prebuilts and the sibling engine module).
 - Prefer promoting features that unlock real queries in `query_test.go` and DuckDB parity tests.
