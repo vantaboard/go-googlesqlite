@@ -15,8 +15,8 @@ from the CGO structural oracle, differential tests in `pure/oracle`, and explici
 
 ## Phase B — Joins
 
-4. `INNER` / `LEFT` / `RIGHT` / `CROSS` join (single join, then multi-join chains)
-5. `USING` and `ON` clauses
+4. `INNER` / `LEFT` / `RIGHT` / `CROSS` join for **a single** join between two catalog tables (done: parser + analyzer, `JoinScan` in `pure/oracle/summary`, fixtures `join_*` under `pure/oracle/testdata/cgo`, bucket `buckets/joins/inner_on`). **Multi-join** chains: explicit parse error until a later slice.
+5. `ON` predicates in the current expression subset (done). `USING` is parsed, resolved to equality for analysis, and covered by unit tests; `SELECT *` with `USING` vs CGO coalesced column output is not yet in CGO goldens.
 
 ## Phase C — Aggregation
 
