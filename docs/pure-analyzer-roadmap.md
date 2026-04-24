@@ -9,8 +9,8 @@ from the CGO structural oracle, differential tests in `pure/oracle`, and explici
 
 ## Phase A — Query shape
 
-1. Qualified column names (`t.col`)
-2. Table aliases (`FROM z_table AS t`)
+1. Qualified column names (`t.col`) (done: `pure/parser`, `pure/analyzer`, oracle `select_qualified_table` / `buckets/phase_a/qualified_table`)
+2. Table aliases (`FROM z_table AS t` and `FROM z_table t`) (done: oracle `select_table_alias_param` / `buckets/phase_a/table_alias_param`)
 3. `ORDER BY` / `LIMIT` / `OFFSET` (resolved AST may use `OrderByScanNode` / `LimitOffsetScanNode`; extend `ResolvedQuerySummary` and `PureSelectSummary` together)
 
 ## Phase B — Joins
