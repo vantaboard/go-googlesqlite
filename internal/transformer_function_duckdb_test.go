@@ -40,6 +40,43 @@ func TestDuckDBRewrite_getStructField_namedKey(t *testing.T) {
 	}
 }
 
+func TestDuckDBRewrite_getStructField_unnestNativeStructSkipsWireUnwrap(t *testing.T) {
+	// UNNEST ARRAY<STRUCT<...>> exposes the element as y__<id>; struct field access should not
+	// re-unwire a VARCHAR payload when the analyzer type is already a native STRUCT.
+	s := NewColumnExpression("y__1", "t")
+	wire, err := LiteralFromValue(StringValue("enrollmentDate"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyLit := NewLiteralExpression(wire)
+	st, err := types.NewStructType([]*types.StructField{
+		types.NewStructField("enrollmentDate", types.StringType()),
+		types.NewStructField("SchoolYear", types.StringType()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	argData := []ExpressionData{{
+		Type: ExpressionTypeColumn,
+		Column: &ColumnRefData{
+			ColumnName: "y",
+			ColumnID:   1,
+			Type:       st,
+		},
+	}}
+	out, ok := duckDBRewriteFunctionCall("googlesqlengine_get_struct_field", []*SQLExpression{s, keyLit}, argData, DuckDBDialect{})
+	if !ok {
+		t.Fatal("expected rewrite")
+	}
+	got := out.String()
+	if strings.Contains(got, "from_base64(") || strings.Contains(got, "TRY_CAST(") {
+		t.Fatalf("expected compact struct_extract on native struct column, got %q", got)
+	}
+	if !strings.Contains(got, "struct_extract(") || !strings.Contains(got, "'enrollmentDate'") {
+		t.Fatalf("expected struct_extract(..., 'enrollmentDate'), got %q", got)
+	}
+}
+
 func TestDuckDBRewrite_getStructField_tryCastWireBackedStruct(t *testing.T) {
 	s := NewColumnExpression("y__1", "t")
 	wire, err := LiteralFromValue(StringValue("enrollmentDate"))

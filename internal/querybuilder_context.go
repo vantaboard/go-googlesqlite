@@ -117,6 +117,21 @@ func (fc *DefaultFragmentContext) AddAvailableColumn(columnID int, info *ColumnI
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 
+	// Scan transformers (e.g. UNNEST ARRAY<STRUCT<...>>) register a rich ColumnInfo with
+	// non-nil Expression (native struct / gs__ payload). The coordinator then re-adds the
+	// same column IDs with plain {Name, ID} — preserve the transformer entry so
+	// RegisterColumnScopeMapping and GetQualifiedColumnExpression keep the struct path.
+	existing := fc.availableColumns[columnID]
+	if existing != nil && existing.Expression != nil && info != nil && info.Expression == nil {
+		merged := *existing
+		if info.ID != 0 {
+			merged.ID = info.ID
+		}
+		fc.availableColumns[columnID] = &merged
+		fc.columnMap[columnID] = merged.Expression
+		return
+	}
+
 	// Store by column ID for proper disambiguation
 	fc.availableColumns[columnID] = info
 
@@ -201,8 +216,28 @@ func (fc *DefaultFragmentContext) GetQualifiedColumnRef(columnID int) (string, s
 }
 
 func (fc *DefaultFragmentContext) GetQualifiedColumnExpression(columnID int) *SQLExpression {
-	name, _ := fc.GetQualifiedColumnRef(columnID)
-	return NewColumnExpression(name)
+	fc.mu.RLock()
+	defer fc.mu.RUnlock()
+
+	scopeAlias, hasScope := fc.columnIDToScope[columnID]
+	if !hasScope {
+		panic(fmt.Sprintf("column id %d not found in fragment context. transformers must add columns before getting qualified expr", columnID))
+	}
+	info := fc.availableColumns[columnID]
+	if info == nil {
+		return nil
+	}
+	// Re-scope stored expressions (e.g. UNNEST struct payload) to the current FROM item alias
+	// and use the public output name (id-based alias) so it matches the subquery select list.
+	if info.Expression != nil {
+		out := *info.Expression
+		out.TableAlias = scopeAlias
+		if info.Name != "" {
+			out.Value = info.Name
+		}
+		return &out
+	}
+	return NewColumnExpression(info.Name, scopeAlias)
 }
 
 // RegisterColumnScope registers a mapping from column ID to scope alias
@@ -220,9 +255,22 @@ func (fc *DefaultFragmentContext) RegisterColumnScopeMapping(scopeAlias string, 
 
 	for _, col := range columns {
 		fc.columnIDToScope[col.ID] = scopeAlias
+		publicName := generateIDBasedAlias(col.Name, col.ID)
+		if ex := fc.availableColumns[col.ID]; ex != nil && ex.Expression != nil {
+			merged := *ex
+			merged.Name = publicName
+			merged.ID = col.ID
+			fc.availableColumns[col.ID] = &merged
+			fc.columnMap[col.ID] = merged.Expression
+			continue
+		}
 		fc.availableColumns[col.ID] = &ColumnInfo{
-			Name: generateIDBasedAlias(col.Name, col.ID),
+			Name: publicName,
 			ID:   col.ID,
+		}
+		fc.columnMap[col.ID] = &SQLExpression{
+			Type:  ExpressionTypeColumn,
+			Value: publicName,
 		}
 	}
 }
